@@ -1,0 +1,43 @@
+# =============================================================================
+# Segredos ??? nada aqui pode entrar no reposit??rio (regra 1)
+# =============================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+
+# Arquivos de configura????o de agente cont??m token em texto claro.
+config.json
+config-*.json
+!supabase/**/config.json
+
+# Sa??das de provisionamento
+tokens-*.txt
+provisionamento-*.csv
+
+# =============================================================================
+# Ferramental
+# =============================================================================
+.vscode/
+.idea/
+*.log
+node_modules/
+supabase/.temp/
+supabase/.branches/
+
+# .NET (Fase 3)
+bin/
+obj/
+*.user
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Stack local
+.env.local
+dashboard/dev-token.json
+dashboard/dev-config.json
+.claude/settings.local.json

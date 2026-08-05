@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitoramento de Infraestrutura</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- =========================================================================
+     Tela de login
+     ========================================================================= -->
+<div id="tela-login" class="tela-login" hidden>
+  <form id="form-login" class="caixa-login">
+    <h1>Monitoramento</h1>
+    <p class="sub">Acesso restrito à equipe de TI</p>
+
+    <label for="email">E-mail</label>
+    <input type="email" id="email" autocomplete="username" required>
+
+    <label for="senha">Senha</label>
+    <input type="password" id="senha" autocomplete="current-password" required>
+
+    <button type="submit" id="btn-entrar">Entrar</button>
+
+    <p id="erro-login" class="erro" hidden></p>
+    <p id="aviso-dev" class="aviso-dev" hidden></p>
+  </form>
+</div>
+
+<!-- =========================================================================
+     Aplicação
+     ========================================================================= -->
+<div id="app" hidden>
+
+  <header class="topo">
+    <div class="topo-esq">
+      <h1>Monitoramento</h1>
+      <span id="indicador-conexao" class="pill pill-neutro">conectando…</span>
+    </div>
+
+    <div class="topo-dir">
+      <span id="rotulo-usuario" class="usuario"></span>
+      <button id="btn-atualizar" class="btn-secundario" type="button">Atualizar</button>
+      <button id="btn-sair" class="btn-secundario" type="button">Sair</button>
+    </div>
+  </header>
+
+  <section class="tiras" aria-label="Resumo geral">
+    <div class="tira"><span class="tira-num" id="kpi-total">–</span><span class="tira-rot">máquinas</span></div>
+    <div class="tira tira-ok"><span class="tira-num" id="kpi-online">–</span><span class="tira-rot">online</span></div>
+    <div class="tira tira-ruim"><span class="tira-num" id="kpi-offline">–</span><span class="tira-rot">offline</span></div>
+    <div class="tira"><span class="tira-num" id="kpi-nunca">–</span><span class="tira-rot">nunca vistas</span></div>
+    <div class="tira tira-alerta"><span class="tira-num" id="kpi-alertas">–</span><span class="tira-rot">alertas abertos</span></div>
+    <div class="tira tira-alerta"><span class="tira-num" id="kpi-disco">–</span><span class="tira-rot">disco crítico</span></div>
+    <div class="tira tira-alerta"><span class="tira-num" id="kpi-servicos">–</span><span class="tira-rot">serviços parados</span></div>
+  </section>
+
+  <nav class="barra-filtros" aria-label="Filtros">
+    <label for="filtro-marca">Marca</label>
+    <select id="filtro-marca"><option value="">todas</option></select>
+
+    <label for="filtro-loja">Loja</label>
+    <select id="filtro-loja"><option value="">todas</option></select>
+
+    <label for="filtro-status">Status</label>
+    <select id="filtro-status">
+      <option value="">todos</option>
+      <option value="offline">offline</option>
+      <option value="online">online</option>
+      <option value="never_seen">nunca vistas</option>
+      <option value="disabled">desativadas</option>
+    </select>
+
+    <label for="busca">Buscar</label>
+    <input type="search" id="busca" placeholder="máquina, host, loja">
+
+    <span class="espaco"></span>
+    <span id="rodape-atualizacao" class="atualizacao"></span>
+  </nav>
+
+  <main id="conteudo" aria-live="polite">
+    <p id="vazio" class="vazio" hidden>Nenhuma máquina corresponde ao filtro.</p>
+  </main>
+</div>
+
+<!-- =========================================================================
+     Painel de detalhe
+     ========================================================================= -->
+<div id="painel-fundo" class="painel-fundo" hidden></div>
+
+<aside id="painel" class="painel" hidden aria-label="Detalhe da máquina">
+  <header class="painel-topo">
+    <div>
+      <h2 id="painel-titulo"></h2>
+      <p id="painel-sub" class="painel-sub"></p>
+    </div>
+    <button id="btn-fechar-painel" class="btn-fechar" type="button" aria-label="Fechar">×</button>
+  </header>
+
+  <div class="painel-corpo">
+    <dl id="painel-dados" class="dados"></dl>
+
+    <div class="faixas" role="tablist" aria-label="Período do gráfico">
+      <button class="faixa ativa" data-faixa="24h" type="button" role="tab">24 h</button>
+      <button class="faixa" data-faixa="7d" type="button" role="tab">7 d</button>
+      <button class="faixa" data-faixa="30d" type="button" role="tab">30 d</button>
+    </div>
+
+    <div class="grafico-caixa"><canvas id="grafico-cpu"></canvas></div>
+    <div class="grafico-caixa"><canvas id="grafico-mem"></canvas></div>
+    <div class="grafico-caixa"><canvas id="grafico-disco"></canvas></div>
+
+    <h3>Eventos recentes</h3>
+    <ul id="painel-eventos" class="eventos"></ul>
+  </div>
+</aside>
+
+<div id="brinde" class="brinde" hidden role="status"></div>
+
+<script src="vendor/chart.umd.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
