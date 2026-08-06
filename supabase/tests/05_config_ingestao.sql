@@ -14,8 +14,21 @@
 -- depois, fora do bloco.
 -- =============================================================================
 
+-- ESTE TESTE ESCREVE EM ingest_config, ENTAO ELE GUARDA E DEVOLVE O ESTADO.
+--
+-- A versao anterior terminava fixando um endereco e o segredo `repeat('a',32)`,
+-- "para nao deixar o banco de dev apontando para um projeto que nao existe". O
+-- efeito foi outro: rodar a suite trocava o segredo REAL da stack local por
+-- `aaaa...`, e o dashboard passava a gerar comando de instalacao com um segredo
+-- que o endpoint de ingestao recusa. O PC instalado com aquele comando tomaria
+-- 401 para sempre, sem nada na tela indicando o porque.
+--
+-- Teste que altera configuracao compartilhada precisa restaurar o que achou.
 \set ON_ERROR_STOP on
 \timing off
+
+create temporary table _ingestao_antes as
+  select ingest_url, shared_secret from public.ingest_config;
 
 do $$
 declare
@@ -82,9 +95,6 @@ begin
   end if;
   raise notice '    ok';
 
-  -- Volta para o endereço de teste local, para não deixar o banco de dev
-  -- apontando para um projeto que não existe.
-  perform public.definir_ingestao(v_url_boa, repeat('a', 32));
 end
 $$;
 
@@ -209,5 +219,38 @@ begin
   raise notice '    ok';
 end
 $$;
+
+-- ---------------------------------------------------------------------------
+-- 8. Devolve a configuração que estava aqui antes
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v record;
+begin
+  raise notice '--- 8. configuração original restaurada ---';
+
+  select * into v from _ingestao_antes;
+
+  if not found then
+    -- Não havia configuração antes: o teste também não deve deixar uma.
+    delete from public.ingest_config;
+    raise notice '    ok (não havia configuração; removida a do teste)';
+    return;
+  end if;
+
+  perform public.definir_ingestao(v.ingest_url, v.shared_secret);
+
+  if not exists (
+    select 1 from public.ingest_config c
+    where c.ingest_url = v.ingest_url and c.shared_secret = v.shared_secret
+  ) then
+    raise exception 'FALHA: não consegui restaurar a configuração de ingestão';
+  end if;
+
+  raise notice '    ok (% restaurado)', v.ingest_url;
+end
+$$;
+
+drop table _ingestao_antes;
 
 select 'TESTE 05: TODAS AS VERIFICACOES DE CONFIG DE INGESTAO PASSARAM' as resultado;

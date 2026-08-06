@@ -71,14 +71,35 @@ function Sql {
 # ---------------------------------------------------------------------------
 Write-Host '   provisionando tokens...' -ForegroundColor DarkGray
 
+# SO AS MAQUINAS DA DEMONSTRACAO.
+#
+# Antes isto pegava toda maquina ativa, e o efeito foi grave: o simulador passou
+# a escrever por cima de maquina REAL. O PC do analista, que rodava o agente de
+# verdade, apareceu no dashboard como `sim-1.0.0` com IP 10.10.1.15 inventado, e
+# o mesmo aconteceu com as maquinas cadastradas pelo botao "+ Adicionar PC".
+#
+# Dado simulado cobrindo dado medido e a pior falha possivel neste projeto: a
+# tela continua bonita e passa a mentir, e ninguem tem como perceber olhando.
+#
+# O filtro e o GUID do seed (`bbbbbbbb-...`), que e ASCII, fixo no arquivo de
+# seed e imune a corrupcao de acento no caminho PowerShell -> docker -> psql.
+# Qualquer maquina que NAO veio do seed e real por definicao: fica de fora, e
+# permanece "nunca vista" ate o agente dela reportar — que e a verdade.
 $maquinas = @()
 $linhas = Sql @"
 select m.id || '|' || s.code || '|' || m.label || '|' || m.role_code
 from public.machines m
 join public.sites s on s.id = m.site_id
 where m.is_active
+  and m.id::text like 'bbbbbbbb-%'
 order by s.code, m.label;
 "@
+
+if ($linhas.Count -eq 0 -or [string]::IsNullOrWhiteSpace(($linhas -join ''))) {
+  Write-Host '   nenhuma maquina de demonstracao encontrada (seed nao aplicado?)' -ForegroundColor Yellow
+  Write-Host '   o simulador NAO toca em maquina real; nada a fazer.' -ForegroundColor DarkGray
+  exit 0
+}
 
 foreach ($linha in $linhas) {
   if ([string]::IsNullOrWhiteSpace($linha)) { continue }

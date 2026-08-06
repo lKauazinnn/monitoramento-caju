@@ -430,6 +430,30 @@ try {
     segredoBanco.length >= 24 && segredoNoComando === segredoBanco,
     `banco=${segredoBanco.length}ch comando=${segredoNoComando.length}ch`);
 
+  // ---- e o do banco é o que o ENDPOINT realmente exige ---------------------
+  //
+  // Faltava esta. O banco e o endpoint guardam o segredo em lugares diferentes
+  // (ingest_config e a variável de ambiente do contêiner), e nada os obrigava a
+  // concordar. Um teste SQL que escrevia em ingest_config trocou o segredo real
+  // por `aaaa...`: o comando gerado continuava "correto" para todas as
+  // verificações acima, e o PC instalado com ele tomaria 401 para sempre — sem
+  // nada na tela dizendo o porquê.
+  //
+  // Comparar as duas pontas é a única forma de saber que o comando FUNCIONA, e
+  // não apenas que está bem formado.
+  let segredoEndpoint = '';
+  try {
+    segredoEndpoint = execFileSync('docker', [
+      'exec', 'monitor-ingest', 'printenv', 'INGEST_SHARED_SECRET',
+    ], { encoding: 'utf8' }).trim();
+  } catch (e) {
+    segredoEndpoint = `(não consegui ler: ${e.message})`;
+  }
+
+  verificar('segredo do banco é o que o endpoint de ingestão exige',
+    segredoEndpoint.length >= 24 && segredoEndpoint === segredoBanco,
+    `endpoint=${segredoEndpoint.slice(0, 6)}... banco=${segredoBanco.slice(0, 6)}...`);
+
   const estaticos = await js(`
     (async () => {
       const fora = [];
