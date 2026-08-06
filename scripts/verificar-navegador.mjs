@@ -85,6 +85,10 @@ function limpar() {
   try { rmSync(perfil, { recursive: true, force: true }); } catch (_) { /* ocupado */ }
 }
 
+// Definida dentro do try, usada no finally: o cenario proprio precisa sair do
+// banco mesmo quando a suite morre no meio.
+let limparFixture = () => {};
+
 try {
   const ws = new WebSocket(await alvo());
   await new Promise((r, j) => { ws.onopen = r; ws.onerror = () => j(new Error('WebSocket falhou')); });
@@ -151,6 +155,64 @@ try {
   // =========================================================================
   console.log(`\nnavegador: ${navegador.split('\\').pop()}`);
   console.log(`dashboard: ${URL_DASH}\n`);
+
+  // -------------------------------------------------------------------------
+  // Cenário próprio
+  // -------------------------------------------------------------------------
+  // A suíte inteira presumia que existia pelo menos uma máquina na tela. Isso
+  // parecia seguro enquanto o seed de demonstração estava sempre lá — e deixou
+  // de ser no momento em que o dashboard ganhou o botão de remover loja. Com o
+  // banco vazio ela explodia no critério de XSS, que e a verificação MAIS
+  // importante do projeto, com "Cannot read properties of null".
+  //
+  // Teste que depende do que sobrou de outro teste não é teste. Este cria o que
+  // precisa, com GUID próprio, e remove no fim mesmo se falhar.
+  const FIX = 'ZZNAV';
+  const FIX_MAQ = 'PC-VERIFICACAO-NAVEGADOR';
+
+  const psqlFix = (q) => execFileSync('docker',
+    ['exec', 'monitor-db', 'psql', '-U', 'postgres', '-q', '-t', '-A', '-c', q],
+    { encoding: 'utf8' }).trim();
+
+  // Atribuido a variavel de escopo externo para que o `finally` la embaixo
+  // consiga limpar mesmo quando a suite morre no meio.
+  limparFixture = () => {
+    try {
+      psqlFix(`delete from public.machines where label = '${FIX_MAQ}';
+               delete from public.sites  where code = '${FIX}';
+               delete from public.brands where code = '${FIX}';`);
+    } catch (_) { /* nada a fazer no encerramento */ }
+  };
+
+  limparFixture();
+  psqlFix(`
+    insert into public.brands (code, name)
+    select '${FIX}', 'verificacao navegador'
+    where not exists (select 1 from public.brands where code = '${FIX}');
+
+    insert into public.sites (brand_id, code, name)
+    select b.id, '${FIX}', 'loja de verificacao' from public.brands b
+    where b.code = '${FIX}' and not exists (select 1 from public.sites where code = '${FIX}');
+
+    insert into public.machines (site_id, role_code, label, hostname)
+    select s.id, 'pdv', '${FIX_MAQ}', 'HOST-VERIFICACAO'
+    from public.sites s where s.code = '${FIX}';
+  `);
+
+  // Amostra fresca, para a máquina renderizar como online e ter cartão, painel
+  // e gráfico — o resto da suíte depende disso.
+  psqlFix(`
+    insert into public.metrics (machine_id, "time", agent_version, cpu_pct, mem_pct, uptime_seconds)
+    select m.id, now(), 'verificacao-1.0.0', 11, 44, 3600
+    from public.machines m where m.label = '${FIX_MAQ}';
+
+    update public.machines
+       set last_seen_at = now(), agent_version = 'verificacao-1.0.0',
+           os_caption = 'Microsoft Windows 11 Pro', ip_lan = '192.168.14.99'
+     where label = '${FIX_MAQ}';
+  `);
+  console.log(`cenário próprio: loja ${FIX} com 1 máquina\n`);
+
   console.log('== Carregamento da página ==');
   // =========================================================================
   await cmd('Page.navigate', { url: URL_DASH });
@@ -620,6 +682,7 @@ try {
   console.error(`\nERRO NO TESTE: ${e.message}`);
   falhas.push('erro de execução do teste');
 } finally {
+  limparFixture();
   limpar();
 }
 
