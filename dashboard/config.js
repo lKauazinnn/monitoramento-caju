@@ -11,9 +11,18 @@ window.MONITOR_CONFIG = {
   // ---------------------------------------------------------------------------
   // MODO LOCAL (padrão): PostgREST do docker-compose
   // ---------------------------------------------------------------------------
-  // A URL é sobrescrita em tempo de execução por dev-config.json, que o
-  // dev-up.ps1 gera com a porta efetivamente escolhida.
-  restUrl: 'http://127.0.0.1:3000',
+  // restUrl fica VAZIO de propósito. Quem define a URL é o dev-config.json, que
+  // o dev-up.ps1 gera com a porta que realmente foi escolhida.
+  //
+  // A versão anterior tinha 'http://127.0.0.1:3000' como padrão, e isso era um
+  // defeito perigoso: se o dev-config.json não carregasse, o dashboard tentava
+  // fazer login em QUALQUER COISA que estivesse na 3000. Nesta máquina a 3000 é
+  // a API do WAHA de outro projeto, que responde 401 — e o sintoma era um login
+  // que "não funciona" sem nenhuma pista do motivo.
+  //
+  // Vazio faz o dashboard PARAR e dizer o que está errado, em vez de conversar
+  // com o serviço errado.
+  restUrl: '',
   anonKey: '',        // PostgREST local não exige apikey
   authMode: 'local',  // login real: e-mail + senha verificados com bcrypt no banco
 

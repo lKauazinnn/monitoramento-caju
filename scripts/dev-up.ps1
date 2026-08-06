@@ -160,6 +160,25 @@ Passo 'Escolhendo portas'
 # Nesta maquina 8080 e 3000 estavam tomadas por wslrelay (sobra do Docker/WSL).
 # Descobrir a porta livre e melhor que documentar "libere a 8080": o script
 # funciona na maquina de quem for rodar, nao apenas na minha.
+function QuemOcupa {
+  param([int] $Porta)
+
+  # Dizer QUEM ocupa, nao apenas que esta ocupada. Nesta maquina as portas 3000 e
+  # 8080 sao de outro projeto (WAHA), e abrir a 8080 achando que era este
+  # dashboard custou uma sessao inteira de diagnostico.
+  $c = docker ps --format '{{.Names}} {{.Ports}}' 2>$null |
+         Where-Object { $_ -match ":$Porta->" }
+  if ($c) { return "container docker: $(($c -split ' ')[0])" }
+
+  $t = Get-NetTCPConnection -LocalPort $Porta -State Listen -ErrorAction SilentlyContinue
+  if ($t) {
+    $nome = (Get-Process -Id $t[0].OwningProcess -ErrorAction SilentlyContinue).ProcessName
+    if ($nome) { return "processo: $nome" }
+    return 'processo desconhecido'
+  }
+  return $null
+}
+
 function PortaLivre {
   param([int] $Preferida, [int] $Tentativas = 40)
   for ($p = $Preferida; $p -lt ($Preferida + $Tentativas); $p++) {
@@ -172,8 +191,17 @@ function PortaLivre {
 $restPort = PortaLivre 3000
 $webPort  = PortaLivre 8080
 
-if ($restPort -ne 3000) { Info "porta 3000 ocupada; API vai para $restPort" }
-if ($webPort  -ne 8080) { Info "porta 8080 ocupada; dashboard vai para $webPort" }
+if ($restPort -ne 3000) {
+  $dono = QuemOcupa 3000
+  Write-Host "   porta 3000 ocupada por $dono" -ForegroundColor Yellow
+  Write-Host "   -> a API deste projeto vai para $restPort" -ForegroundColor Yellow
+}
+if ($webPort -ne 8080) {
+  $dono = QuemOcupa 8080
+  Write-Host "   porta 8080 ocupada por $dono" -ForegroundColor Yellow
+  Write-Host "   -> o DASHBOARD deste projeto vai para $webPort" -ForegroundColor Yellow
+  Write-Host "   -> NAO abra 127.0.0.1:8080, ali esta outra aplicacao" -ForegroundColor Yellow
+}
 Ok "API $restPort  |  dashboard $webPort"
 
 # docker compose le .env por padrao. As portas escolhidas entram aqui, nao no
@@ -543,4 +571,17 @@ Write-Host '   SQL          : docker exec -it monitor-db psql -U postgres'
 Write-Host '  ============================================================' -ForegroundColor Green
 Write-Host ''
 
-try { Start-Process $webUrl } catch { Info "abra $webUrl no navegador" }
+# A URL abre com ?v= e um carimbo de tempo.
+#
+# Isso e o que garante que o navegador NAO sirva a pagina do proprio cache: uma
+# URL que ele nunca viu nao tem entrada em cache, ponto. Sem isto, dependia de o
+# usuario saber fazer Ctrl+Shift+R — e enquanto ele nao fizesse, veria uma versao
+# antiga do dashboard e nenhuma pista do motivo.
+$carimbo = (Get-Date).ToString('yyyyMMddHHmmss')
+$urlAbrir = "$webUrl/?v=$carimbo"
+
+Write-Host "   Abrindo: $urlAbrir" -ForegroundColor Cyan
+Write-Host '   (o ?v= evita que o navegador use uma copia antiga da pagina)' -ForegroundColor DarkGray
+Write-Host ''
+
+try { Start-Process $urlAbrir } catch { Info "abra $urlAbrir no navegador" }

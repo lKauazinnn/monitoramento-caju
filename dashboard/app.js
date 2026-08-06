@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.3';
+const BUILD = '2026-08-06.4';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -293,14 +293,29 @@ async function entrarLocal(email, senha) {
  * gerado pelo dev-up em vez de ficar cravada no config.js.
  */
 async function descobrirApiLocal() {
+  let d;
+
   try {
     const resp = await fetch('dev-config.json', { cache: 'no-store' });
-    if (!resp.ok) return;
-    const d = await resp.json();
-    if (d.restUrl) CFG.restUrl = d.restUrl;
-  } catch (_) {
-    // Sem o arquivo, vale o que está em config.js.
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    d = await resp.json();
+  } catch (e) {
+    // FALHA ALTA, não silenciosa. A versão anterior engolia o erro e o dashboard
+    // seguia com a URL padrão do config.js — que podia ser a porta de um serviço
+    // completamente diferente. Ficar mudo aqui é o que transformava um problema
+    // trivial de porta num "login não funciona" indecifrável.
+    throw new Error(
+      `dev-config.json não pôde ser lido (${e.message}).\n\n` +
+      'Este arquivo diz em qual porta a API subiu. Rode:\n' +
+      '  .\\scripts\\dev-up.ps1',
+    );
   }
+
+  if (!d.restUrl) {
+    throw new Error('dev-config.json não contém restUrl. Rode .\\scripts\\dev-up.ps1 novamente.');
+  }
+
+  CFG.restUrl = d.restUrl;
 }
 
 // -----------------------------------------------------------------------------
@@ -880,7 +895,18 @@ async function principal() {
   // A URL da API é resolvida antes de qualquer chamada, inclusive antes de tentar
   // reusar a sessão guardada: o dev-up pode ter subido em outra porta.
   if (CFG.authMode === 'local') {
-    await descobrirApiLocal();
+    try {
+      await descobrirApiLocal();
+    } catch (e) {
+      // Sem saber a URL da API não há login possível. Mostra o motivo na tela e
+      // não deixa o usuário digitar credencial num formulário que não vai a
+      // lugar nenhum.
+      mostrarFalhaGlobal('Não foi possível descobrir o endereço da API', e.message);
+      $('tela-login').hidden = false;
+      $('btn-entrar').disabled = true;
+      return;
+    }
+
     // Agora sim: a URL efetiva, depois da descoberta.
     console.info(`[monitor] API efetiva: ${CFG.restUrl}`);
 
