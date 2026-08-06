@@ -439,6 +439,37 @@ main { padding: 0 18px 40px; }
 
 .brinde-erro { background: #3f1d1d; border-color: #7f1d1d; color: #fca5a5; }
 
+/* ------------------------------------------------------- erro de script --- */
+/* Fixo no topo e por cima de tudo: um erro de JavaScript pode ter impedido a
+   montagem da interface, então esta faixa não pode depender de nenhum layout. */
+.falha-js {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  background: #7f1d1d;
+  color: #fee2e2;
+  padding: 12px 16px;
+  border-bottom: 2px solid #fca5a5;
+  font-size: 13px;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+
+.falha-js strong { display: block; margin-bottom: 6px; }
+
+.falha-js pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.falha-js-dica { margin: 8px 0 0; font-size: 11px; opacity: .85; }
+
 @media (max-width: 640px) {
   .dados { grid-template-columns: 1fr; }
   .dados dt { margin-top: 7px; }

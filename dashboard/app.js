@@ -12,7 +12,68 @@
 
 'use strict';
 
+// Marca visível da versão do arquivo. Serve para responder em um segundo a
+// "o navegador está com o código novo?" — que foi exatamente a dúvida que
+// custou mais tempo neste projeto.
+const BUILD = '2026-08-06.3';
+
+// -----------------------------------------------------------------------------
+// Captura global de erro — registrada ANTES de qualquer outra coisa
+// -----------------------------------------------------------------------------
+// Sem isto, um erro de JavaScript em qualquer ponto produz o pior sintoma
+// possível: o botão é clicado e nada acontece, sem mensagem em lugar nenhum.
+// Escrito com DOM puro e sem depender de nenhuma função deste arquivo, porque
+// ele precisa funcionar mesmo se o erro tiver ocorrido nas primeiras linhas.
+function mostrarFalhaGlobal(titulo, detalhe) {
+  try {
+    const caixa = document.getElementById('falha-js');
+    const msg = document.getElementById('falha-js-msg');
+    if (!caixa || !msg) {
+      // Nem o HTML carregou: alert é o último recurso, mas é melhor que silêncio.
+      window.alert(`${titulo}\n\n${detalhe}`);
+      return;
+    }
+    msg.textContent = `[build ${BUILD}] ${titulo}\n${detalhe}`;
+    caixa.hidden = false;
+  } catch (_) {
+    // Se nem isto funcionar, não há mais nada a fazer.
+  }
+}
+
+window.addEventListener('error', (ev) => {
+  const e = ev.error;
+  mostrarFalhaGlobal(
+    ev.message || 'erro de script',
+    e && e.stack ? e.stack : `${ev.filename || '?'}:${ev.lineno || '?'}`,
+  );
+});
+
+window.addEventListener('unhandledrejection', (ev) => {
+  const r = ev.reason;
+  mostrarFalhaGlobal(
+    'promessa rejeitada sem tratamento',
+    r && r.stack ? r.stack : String(r),
+  );
+});
+
 const CFG = window.MONITOR_CONFIG;
+
+if (!CFG) {
+  // config.js não carregou (bloqueado, 404, ou cache corrompido). Sem isto o
+  // erro seria "Cannot read properties of undefined" no meio do código, longe
+  // da causa.
+  mostrarFalhaGlobal(
+    'config.js não carregou',
+    'window.MONITOR_CONFIG está indefinido. Verifique se dashboard/config.js está sendo servido.',
+  );
+  throw new Error('config.js ausente');
+}
+
+// Só o build e o modo aqui. A restUrl NÃO é logada neste ponto porque ela ainda
+// é o valor padrão do config.js — descobrirApiLocal() a substitui depois. Logá-la
+// aqui produzia uma linha enganosa (mostrava a porta 3000 quando a API estava na
+// 3001), e diagnóstico que mente custa mais tempo que diagnóstico ausente.
+console.info(`[monitor] build ${BUILD} | authMode=${CFG.authMode}`);
 
 // -----------------------------------------------------------------------------
 // Estado
@@ -173,11 +234,30 @@ async function entrarSupabase(email, senha) {
 async function entrarLocal(email, senha) {
   const base = CFG.restUrl.replace(/\/+$/, '');
 
-  const resp = await fetch(`${base}/rpc/local_sign_in`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ p_email: email, p_password: senha }),
-  });
+  // Timeout explícito. Sem ele, uma API inalcançável (porta errada, container
+  // parado, firewall) deixa o fetch pendurado indefinidamente — e o usuário vê
+  // o botão desabilitado e mais nada, para sempre. Este é o segundo caminho que
+  // produzia "cliquei e não aconteceu nada".
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 15000);
+
+  let resp;
+  try {
+    resp = await fetch(`${base}/rpc/local_sign_in`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_email: email, p_password: senha }),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      throw new Error(`a API em ${base} não respondeu em 15s — o container está no ar?`);
+    }
+    // TypeError aqui é quase sempre rede: porta errada, serviço parado, CORS.
+    throw new Error(`não foi possível falar com a API em ${base} (${e.message})`);
+  } finally {
+    clearTimeout(t);
+  }
 
   const texto = await resp.text();
   let dados = {};
@@ -711,6 +791,12 @@ function ligarEventos() {
 
     const email = $('email').value.trim();
     const senha = $('senha').value;
+    const btn = $('btn-entrar');
+    const rotuloOriginal = btn.textContent;
+
+    // Retorno visual imediato. Um botão que muda de texto prova ao usuário que o
+    // clique foi recebido — sem isso, qualquer lentidão parece "não funcionou".
+    btn.textContent = 'Entrando...';
 
     try {
       const s = CFG.authMode === 'supabase'
@@ -728,7 +814,8 @@ function ligarEventos() {
       $('senha').value = '';
       $('senha').focus();
     } finally {
-      $('btn-entrar').disabled = false;
+      btn.disabled = false;
+      btn.textContent = rotuloOriginal;
     }
   });
 
@@ -794,9 +881,14 @@ async function principal() {
   // reusar a sessão guardada: o dev-up pode ter subido em outra porta.
   if (CFG.authMode === 'local') {
     await descobrirApiLocal();
+    // Agora sim: a URL efetiva, depois da descoberta.
+    console.info(`[monitor] API efetiva: ${CFG.restUrl}`);
 
     const aviso = $('aviso-dev');
-    txt(aviso, 'Stack local. Entre com o e-mail e a senha criados por scripts\\criar-usuario.ps1.');
+    // O build aparece na tela: é como se confirma em um segundo que o navegador
+    // está com o arquivo atual, sem abrir o console.
+    txt(aviso, `Stack local (build ${BUILD}) — API ${CFG.restUrl}. `
+             + 'Entre com o e-mail e a senha criados por criar-usuario.ps1.');
     aviso.hidden = false;
   }
 

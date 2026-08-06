@@ -4,7 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Monitoramento de Infraestrutura</title>
-  <link rel="stylesheet" href="styles.css">
+  <!-- O ?v= não é enfeite: ele MUDA A URL do arquivo.
+       Um navegador que já guardou "app.js" tem essa cópia indexada por aquela
+       URL exata; pedir "app.js?v=3" é pedir outro recurso, e a cópia velha não
+       serve. Com o index.html em no-store, um F5 comum já basta — sem depender
+       de o usuário saber fazer recarga forçada.
+       AO ALTERAR app.js OU styles.css, SUBA ESTE NÚMERO. -->
+  <link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 
@@ -119,8 +125,20 @@
 
 <div id="brinde" class="brinde" hidden role="status"></div>
 
+<!-- Faixa de erro de JavaScript.
+     Existe porque, sem ela, um erro de script produz exatamente o sintoma mais
+     difícil de diagnosticar: clicar no botão e NADA acontecer. Com ela, o erro
+     aparece na tela em vez de ficar só no console. -->
+<div id="falha-js" class="falha-js" hidden role="alert">
+  <strong>Erro de JavaScript</strong>
+  <pre id="falha-js-msg"></pre>
+  <p class="falha-js-dica">
+    Se isto apareceu depois de uma atualização, recarregue com Ctrl+Shift+R.
+  </p>
+</div>
+
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=3"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
