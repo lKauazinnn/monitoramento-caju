@@ -61,15 +61,58 @@ try {
 for (const [arq, marca] of [['instalar.ps1', 'param('], ['agente.ps1', 'NovaAmostra']]) {
   try {
     const r = await fetch(`${BASE}/${arq}`);
-    const t = await r.text();
+    const bruto = Buffer.from(await r.arrayBuffer());
+    const t = bruto.toString('utf8');
+
     v(`${arq} baixa pelo IP da LAN`, r.ok && t.length > 1000, `HTTP ${r.status}, ${t.length} bytes`);
     v(`${arq} tem conteudo de PowerShell`, t.includes(marca), `procurava ${marca}`);
+
+    // SEM BOM. O comando de instalacao faz `[scriptblock]::Create((irm ...))`, e
+    // um BOM no inicio vira o primeiro CARACTERE do texto: com algo antes dele,
+    // `param()` deixa de ser a primeira instrucao e o PowerShell recusa o bloco
+    // inteiro com "Token 'param' inesperado". Foi assim que a instalacao falhou
+    // na primeira tentativa real, e nenhuma verificacao pegava.
+    v(`${arq} servido SEM BOM`,
+      !(bruto[0] === 0xEF && bruto[1] === 0xBB && bruto[2] === 0xBF),
+      `primeiros bytes: ${[...bruto.slice(0, 3)].map((x) => x.toString(16)).join(' ')}`);
+
     if (arq === 'agente.ps1') {
       v('agente baixado forca TLS 1.2/1.3', t.includes('SecurityProtocol'));
     }
   } catch (e) {
     v(`${arq} baixa pelo IP da LAN`, false, e.message);
   }
+}
+
+// ---- 2b. o PowerShell CONSEGUE montar o scriptblock? -----------------------
+//
+// A verificacao definitiva, e a que faltava: em vez de inspecionar o texto,
+// manda o proprio PowerShell fazer exatamente o que o comando de instalacao faz
+// — baixar e chamar [scriptblock]::Create. Se ele recusar, o motivo aparece
+// aqui, e nao na loja.
+//
+// `Create` apenas ANALISA; nada e executado, porque o bloco nao e invocado.
+for (const arq of ['instalar.ps1', 'agente.ps1']) {
+  const ps = `
+    $ErrorActionPreference = 'Stop'
+    try {
+      $t = Invoke-RestMethod -Uri '${BASE}/${arq}' -TimeoutSec 20
+      $null = [scriptblock]::Create($t)
+      'OK'
+    } catch {
+      'ERRO: ' + $_.Exception.Message.Split([char]10)[0]
+    }`;
+
+  let saida = '';
+  try {
+    saida = execFileSync('powershell',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      { encoding: 'utf8' }).trim();
+  } catch (e) {
+    saida = `ERRO: ${e.message}`;
+  }
+
+  v(`o PowerShell analisa ${arq} como scriptblock`, saida.startsWith('OK'), saida.slice(0, 200));
 }
 
 // ---- 3. token de uma maquina descartavel -----------------------------------

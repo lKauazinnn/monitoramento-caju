@@ -197,7 +197,23 @@ const servidor = createServer(async (req, res) => {
     if (req.method === 'GET' && (rota === '/agente.ps1' || rota === '/instalar.ps1')) {
       const arquivo = rota === '/agente.ps1' ? '/app/agente.ps1' : '/app/instalar.ps1';
       try {
-        const conteudo = await readFile(arquivo);
+        const bruto = await readFile(arquivo);
+
+        // SEM O BOM. Os .ps1 em disco carregam BOM UTF-8 de propósito — sem ele
+        // o PowerShell 5.1 lê o ARQUIVO como ANSI e um acento quebra a análise
+        // sintática. Mas o comando de instalação não salva este conteúdo em
+        // disco: ele faz `[scriptblock]::Create((irm ...))`, e aí o BOM vira o
+        // primeiro CARACTERE do texto. Com um caractere antes dele, `param()`
+        // deixa de ser a primeira instrução do bloco e o PowerShell recusa:
+        //
+        //   Atributo 'CmdletBinding' inesperado.
+        //   Token 'param' inesperado na expressão ou instrução.
+        //
+        // O agente que o instalador grava em disco recebe BOM de volta lá, no
+        // WriteAllText com UTF8Encoding($true) — que é onde ele faz falta.
+        const temBom = bruto[0] === 0xEF && bruto[1] === 0xBB && bruto[2] === 0xBF;
+        const conteudo = temBom ? bruto.subarray(3) : bruto;
+
         res.writeHead(200, {
           'content-type': 'text/plain; charset=utf-8',
           'content-length': conteudo.length,

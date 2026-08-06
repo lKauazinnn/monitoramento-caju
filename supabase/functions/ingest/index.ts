@@ -163,17 +163,25 @@ async function handleHealthz(req: Request): Promise<Response> {
 //   3. saber baixar o instalador não dá acesso a nada — a ingestão continua
 //      exigindo o segredo compartilhado E o token da máquina.
 //
-// O BOM UTF-8 é deliberado. O PowerShell 5.1 lê .ps1 sem BOM como ANSI, e um
-// acento no arquivo viraria caractere de aspas que quebra a análise sintática —
-// o script nem chegaria a rodar. `Invoke-RestMethod` devolve o texto decodificado
-// pelo charset do header, e o instalador regrava com BOM no disco; servir com BOM
-// mantém o comportamento igual em quem baixar com curl ou pelo navegador.
-const BOM = "﻿";
-
+// SEM BOM, e isto foi um erro meu na primeira versão.
+//
+// O raciocínio de lá estava certo para o caso errado: o PowerShell 5.1 realmente
+// lê um .ps1 SEM BOM como ANSI, e um acento vira caractere que quebra a análise
+// sintática. Só que isso vale para arquivo em DISCO. Aqui o conteúdo vai para
+// `[scriptblock]::Create((irm ...))`, e o BOM vira o primeiro CARACTERE do texto
+// — com algo antes dele, `param()` deixa de ser a primeira instrução do bloco:
+//
+//   Atributo 'CmdletBinding' inesperado.
+//   Token 'param' inesperado na expressão ou instrução.
+//
+// Quem baixar com `Invoke-WebRequest -OutFile` e rodar do disco continua bem: o
+// charset=utf-8 do header já diz como decodificar. E o agente que o instalador
+// grava recebe BOM lá, no WriteAllText com UTF8Encoding($true), que é o lugar
+// onde ele faz falta.
 function servirScript(nome: "agente" | "instalar"): Response {
   const corpo = nome === "agente" ? AGENTE_PS1 : INSTALAR_PS1;
 
-  return new Response(BOM + corpo, {
+  return new Response(corpo, {
     status: 200,
     headers: {
       "content-type": "text/plain; charset=utf-8",
