@@ -226,10 +226,36 @@ try {
 
   console.log(`        banco: ${esperado.maquinas} máquinas, ${esperado.lojas} lojas, ${esperado.marcas} marcas`);
 
-  const kpiTotal = await js("document.getElementById('kpi-total').textContent");
-  verificar('KPI de total preenchido', /^\d+$/.test(kpiTotal || ''), `kpi-total=${kpiTotal}`);
-  verificar('KPI de total bate com o banco',
-    Number(kpiTotal) === esperado.maquinas, `tela=${kpiTotal} banco=${esperado.maquinas}`);
+  // kpi-total passou a significar HOSTS RESPONDENDO (online + degradado), não o
+  // total cadastrado — o número grande de um painel de operação tem de ser o que
+  // está de pé agora. O total continua na tela, ao lado, como "de N".
+  const cab = await js(`
+    ({
+      respondendo: document.getElementById('kpi-total').textContent,
+      de:          document.getElementById('kpi-online-de').textContent,
+      quadrados:   document.querySelectorAll('.host-quad').length,
+      cartoesLoja: document.querySelectorAll('.cartao-loja').length,
+    })
+  `);
+
+  verificar('KPI de hosts respondendo preenchido', /^\d+$/.test(cab.respondendo || ''),
+    `kpi-total=${cab.respondendo}`);
+  verificar('total da frota na tela bate com o banco',
+    cab.de === `de ${esperado.maquinas}`, `tela="${cab.de}" banco=${esperado.maquinas}`);
+  verificar('respondendo nunca passa do total',
+    Number(cab.respondendo) <= esperado.maquinas, JSON.stringify(cab));
+
+  // Modo "lojas" é o padrão: um cartão por loja e um quadrado por máquina.
+  verificar('um cartão por loja do banco',
+    cab.cartoesLoja === esperado.lojas, `${cab.cartoesLoja} cartões, ${esperado.lojas} lojas`);
+  verificar('um quadrado de host por máquina do banco',
+    cab.quadrados === esperado.maquinas, `${cab.quadrados} quadrados, ${esperado.maquinas} máquinas`);
+
+  // ---- troca para o modo "máquinas" ---------------------------------------
+  // O restante das verificações estruturais é sobre a lista por máquina, que
+  // agora é a segunda vista. Trocar aqui é o que o operador faria.
+  await js("document.querySelector('.seg[data-modo=\"maquinas\"]').click(); true");
+  await dormir(900);
 
   const cartoes = await js("document.querySelectorAll('.cartao').length");
   verificar('um cartão por máquina do banco',

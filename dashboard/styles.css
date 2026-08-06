@@ -1,520 +1,829 @@
 /* ==========================================================================
-   Dashboard de monitoramento
+   Centro de operações
    ==========================================================================
-   A tela existe para responder "o que esta quebrado agora" em dezenas de lojas.
-   Densidade antes de enfeite, e uma regra de cor: vermelho e reservado para
-   offline e para limiar estourado. Se tudo pode ficar vermelho, nada chama
-   atencao.
+   Linguagem visual vinda do desenho "Sentinela NOC": paleta, escala de
+   superfícies, raios e animações são os de lá. O que mudou foi o CONTEÚDO —
+   aqui só entra número medido (ver a migração 0018).
 
-   Fonte em ASCII de proposito. Este arquivo ja foi corrompido uma vez por uma
+   Uma regra de cor manda em tudo: vermelho é reservado para offline e limiar
+   estourado. Se qualquer coisa pode ficar vermelha, nada chama atenção.
+
+   Fonte em ASCII de propósito. Este arquivo já foi corrompido uma vez por uma
    reescrita do PowerShell que estragou travessao e acento maiusculo; texto que
    aparece na tela mora no HTML, aqui nao entra caractere especial.
    ========================================================================== */
 
 :root {
-  /* Superficies, da mais funda para a mais alta */
-  --fundo:     #0c0e13;
-  --painel-0:  #10131a;
-  --painel:    #14171e;
-  --painel-2:  #1b1f28;
-  --painel-3:  #232833;
-  --borda:     #262c38;
-  --borda-forte: #333a48;
+  --bg:      #06080d;
+  --pnl:     rgba(255, 255, 255, .045);
+  --pnl2:    rgba(255, 255, 255, .026);
+  --bd:      rgba(255, 255, 255, .085);
+  --bd2:     rgba(255, 255, 255, .05);
+  --fg:      #e9eef6;
+  --fg2:     #8b97ab;
+  --fg3:     #5c6a7e;
+  --ok:      #35d6a4;
+  --warn:    #f5b544;
+  --crit:    #ff5c6c;
+  --info:    #6aa8ff;
+  --vio:     #a78bfa;
+  --hov:     rgba(255, 255, 255, .07);
+  --sh:      0 12px 34px rgba(0, 0, 0, .34);
+  --sh-alta: 0 24px 60px rgba(0, 0, 0, .55);
+  --grid:    rgba(255, 255, 255, .024);
+  --chrome:  rgba(9, 12, 19, .78);
 
-  --texto:      #e7e9ee;
-  --texto-medio: #b3bac7;
-  --texto-fraco: #7f8899;
+  --r-p: 8px;
+  --r-m: 12px;
+  --r-g: 16px;
 
-  /* Semanticas: cor do texto, fundo tingido e borda, para cada estado */
-  --ok: #34d399;
-  --ok-fundo: #0e2f24;
-  --ok-borda: #1c5c46;
+  /* Manrope e JetBrains Mono sao as do desenho. NAO sao carregadas do Google:
+     um painel de operacao precisa abrir com a rede da loja ruim ou sem internet,
+     e uma fonte remota que nao chega troca o texto inteiro de metrica no meio do
+     turno. A pilha do sistema no Windows 11 (Segoe UI Variable) tem proporcao
+     parecida. Para usar as originais, sirva os .woff2 de dashboard/vendor/. */
+  --fonte: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Mono", ui-monospace, "JetBrains Mono", Consolas, monospace;
+}
 
-  --ruim: #f87171;
-  --ruim-fundo: #331416;
-  --ruim-borda: #7b2529;
-
-  --alerta: #fbbf24;
-  --alerta-fundo: #2e2109;
-  --alerta-borda: #6b4d10;
-
-  --neutro: #5c6675;
-  --azul: #4f8ef7;
-  --azul-fundo: #12213d;
-
-  --r-p: 6px;    /* raio pequeno  */
-  --r-m: 10px;   /* raio superficie */
-  --sombra: 0 4px 16px rgba(0, 0, 0, .38);
-  --sombra-alta: 0 18px 48px rgba(0, 0, 0, .55);
-
-  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+html[data-tema="light"] {
+  --bg:      #eef1f6;
+  --pnl:     rgba(255, 255, 255, .94);
+  --pnl2:    rgba(15, 23, 42, .032);
+  --bd:      rgba(15, 23, 42, .11);
+  --bd2:     rgba(15, 23, 42, .07);
+  --fg:      #0e1626;
+  --fg2:     #5b6879;
+  --fg3:     #8593a5;
+  --ok:      #0d9b74;
+  --warn:    #a9720d;
+  --crit:    #d21f37;
+  --info:    #2563eb;
+  --vio:     #7c3aed;
+  --hov:     rgba(15, 23, 42, .055);
+  --sh:      0 10px 26px rgba(15, 23, 42, .1);
+  --sh-alta: 0 20px 48px rgba(15, 23, 42, .18);
+  --grid:    rgba(15, 23, 42, .04);
+  --chrome:  rgba(255, 255, 255, .82);
 }
 
 * { box-sizing: border-box; }
 
 /* O ESSENCIAL. `[hidden]` vale display:none pela folha do navegador, e qualquer
    `display:` de autor vence essa origem. Sem esta linha, `.painel` e `.modal`
-   (que sao flex) NUNCA sumiam: o painel de detalhe e o modal de cadastro
-   ficavam empilhados sobre o dashboard, e o botao de fechar parecia nao
-   funcionar mesmo com o JS marcando hidden = true. */
+   (que sao flex) NUNCA sumiam: ficavam empilhados sobre o dashboard, e o botao
+   de fechar parecia nao funcionar mesmo com o JS marcando hidden = true. */
 [hidden] { display: none !important; }
 
+html, body { margin: 0; padding: 0; background: var(--bg); }
+
 body {
-  margin: 0;
-  background: var(--fundo);
-  color: var(--texto);
-  font: 13px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  color: var(--fg);
+  font: 13px/1.5 var(--fonte);
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
-
+h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: -.015em; }
 button { font-family: inherit; }
+a { color: var(--info); text-decoration: none; }
+a:hover { color: var(--vio); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--bd); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+input { font-family: inherit; }
+input::placeholder { color: var(--fg3); }
+
+:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+
+.mono { font-family: var(--mono); font-variant-ligatures: none; }
 
 /* Numero medido nunca deve dancar de largura ao atualizar. */
-.tira-num, .metrica-val, .cartao-visto, .evento-quando, .dados dd, .contador {
-  font-variant-numeric: tabular-nums;
+.mono, .tira-valor strong, .cel-val { font-variant-numeric: tabular-nums; }
+
+.ico { width: 15.5px; height: 15.5px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.85; stroke-linecap: round; stroke-linejoin: round; }
+
+@keyframes pulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .32; transform: scale(.8); } }
+@keyframes riseIn   { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes slideL   { from { opacity: 0; transform: translateX(26px); } to { opacity: 1; transform: none; } }
+@keyframes popIn    { from { opacity: 0; transform: translate(-50%, -50%) scale(.97); } to { opacity: 1; transform: translate(-50%, -50%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
 }
 
-:focus-visible { outline: 2px solid var(--azul); outline-offset: 2px; }
-
-/* ---------------------------------------------------------------- login --- */
-/* Usado apenas por login.html, no modo Supabase. index.html nao tem formulario
-   de credencial. */
-.tela-login { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-
-.caixa-login {
-  width: 100%;
-  max-width: 370px;
-  background: var(--painel);
-  border: 1px solid var(--borda);
-  border-radius: var(--r-m);
-  padding: 30px;
-  box-shadow: var(--sombra);
+/* --------------------------------------------------------------- malha --- */
+.malha {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 46px 46px;
 }
 
-.caixa-login h1 { font-size: 21px; margin-bottom: 5px; }
-.caixa-login .sub { color: var(--texto-fraco); margin: 0 0 22px; font-size: 12.5px; }
-.caixa-login label { display: block; margin: 15px 0 6px; font-size: 11.5px; color: var(--texto-medio); font-weight: 500; }
-
-.caixa-login input {
-  width: 100%;
-  padding: 10px 12px;
-  background: var(--fundo);
-  border: 1px solid var(--borda-forte);
-  border-radius: var(--r-p);
-  color: var(--texto);
-  font-size: 14px;
+/* ------------------------------------------------------------- esqueleto --- */
+.app {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  min-height: 100vh;
 }
 
-.caixa-login input:focus { outline: none; border-color: var(--azul); box-shadow: 0 0 0 3px rgba(79, 142, 247, .18); }
+/* =========================================================== barra lateral === */
+.lateral {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 12px;
+  background: var(--chrome);
+  backdrop-filter: blur(14px);
+  border-right: 1px solid var(--bd2);
+  overflow-y: auto;
+}
 
-.caixa-login button {
+.marca-app { display: flex; align-items: center; gap: 10px; padding: 2px 6px; }
+
+.marca-selo {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: linear-gradient(150deg, var(--ok), var(--info));
+  display: grid;
+  place-items: center;
+  color: #04120c;
+  flex: 0 0 auto;
+}
+
+.marca-selo svg { width: 17px; height: 17px; }
+.marca-texto { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.marca-nome-app { font-size: 14px; font-weight: 800; letter-spacing: -.02em; }
+
+.etiqueta-micro {
+  font-size: 8.5px;
+  letter-spacing: .12em;
+  color: var(--fg3);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.secao-lateral {
+  font-size: 8.5px;
+  letter-spacing: .16em;
+  color: var(--fg3);
+  text-transform: uppercase;
+  padding: 2px 6px;
+}
+
+.vistas { display: flex; flex-direction: column; gap: 2px; }
+.vistas:empty { display: none; }
+
+.vista {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  margin-top: 22px;
-  padding: 11px;
-  background: var(--azul);
-  color: #fff;
-  border: 0;
-  border-radius: var(--r-p);
-  font-size: 14px;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--fg2);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+
+.vista:hover { background: var(--hov); color: var(--fg); }
+.vista.ativa { background: var(--hov); border-color: var(--bd); color: var(--fg); font-weight: 600; }
+.vista-rot { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.vista-num {
+  font-size: 9.5px;
   font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--pnl2);
+  color: var(--fg2);
+}
+
+.vista-num.ruim    { color: var(--crit); background: color-mix(in srgb, var(--crit) 15%, transparent); }
+.vista-num.alerta  { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+.vista-num.zero    { color: var(--fg3); background: var(--pnl2); }
+
+/* Ponto de marca na lista de marcas. */
+.marca-cor { width: 7px; height: 7px; border-radius: 2px; flex: 0 0 auto; background: var(--info); }
+
+.cartao-lateral {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 11px 12px;
+  background: var(--pnl);
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-m);
+}
+
+.cl-topo { display: flex; align-items: center; justify-content: space-between; }
+.cl-topo .secao-lateral { padding: 0; }
+.cartao-lateral > .secao-lateral { padding: 0; }
+.cl-numero { display: flex; align-items: baseline; gap: 6px; }
+.cl-numero strong { font-size: 21px; font-weight: 700; letter-spacing: -.02em; }
+.cl-unidade { font-size: 10px; color: var(--fg3); }
+.cl-nota { margin: 0; font-size: 9.5px; line-height: 1.45; color: var(--fg3); }
+
+.lateral-pe { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+
+.btn-lateral {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 9px;
+  border-radius: 9px;
+  border: 1px solid var(--bd2);
+  background: var(--pnl2);
+  color: var(--fg2);
+  font-size: 12px;
   cursor: pointer;
 }
 
-.caixa-login button:hover { filter: brightness(1.08); }
-.caixa-login button:disabled { opacity: .5; cursor: default; }
+.btn-lateral:hover { background: var(--hov); color: var(--fg); }
 
-.erro {
-  margin: 14px 0 0;
-  padding: 10px 12px;
-  background: var(--ruim-fundo);
-  border: 1px solid var(--ruim-borda);
-  border-radius: var(--r-p);
-  color: #fca5a5;
-  font-size: 12.5px;
-}
-
-.aviso-dev {
-  margin: 14px 0 0;
-  padding: 10px 12px;
-  background: var(--azul-fundo);
-  border: 1px solid #1e3a6b;
-  border-radius: var(--r-p);
-  color: #a8c7fa;
-  font-size: 11.5px;
-}
-
-/* ----------------------------------------------------------------- topo --- */
-.topo {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  height: 54px;
-  padding: 0 20px;
-  background: rgba(20, 23, 30, .92);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--borda);
-  position: sticky;
-  top: 0;
-  z-index: 30;
-}
-
-.topo-esq, .topo-dir { display: flex; align-items: center; gap: 12px; }
-
-.topo h1 {
-  font-size: 15px;
+.usuario-chip {
   display: flex;
   align-items: center;
   gap: 9px;
+  padding: 8px 9px;
+  border-radius: 10px;
+  background: var(--pnl);
+  border: 1px solid var(--bd2);
 }
 
-/* Marca grafica: um quadrado com a inicial. Da identidade sem pedir imagem
-   nenhuma, que teria de ser um arquivo a mais para servir. */
-.topo h1::before {
-  content: "C";
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--r-p);
-  background: linear-gradient(150deg, var(--azul), #7c5cf0);
+  background: linear-gradient(150deg, var(--info), var(--vio));
   color: #fff;
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 700;
+  flex: 0 0 auto;
 }
 
-.usuario { color: var(--texto-fraco); font-size: 11.5px; }
+.usuario-texto { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.usuario-nome { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.pill {
-  padding: 3px 10px;
+/* ================================================================= topo === */
+.principal { min-width: 0; display: flex; flex-direction: column; }
+
+.topo {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 22px;
+  background: var(--chrome);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--bd2);
+}
+
+.topo-titulo { display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto; }
+.topo-titulo h1 { font-size: 21px; letter-spacing: -.025em; }
+
+.busca-caixa {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1 1 auto;
+  max-width: 420px;
+  padding: 0 11px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--pnl2);
+  border: 1px solid var(--bd2);
+  color: var(--fg3);
+}
+
+.busca-caixa:focus-within { border-color: var(--info); background: var(--pnl); }
+
+.busca-caixa input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.tecla {
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--bd);
+  color: var(--fg3);
+}
+
+.topo-estado { display: flex; align-items: center; gap: 7px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+
+.selo {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
   border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: .02em;
-  border: 1px solid transparent;
+  border: 1px solid var(--bd2);
+  background: var(--pnl2);
+  font-size: 11px;
+  color: var(--fg2);
   white-space: nowrap;
 }
 
-.pill-ok { background: var(--ok-fundo); color: var(--ok); border-color: var(--ok-borda); }
-.pill-ruim { background: var(--ruim-fundo); color: var(--ruim); border-color: var(--ruim-borda); }
-.pill-neutro { background: var(--painel-2); color: var(--texto-fraco); border-color: var(--borda); }
+.selo b { font-weight: 700; color: var(--fg); font-variant-numeric: tabular-nums; }
+.selo-ok     { border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+.selo-ok b   { color: var(--ok); }
+.selo-alerta { border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.selo-alerta b { color: var(--warn); }
+.selo-ruim   { border-color: color-mix(in srgb, var(--crit) 34%, transparent); }
+.selo-ruim b { color: var(--crit); }
+.selo.zero   { border-color: var(--bd2); }
+.selo.zero b { color: var(--fg3); }
+
+.ponto { width: 6px; height: 6px; border-radius: 50%; background: var(--fg3); flex: 0 0 auto; }
+.ponto-ok     { background: var(--ok); animation: pulseDot 2.6s ease-in-out infinite; }
+.ponto-alerta { background: var(--warn); }
+.ponto-ruim   { background: var(--crit); animation: pulseDot 1.5s ease-in-out infinite; }
 
 .btn-primario, .btn-secundario {
-  border-radius: var(--r-p);
+  border-radius: 9px;
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
   padding: 7px 13px;
-  transition: background .12s, border-color .12s, filter .12s;
+  white-space: nowrap;
+  transition: filter .12s, background .12s, border-color .12s;
 }
 
-.btn-primario { background: var(--azul); color: #fff; border: 1px solid var(--azul); }
-.btn-primario:hover { filter: brightness(1.1); }
+.btn-primario { background: var(--info); color: #fff; border: 1px solid transparent; }
+.btn-primario:hover { filter: brightness(1.12); }
 .btn-primario:disabled { opacity: .5; cursor: default; filter: none; }
 
-.btn-secundario { background: var(--painel-2); color: var(--texto-medio); border: 1px solid var(--borda-forte); }
-.btn-secundario:hover { background: var(--painel-3); color: var(--texto); border-color: var(--neutro); }
+.btn-secundario { background: var(--pnl2); color: var(--fg2); border: 1px solid var(--bd); }
+.btn-secundario:hover { background: var(--hov); color: var(--fg); }
 
-.btn-primario.largo, .btn-secundario.largo {
-  width: 100%;
-  padding: 11px;
-  font-size: 13.5px;
-  margin-top: 10px;
+.btn-primario.largo, .btn-secundario.largo { width: 100%; padding: 11px; font-size: 13.5px; margin-top: 10px; }
+
+.btn-icone {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  border: 1px solid var(--bd2);
+  background: var(--pnl2);
+  color: var(--fg2);
+  cursor: pointer;
 }
 
-/* ----------------------------------------------------------------- KPIs --- */
+.btn-icone:hover { background: var(--hov); color: var(--fg); }
+
+/* ================================================================= KPIs === */
 .tiras {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 1px;
-  margin: 16px 20px 0;
-  background: var(--borda);
-  border: 1px solid var(--borda);
-  border-radius: var(--r-m);
-  overflow: hidden;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  gap: 10px;
+  padding: 16px 22px 0;
 }
 
-/* Uma faixa continua, dividida por filetes de 1px, em vez de sete cartoes
-   soltos: o resumo e UM objeto, e assim ele le como um. */
 .tira {
-  background: var(--painel);
-  padding: 12px 15px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 5px;
+  padding: 13px 15px 11px;
+  background: var(--pnl);
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-g);
   position: relative;
+  overflow: hidden;
+  animation: riseIn .3s ease both;
 }
 
-.tira::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--neutro);
-}
+.tira header { display: flex; align-items: center; justify-content: space-between; }
+.tira-rot { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--fg3); }
+.tira-valor { display: flex; align-items: baseline; gap: 7px; }
+.tira-valor strong { font-size: 30px; font-weight: 700; line-height: 1.08; letter-spacing: -.03em; }
+.tira-unid { font-size: 10.5px; color: var(--fg3); }
+.tira-nota { margin: 0; font-size: 10.5px; color: var(--fg2); min-height: 15px; }
 
-.tira-ok::before { background: var(--ok); }
-.tira-ruim::before { background: var(--ruim); }
-.tira-alerta::before { background: var(--alerta); }
+/* Zero nao e noticia. Um "0 degradados" aceso de laranja ensina a equipe a
+   ignorar laranja, que e o contrario do que a cor existe para fazer. */
+.tira-ruim:not(.zero)   .tira-valor strong { color: var(--crit); }
+.tira-alerta:not(.zero) .tira-valor strong { color: var(--warn); }
+.tira.zero .tira-valor strong { color: var(--fg2); font-weight: 600; }
 
-.tira-num { font-size: 25px; font-weight: 650; line-height: 1.15; }
-.tira-rot { font-size: 10.5px; color: var(--texto-fraco); text-transform: uppercase; letter-spacing: .04em; }
+/* ---------------------------------------------------------- sparkline --- */
+/* Barras em div, nao canvas: sao poucas dezenas de valores, o navegador desenha
+   sem custo, e a barra herda a cor do tema sem precisar redesenhar na troca. */
+.spark { display: flex; align-items: flex-end; gap: 1.5px; height: 26px; margin-top: 2px; }
+.spark span { flex: 1; min-width: 1px; border-radius: 1.5px; background: color-mix(in srgb, var(--info) 55%, transparent); }
+.spark span.alta { background: var(--info); }
+.spark-lateral { height: 20px; }
+.spark-lateral span { background: color-mix(in srgb, var(--ok) 55%, transparent); }
+.spark-lateral span.alta { background: var(--ok); }
+.spark-vazio { color: var(--fg3); font-size: 9.5px; align-self: center; }
 
-/* Zero nao e noticia. Um "0 alertas abertos" pintado de laranja treina a equipe
-   a ignorar laranja, que e exatamente o contrario do que a cor serve. */
-.tira.zero::before { background: var(--borda-forte); }
-.tira.zero .tira-num { color: var(--texto-fraco); font-weight: 500; }
-
-/* Problema em aberto, ao contrario, pinta o numero. */
-.tira-ruim:not(.zero) .tira-num { color: var(--ruim); }
-.tira-alerta:not(.zero) .tira-num { color: var(--alerta); }
-.tira-ok:not(.zero) .tira-num { color: var(--ok); }
-
-/* -------------------------------------------------------------- filtros --- */
-/* Colada abaixo do topo: numa lista de dezenas de lojas, filtrar sem ter de
-   rolar de volta ao inicio e a diferenca entre usavel e irritante. */
+/* ============================================================= filtros === */
 .barra-filtros {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   flex-wrap: wrap;
-  padding: 14px 20px;
-  position: sticky;
-  top: 54px;
-  z-index: 25;
-  background: linear-gradient(var(--fundo) 70%, rgba(12, 14, 19, 0));
+  padding: 14px 22px 4px;
 }
 
-.barra-filtros label {
-  font-size: 10.5px;
-  color: var(--texto-fraco);
+.rot-filtro, .rotulo-campo {
+  font-size: 9px;
+  letter-spacing: .14em;
   text-transform: uppercase;
-  letter-spacing: .04em;
+  color: var(--fg3);
 }
 
-.barra-filtros select, .barra-filtros input {
-  padding: 6px 10px;
-  background: var(--painel);
-  border: 1px solid var(--borda-forte);
-  border-radius: var(--r-p);
-  color: var(--texto);
+.segmentado {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--pnl2);
+  border: 1px solid var(--bd2);
+}
+
+.seg {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--fg2);
   font-size: 12px;
+  cursor: pointer;
 }
 
-.barra-filtros select:hover, .barra-filtros input:hover { border-color: var(--neutro); }
-.barra-filtros input[type="search"] { min-width: 190px; }
+.seg:hover { color: var(--fg); }
+.seg.ativa { background: var(--pnl); color: var(--fg); font-weight: 600; box-shadow: var(--sh); }
+
+.barra-filtros select {
+  padding: 5px 9px;
+  background: var(--pnl2);
+  border: 1px solid var(--bd2);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.barra-filtros select:hover { border-color: var(--bd); }
 .barra-filtros .espaco { flex: 1; }
-.atualizacao { font-size: 11px; color: var(--texto-fraco); }
+.atualizacao { font-size: 10px; color: var(--fg3); }
 
-/* -------------------------------------------------- marcas, lojas, grade --- */
-main { padding: 0 20px 48px; }
+/* ================================================ carga + fila de atencao === */
+.grade-topo {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, .85fr);
+  gap: 12px;
+  padding: 12px 22px 0;
+  align-items: start;
+}
 
-.marca { margin-bottom: 30px; }
+.painel-caixa {
+  background: var(--pnl);
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-g);
+  padding: 15px 16px;
+  animation: riseIn .34s ease both;
+}
 
-/* A marca e contexto, nao manchete: fica discreta e a LOJA ganha o destaque,
-   porque e por loja que se pensa quando algo cai. */
+.pc-topo { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.pc-topo h2 { font-size: 14.5px; }
+.pc-sub { margin: 2px 0 0; font-size: 10.5px; color: var(--fg3); }
+
+.faixas { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--pnl2); border: 1px solid var(--bd2); flex: 0 0 auto; }
+
+.faixa {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--fg2);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.faixa:hover { color: var(--fg); }
+.faixa.ativa { background: var(--pnl); color: var(--fg); box-shadow: var(--sh); }
+
+.grafico-frota { height: 244px; }
+
+/* --------------------------------------------------------------- fila --- */
+/* A mascara desbota os ultimos pixels: sem ela o item cortado no fim parece
+   defeito de layout, e nao "tem mais coisa abaixo". */
+.fila {
+  list-style: none;
+  margin: 0;
+  padding: 0 2px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 262px;
+  overflow-y: auto;
+  mask-image: linear-gradient(180deg, #000 calc(100% - 22px), transparent);
+}
+
+.item-fila {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 11px;
+  border-radius: var(--r-m);
+  border: 1px solid var(--bd2);
+  background: var(--pnl2);
+  cursor: pointer;
+  animation: slideL .3s ease both;
+  transition: background .12s, border-color .12s;
+}
+
+.item-fila:hover { background: var(--hov); border-color: var(--bd); }
+
+.if-icone {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: var(--pnl2);
+  border: 1px solid var(--bd2);
+  color: var(--fg2);
+}
+
+.if-crit .if-icone   { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 34%, transparent); background: color-mix(in srgb, var(--crit) 11%, transparent); }
+.if-alerta .if-icone { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 34%, transparent); background: color-mix(in srgb, var(--warn) 11%, transparent); }
+
+.if-corpo { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.if-titulo { font-size: 12.5px; font-weight: 600; }
+.if-desc { font-size: 11px; color: var(--fg2); line-height: 1.45; word-break: break-word; }
+.if-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 2px; }
+
+.if-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--bd2);
+  background: var(--pnl2);
+  color: var(--fg3);
+}
+
+.if-quando { font-family: var(--mono); font-size: 9.5px; color: var(--fg3); white-space: nowrap; }
+.fila-vazia { padding: 26px 12px; text-align: center; color: var(--fg3); font-size: 12px; }
+
+/* ================================================================ frota === */
+.secao-frota { padding: 20px 22px 44px; }
+.sf-topo { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.sf-topo h2 { font-size: 14.5px; }
+
+.vazio { color: var(--fg3); padding: 46px 24px; text-align: center; font-size: 12.5px; }
+
+/* ------------------------------------------------- cartao de loja (modo lojas) --- */
+.grade-lojas { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 11px; }
+
+.cartao-loja {
+  --acento: var(--ok);
+  position: relative;
+  overflow: hidden;
+  padding: 13px 14px;
+  background: var(--pnl);
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-g);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  animation: riseIn .3s ease both;
+}
+
+.cartao-loja::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--acento); }
+.cl-incidente { --acento: var(--crit); background: linear-gradient(90deg, color-mix(in srgb, var(--crit) 7%, transparent), transparent 62%), var(--pnl); }
+.cl-atencao   { --acento: var(--warn); }
+.cl-estavel   { --acento: var(--ok); }
+.cl-parada    { --acento: var(--fg3); }
+
+.cl-cab { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cl-nome { font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
+.cl-meta { margin: 2px 0 0; font-family: var(--mono); font-size: 9.5px; color: var(--fg3); }
+
+.cl-selo {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.cl-selo-estavel   { color: var(--ok);   background: color-mix(in srgb, var(--ok) 13%, transparent);   border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+.cl-selo-atencao   { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.cl-selo-incidente { color: var(--crit); background: color-mix(in srgb, var(--crit) 13%, transparent); border-color: color-mix(in srgb, var(--crit) 32%, transparent); }
+.cl-selo-parada    { color: var(--fg3);  background: var(--pnl2); border-color: var(--bd2); }
+
+/* Heatmap de hosts: um quadrado por maquina. E o que faz a tela caber em dezenas
+   de lojas sem virar rolagem infinita, e ainda permite ir direto na maquina. */
+.mapa-hosts { display: flex; flex-wrap: wrap; gap: 3px; }
+
+.host-quad {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  border: 1px solid var(--bd2);
+  background: var(--pnl2);
+  padding: 0;
+  cursor: pointer;
+  transition: transform .1s, box-shadow .1s;
+}
+
+.host-quad:hover { transform: scale(1.22); box-shadow: 0 0 0 2px var(--bd); z-index: 1; }
+.hq-online     { background: color-mix(in srgb, var(--ok) 46%, transparent);   border-color: color-mix(in srgb, var(--ok) 52%, transparent); }
+.hq-degradado  { background: color-mix(in srgb, var(--warn) 52%, transparent); border-color: color-mix(in srgb, var(--warn) 58%, transparent); }
+.hq-offline    { background: color-mix(in srgb, var(--crit) 58%, transparent); border-color: color-mix(in srgb, var(--crit) 62%, transparent); }
+.hq-never_seen { background: repeating-linear-gradient(45deg, var(--pnl2), var(--pnl2) 3px, var(--bd) 3px, var(--bd) 5px); }
+.hq-disabled   { opacity: .4; }
+
+.cl-celulas { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding-top: 9px; border-top: 1px solid var(--bd2); }
+.cel { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+/* nowrap: "disco livre" quebrando em duas linhas empurrava o valor para baixo e
+   desalinhava as quatro celulas entre si. */
+.cel-rot {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--fg3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cel-val { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.cel-val.ruim { color: var(--crit); }
+.cel-val.alerta { color: var(--warn); }
+.cel-val.ok { color: var(--ok); }
+
+/* -------------------------------- modo maquinas: marca > loja > cartoes --- */
+.marca { margin-bottom: 26px; }
+
 .marca-titulo {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 9px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: .07em;
-  color: var(--texto-fraco);
+  letter-spacing: .16em;
+  color: var(--fg3);
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--borda);
-  margin-bottom: 16px;
+  border-bottom: 1px solid var(--bd2);
+  margin-bottom: 14px;
 }
 
 .marca-cod {
-  background: var(--painel-2);
-  border: 1px solid var(--borda-forte);
-  padding: 2px 8px;
-  border-radius: var(--r-p);
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--texto-medio);
-  letter-spacing: .04em;
+  font-family: var(--mono);
+  background: var(--pnl2);
+  border: 1px solid var(--bd2);
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 9px;
+  color: var(--fg2);
 }
 
-/* O nome da marca nao repete o tratamento do codigo: com os dois em caixa alta a
-   linha lia como duas etiquetas iguais. */
-.marca-nome { font-weight: 600; letter-spacing: 0; text-transform: none; font-size: 12.5px; color: var(--texto-medio); }
+.marca-nome { letter-spacing: .16em; }
 
-/* A loja e uma FAIXA de largura total, com os cartoes correndo na horizontal.
-   Ja tentei o contrario, lojas em colunas estreitas: as maquinas passam a
-   empilhar na vertical e a pagina fica um terco mais alta. Sobra espaco no fim
-   da faixa quando a loja tem poucas maquinas, e isso e o normal de um painel de
-   frota: com dezenas de lojas as faixas se enchem e a altura nao explode.
-
-   O filete a esquerda e o que segura o agrupamento sem custar altura nenhuma. */
-.loja {
-  margin: 0 0 18px;
-  padding-left: 12px;
-  border-left: 2px solid var(--borda);
-}
-
-.loja-titulo {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 13.5px;
-  font-weight: 600;
-  margin-bottom: 10px;
-}
+.loja { margin: 0 0 18px; padding-left: 12px; border-left: 2px solid var(--bd2); }
+.loja-titulo { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; margin-bottom: 9px; }
 
 .loja-cod {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  color: var(--azul);
-  background: var(--azul-fundo);
-  border: 1px solid #1e3a6b;
-  padding: 2px 8px;
-  border-radius: var(--r-p);
+  color: var(--info);
+  background: color-mix(in srgb, var(--info) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--info) 26%, transparent);
+  padding: 2px 7px;
+  border-radius: 6px;
 }
 
-.loja-nome { color: var(--texto-medio); font-weight: 500; }
+.loja-nome { color: var(--fg2); font-weight: 500; }
+.contador { display: flex; gap: 5px; margin-left: auto; font-size: 10px; font-weight: 600; }
+.contador > span { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--bd2); background: var(--pnl2); color: var(--fg3); }
+.cont-ok   { color: var(--ok) !important;   border-color: color-mix(in srgb, var(--ok) 28%, transparent) !important; }
+.cont-ruim { color: var(--crit) !important; border-color: color-mix(in srgb, var(--crit) 32%, transparent) !important; }
 
-.contador {
-  display: flex;
-  gap: 6px;
-  margin-left: auto;
-  font-size: 10.5px;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0;
-  flex: 0 0 auto;
-}
-.contador > span { padding: 2px 8px; border-radius: 999px; border: 1px solid transparent; }
-.cont-ok { color: var(--ok); background: var(--ok-fundo); border-color: var(--ok-borda) !important; }
-.cont-ruim { color: var(--ruim); background: var(--ruim-fundo); border-color: var(--ruim-borda) !important; }
-.cont-neutro { color: var(--texto-fraco); background: var(--painel-2); border-color: var(--borda) !important; }
+.grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
 
-.grade {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(252px, 1fr));
-  gap: 10px;
-}
-
-/* --------------------------------------------------------------- cartao --- */
 .cartao {
-  --acento: var(--neutro);
-  background: var(--painel);
-  border: 1px solid var(--borda);
-  border-radius: var(--r-m);
-  padding: 13px 14px;
-  cursor: pointer;
+  --acento: var(--fg3);
   position: relative;
   overflow: hidden;
-  transition: border-color .12s, transform .12s, box-shadow .12s;
-
-  /* Coluna flex para o rodape poder descer ate a base: numa fila de cartoes de
-     alturas diferentes (um deles com aviso de servico parado), o rodape de todos
-     fica na mesma linha em vez de flutuar no meio. */
+  background: var(--pnl);
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-m);
+  padding: 12px 13px;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
+  transition: border-color .12s, transform .12s, box-shadow .12s;
+  animation: riseIn .28s ease both;
 }
 
-/* Acento de estado como filete pintado, e nao como border-left: assim o raio
-   do canto continua redondo e o filete acompanha a curva. */
-.cartao::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--acento);
-}
+.cartao::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--acento); }
+.cartao:hover { border-color: var(--bd); transform: translateY(-1px); box-shadow: var(--sh); }
 
-.cartao:hover {
-  border-color: var(--borda-forte);
-  transform: translateY(-1px);
-  box-shadow: var(--sombra);
-}
+.cartao-online     { --acento: var(--ok); }
+.cartao-degradado  { --acento: var(--warn); }
+.cartao-offline    { --acento: var(--crit); background: linear-gradient(90deg, color-mix(in srgb, var(--crit) 7%, transparent), transparent 60%), var(--pnl); }
+.cartao-never_seen { --acento: var(--warn); }
+.cartao-disabled   { --acento: var(--fg3); opacity: .55; }
 
-.cartao-online { --acento: var(--ok); }
-.cartao-offline { --acento: var(--ruim); background: linear-gradient(90deg, rgba(248, 113, 113, .06), transparent 60%), var(--painel); }
-.cartao-never_seen { --acento: var(--alerta); }
-.cartao-disabled { --acento: var(--neutro); opacity: .55; }
-
-.cartao-topo { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.cartao-nome { font-weight: 600; font-size: 13.5px; }
-
-.bolha { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--neutro); }
-.bolha-online { background: var(--ok); box-shadow: 0 0 0 3px rgba(52, 211, 153, .16); }
-.bolha-offline { background: var(--ruim); box-shadow: 0 0 0 3px rgba(248, 113, 113, .16); }
-.bolha-never_seen { background: var(--alerta); box-shadow: 0 0 0 3px rgba(251, 191, 36, .16); }
+.cartao-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cartao-nome { font-weight: 700; font-size: 13px; }
+.bolha { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: var(--fg3); }
+.bolha-online { background: var(--ok); }
+.bolha-degradado { background: var(--warn); }
+.bolha-offline { background: var(--crit); }
+.bolha-never_seen { background: var(--warn); }
 
 /* word-break porque hostname pode ser longo, ou conter caractere estranho: nesse
    caso ele tem de ficar contido no cartao, nao vazar no layout. */
-.cartao-host {
-  margin: 4px 0 9px;
-  font-size: 10.5px;
-  color: var(--texto-fraco);
-  font-family: var(--mono);
-  word-break: break-all;
-  letter-spacing: -.01em;
-}
+.cartao-host { margin: 3px 0 8px; font-family: var(--mono); font-size: 9.5px; color: var(--fg3); word-break: break-all; }
 
-.cartao-status { display: flex; align-items: center; gap: 8px; margin: 0 0 11px; }
+.cartao-status { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
 
 .etiqueta {
-  padding: 2px 8px;
-  border-radius: var(--r-p);
-  font-size: 9.5px;
-  font-weight: 700;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: .09em;
   text-transform: uppercase;
-  letter-spacing: .05em;
+  padding: 2px 7px;
+  border-radius: 5px;
   border: 1px solid transparent;
 }
 
-.etiqueta-online { background: var(--ok-fundo); color: var(--ok); border-color: var(--ok-borda); }
-.etiqueta-offline { background: var(--ruim-fundo); color: var(--ruim); border-color: var(--ruim-borda); }
-.etiqueta-never_seen { background: var(--alerta-fundo); color: var(--alerta); border-color: var(--alerta-borda); }
-.etiqueta-disabled { background: var(--painel-2); color: var(--texto-fraco); border-color: var(--borda); }
+.etiqueta-online     { color: var(--ok);   background: color-mix(in srgb, var(--ok) 13%, transparent);   border-color: color-mix(in srgb, var(--ok) 28%, transparent); }
+.etiqueta-degradado  { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.etiqueta-offline    { color: var(--crit); background: color-mix(in srgb, var(--crit) 13%, transparent); border-color: color-mix(in srgb, var(--crit) 32%, transparent); }
+.etiqueta-never_seen { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.etiqueta-disabled   { color: var(--fg3);  background: var(--pnl2); border-color: var(--bd2); }
 
-.cartao-visto { font-size: 11px; color: var(--texto-fraco); }
+.cartao-visto { font-size: 10.5px; color: var(--fg3); }
 
 .cartao-manutencao {
-  margin: 0 0 9px;
-  font-size: 9.5px;
-  font-weight: 700;
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: .09em;
   text-transform: uppercase;
-  letter-spacing: .05em;
-  color: var(--alerta);
-  background: var(--alerta-fundo);
-  border: 1px solid var(--alerta-borda);
-  padding: 2px 8px;
-  border-radius: var(--r-p);
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+  padding: 2px 7px;
+  border-radius: 5px;
   display: inline-block;
 }
 
-.metricas { display: flex; flex-direction: column; gap: 7px; }
+.metricas { display: flex; flex-direction: column; gap: 6px; }
 
 /* Rotulo, BARRA, valor. A barra recebe o espaco elastico porque ela e o que se
    le de longe; o numero fica alinhado a direita, na coluna. */
-.metrica {
-  display: grid;
-  grid-template-columns: 62px 1fr 48px;
-  align-items: center;
-  gap: 9px;
-}
-
-.metrica-rot { font-size: 10.5px; color: var(--texto-fraco); }
-.metrica-val { font-size: 11.5px; text-align: right; color: var(--texto-medio); }
-
-.barra { height: 6px; background: var(--painel-3); border-radius: 999px; overflow: hidden; }
-.barra-fill { display: block; height: 100%; border-radius: 999px; background: var(--azul); transition: width .3s ease; }
-.barra-fill-ruim { background: var(--ruim); }
-
-/* Vao da barra ausente: mantem a coluna do numero alinhada entre as linhas. */
+.metrica { display: grid; grid-template-columns: 58px 1fr 46px; align-items: center; gap: 8px; }
+.metrica-rot { font-size: 10px; color: var(--fg3); }
+.metrica-val { font-family: var(--mono); font-size: 11px; text-align: right; color: var(--fg2); }
+.barra { height: 5px; background: var(--pnl2); border-radius: 999px; overflow: hidden; }
+.barra-fill { display: block; height: 100%; border-radius: 999px; background: var(--info); transition: width .3s ease; }
+.barra-fill-ruim { background: var(--crit); }
 .barra-vazia { display: block; }
 
 .cartao-pe {
@@ -522,48 +831,40 @@ main { padding: 0 20px 48px; }
   justify-content: space-between;
   gap: 8px;
   margin-top: auto;
-  padding-top: 11px;
-  border-top: 1px solid var(--borda);
-  font-size: 10px;
-  color: var(--texto-fraco);
+  padding-top: 10px;
+  border-top: 1px solid var(--bd2);
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--fg3);
 }
 
-.cartao-pe span:last-child { font-family: var(--mono); }
-
 .cartao-servicos {
-  margin: 9px 0 0;
+  margin: 8px 0 0;
   padding: 6px 9px;
   font-size: 10.5px;
-  color: var(--ruim);
-  background: var(--ruim-fundo);
-  border: 1px solid var(--ruim-borda);
+  color: var(--crit);
+  background: color-mix(in srgb, var(--crit) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--crit) 26%, transparent);
   border-radius: var(--r-p);
   word-break: break-word;
 }
 
-.vazio { color: var(--texto-fraco); padding: 56px 24px; text-align: center; font-size: 13px; }
-
-/* --------------------------------------------------------------- painel --- */
-.painel-fundo {
-  position: fixed;
-  inset: 0;
-  background: rgba(4, 6, 10, .62);
-  backdrop-filter: blur(2px);
-  z-index: 40;
-}
+/* ============================================================== painel === */
+.cortina { position: fixed; inset: 0; background: rgba(3, 5, 9, .62); backdrop-filter: blur(2px); z-index: 40; }
 
 .painel {
   position: fixed;
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(600px, 100%);
-  background: var(--painel);
-  border-left: 1px solid var(--borda-forte);
-  box-shadow: var(--sombra-alta);
+  width: min(620px, 100%);
+  background: var(--bg);
+  border-left: 1px solid var(--bd);
+  box-shadow: var(--sh-alta);
   z-index: 50;
   display: flex;
   flex-direction: column;
+  animation: slideL .22s ease both;
 }
 
 .painel-topo {
@@ -572,19 +873,19 @@ main { padding: 0 20px 48px; }
   align-items: flex-start;
   gap: 12px;
   padding: 17px 20px;
-  border-bottom: 1px solid var(--borda);
-  background: var(--painel-2);
+  border-bottom: 1px solid var(--bd2);
+  background: var(--pnl2);
 }
 
 .painel-topo h2 { font-size: 17px; word-break: break-all; }
-.painel-sub { margin: 4px 0 0; font-size: 11.5px; color: var(--texto-fraco); }
+.painel-sub { margin: 4px 0 0; font-size: 10.5px; color: var(--fg3); }
 
 .btn-fechar {
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--r-p);
-  color: var(--texto-fraco);
-  font-size: 20px;
+  border-radius: 8px;
+  color: var(--fg3);
+  font-size: 19px;
   line-height: 1;
   cursor: pointer;
   width: 28px;
@@ -594,110 +895,62 @@ main { padding: 0 20px 48px; }
   place-items: center;
 }
 
-.btn-fechar:hover { color: var(--texto); background: var(--painel-3); border-color: var(--borda-forte); }
+.btn-fechar:hover { color: var(--fg); background: var(--hov); border-color: var(--bd2); }
 
 .painel-corpo { overflow-y: auto; padding: 18px 20px 40px; }
+.painel-corpo h3 { font-size: 9px; margin: 24px 0 10px; color: var(--fg3); text-transform: uppercase; letter-spacing: .14em; font-family: var(--mono); }
 
-.painel-corpo h3 {
-  font-size: 10.5px;
-  margin: 26px 0 10px;
-  color: var(--texto-fraco);
-  text-transform: uppercase;
-  letter-spacing: .06em;
-}
-
-/* Zebra: com quinze linhas de par rotulo/valor, alternar o fundo e o que
-   permite seguir uma linha com o olho ate a direita sem se perder. */
+/* Zebra: com quinze linhas de par rotulo/valor, alternar o fundo e o que permite
+   seguir uma linha com o olho ate a direita sem se perder. */
 .dados {
   display: grid;
-  grid-template-columns: 152px 1fr;
-  margin: 0 0 20px;
-  font-size: 12px;
-  border: 1px solid var(--borda);
+  grid-template-columns: 150px 1fr;
+  margin: 0 0 18px;
+  font-size: 11.5px;
+  border: 1px solid var(--bd2);
   border-radius: var(--r-p);
   overflow: hidden;
 }
 
-.dados dt { color: var(--texto-fraco); padding: 6px 12px; }
-.dados dd { margin: 0; padding: 6px 12px; word-break: break-all; color: var(--texto); }
-.dados dt:nth-of-type(odd), .dados dd:nth-of-type(odd) { background: var(--painel-2); }
+.dados dt { color: var(--fg3); padding: 6px 12px; }
+.dados dd { margin: 0; padding: 6px 12px; word-break: break-all; font-family: var(--mono); }
+.dados dt:nth-of-type(odd), .dados dd:nth-of-type(odd) { background: var(--pnl2); }
 
-.faixas { display: flex; gap: 6px; margin-bottom: 14px; }
-
-.faixa {
-  padding: 6px 14px;
-  background: var(--painel-2);
-  border: 1px solid var(--borda-forte);
-  border-radius: var(--r-p);
-  color: var(--texto-medio);
-  cursor: pointer;
-  font-size: 11.5px;
-  font-weight: 600;
-}
-
-.faixa:hover { border-color: var(--neutro); color: var(--texto); }
-.faixa.ativa { background: var(--azul); color: #fff; border-color: var(--azul); }
+.painel-corpo .faixas { margin-bottom: 12px; display: inline-flex; }
 
 .grafico-caixa {
-  height: 200px;
-  margin-bottom: 12px;
-  background: var(--fundo);
-  border: 1px solid var(--borda);
-  border-radius: var(--r-p);
+  height: 190px;
+  margin-bottom: 11px;
+  background: var(--pnl2);
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-m);
   padding: 10px;
 }
 
-.eventos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.eventos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
 
 .evento {
   display: grid;
-  grid-template-columns: 112px 132px 1fr;
+  grid-template-columns: 108px 128px 1fr;
   gap: 10px;
   padding: 7px 10px;
-  background: var(--fundo);
-  border: 1px solid var(--borda);
+  background: var(--pnl2);
+  border: 1px solid var(--bd2);
   border-radius: var(--r-p);
-  font-size: 11px;
+  font-size: 10.5px;
   position: relative;
   overflow: hidden;
 }
 
-.evento::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--neutro);
-}
+.evento::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--fg3); }
+.evento-warning::before { background: var(--warn); }
+.evento-critical::before { background: var(--crit); }
+.evento-quando { font-family: var(--mono); color: var(--fg3); }
+.evento-tipo { font-family: var(--mono); color: var(--info); font-size: 10px; }
+.evento-msg { color: var(--fg2); word-break: break-word; }
+.evento-vazio { color: var(--fg3); font-size: 11.5px; padding: 10px; }
 
-.evento-warning::before { background: var(--alerta); }
-.evento-critical::before { background: var(--ruim); }
-.evento-quando { color: var(--texto-fraco); }
-.evento-tipo { color: var(--azul); font-family: var(--mono); font-size: 10.5px; }
-.evento-msg { word-break: break-word; color: var(--texto-medio); }
-.evento-vazio { color: var(--texto-fraco); font-size: 12px; padding: 10px; }
-
-/* --------------------------------------------------------------- brinde --- */
-.brinde {
-  position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--painel-3);
-  border: 1px solid var(--borda-forte);
-  border-radius: var(--r-m);
-  box-shadow: var(--sombra-alta);
-  padding: 11px 18px;
-  font-size: 12.5px;
-  z-index: 70;
-  max-width: 90vw;
-}
-
-.brinde-erro { background: var(--ruim-fundo); border-color: var(--ruim-borda); color: #fca5a5; }
-
-/* ------------------------------------------------- adicionar PC (modal) --- */
+/* =============================================================== modal === */
 .modal {
   position: fixed;
   top: 50%;
@@ -705,13 +958,14 @@ main { padding: 0 20px 48px; }
   transform: translate(-50%, -50%);
   width: min(620px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
-  background: var(--painel);
-  border: 1px solid var(--borda-forte);
-  border-radius: var(--r-m);
-  box-shadow: var(--sombra-alta);
+  background: var(--bg);
+  border: 1px solid var(--bd);
+  border-radius: var(--r-g);
+  box-shadow: var(--sh-alta);
   z-index: 60;
   display: flex;
   flex-direction: column;
+  animation: popIn .18s ease both;
 }
 
 .modal-topo {
@@ -720,63 +974,60 @@ main { padding: 0 20px 48px; }
   align-items: center;
   gap: 12px;
   padding: 15px 20px;
-  border-bottom: 1px solid var(--borda);
-  background: var(--painel-2);
-  border-radius: var(--r-m) var(--r-m) 0 0;
+  border-bottom: 1px solid var(--bd2);
+  background: var(--pnl2);
+  border-radius: var(--r-g) var(--r-g) 0 0;
 }
 
-.modal-topo h2 { font-size: 15.5px; }
+.modal-topo h2 { font-size: 15px; }
 .modal-corpo { overflow-y: auto; padding: 18px 20px 22px; }
-
-.modal-corpo label {
-  display: block;
-  margin: 16px 0 6px;
-  font-size: 11.5px;
-  color: var(--texto-medio);
-  font-weight: 500;
-}
-
+.modal-corpo label { display: block; margin: 16px 0 6px; font-size: 11.5px; color: var(--fg2); font-weight: 500; }
 .modal-corpo > label:first-child { margin-top: 0; }
 
-.modal-corpo input[type="text"],
-.modal-corpo select {
+.modal-corpo input[type="text"], .modal-corpo select {
   width: 100%;
   padding: 10px 12px;
-  background: var(--fundo);
-  border: 1px solid var(--borda-forte);
-  border-radius: var(--r-p);
-  color: var(--texto);
+  background: var(--pnl2);
+  border: 1px solid var(--bd);
+  border-radius: 9px;
+  color: var(--fg);
   font-size: 13.5px;
+  font-family: inherit;
 }
 
 .modal-corpo input:focus, .modal-corpo select:focus {
   outline: none;
-  border-color: var(--azul);
-  box-shadow: 0 0 0 3px rgba(79, 142, 247, .18);
+  border-color: var(--info);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 20%, transparent);
 }
 
 .modal-corpo h3 { font-size: 12.5px; margin: 20px 0 9px; }
-.dica { margin: 6px 0 0; font-size: 11px; color: var(--texto-fraco); line-height: 1.5; }
-.dica code { background: var(--painel-3); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 10.5px; }
+.dica { margin: 6px 0 0; font-size: 10.5px; color: var(--fg3); line-height: 1.5; }
+.dica code { font-family: var(--mono); background: var(--pnl2); padding: 1px 5px; border-radius: 4px; font-size: 10px; }
+
+.erro {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--crit) 11%, transparent);
+  border: 1px solid color-mix(in srgb, var(--crit) 34%, transparent);
+  border-radius: var(--r-p);
+  color: var(--crit);
+  font-size: 12px;
+}
 
 .ok-msg {
   margin: 0 0 6px;
   padding: 11px 13px;
-  background: var(--ok-fundo);
-  border: 1px solid var(--ok-borda);
+  background: color-mix(in srgb, var(--ok) 11%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 32%, transparent);
   border-radius: var(--r-p);
-  color: #a7f3d0;
+  color: var(--ok);
   font-size: 12.5px;
 }
 
 /* O comando e longo; ele rola DENTRO da caixa em vez de esticar o modal e
    empurrar o botao de copiar para fora da tela. */
-.comando-caixa {
-  background: var(--fundo);
-  border: 1px solid var(--borda-forte);
-  border-radius: var(--r-p);
-  padding: 11px;
-}
+.comando-caixa { background: var(--pnl2); border: 1px solid var(--bd); border-radius: var(--r-p); padding: 11px; }
 
 .comando-caixa pre {
   margin: 0 0 9px;
@@ -785,29 +1036,48 @@ main { padding: 0 20px 48px; }
   white-space: pre-wrap;
   word-break: break-all;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 10px;
   line-height: 1.6;
-  color: #a8c7fa;
+  color: var(--info);
   max-height: 170px;
 }
 
-.detalhes { margin-top: 18px; border-top: 1px solid var(--borda); padding-top: 14px; }
-.detalhes summary { cursor: pointer; font-size: 12px; color: var(--azul); font-weight: 500; }
+.detalhes { margin-top: 18px; border-top: 1px solid var(--bd2); padding-top: 14px; }
+.detalhes summary { cursor: pointer; font-size: 12px; color: var(--info); font-weight: 500; }
 .detalhes summary:hover { text-decoration: underline; }
 .detalhes .dica { margin: 9px 0 11px; }
 
 .aviso-token {
   margin: 18px 0 0;
   padding: 11px 13px;
-  background: var(--alerta-fundo);
-  border: 1px solid var(--alerta-borda);
+  background: color-mix(in srgb, var(--warn) 11%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent);
   border-radius: var(--r-p);
-  color: #fde68a;
+  color: var(--warn);
   font-size: 11.5px;
   line-height: 1.55;
 }
 
-/* ------------------------------------------------------- erro de script --- */
+/* ============================================================== brinde === */
+.brinde {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--pnl);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--bd);
+  border-radius: var(--r-m);
+  box-shadow: var(--sh-alta);
+  padding: 11px 18px;
+  font-size: 12.5px;
+  z-index: 70;
+  max-width: 90vw;
+}
+
+.brinde-erro { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 40%, transparent); }
+
+/* ====================================================== erro de script === */
 /* Fixo no topo e por cima de tudo: um erro de JavaScript pode ter impedido a
    montagem da interface, entao esta faixa nao pode depender de nenhum layout. */
 .falha-js {
@@ -826,32 +1096,33 @@ main { padding: 0 20px 48px; }
 }
 
 .falha-js strong { display: block; margin-bottom: 6px; }
+.falha-js pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 11px; line-height: 1.4; }
+.falha-js-dica { margin: 9px 0 0; font-size: 11px; opacity: .85; }
+.falha-js a { color: #fecaca; }
 
-.falha-js pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.4;
+/* ============================================================= estreito === */
+@media (max-width: 1180px) {
+  .grade-topo { grid-template-columns: minmax(0, 1fr); }
+  .fila { max-height: none; }
 }
 
-.falha-js-dica { margin: 9px 0 0; font-size: 11px; opacity: .85; }
-
-/* ------------------------------------------------------------ estreito --- */
 @media (max-width: 900px) {
-  .barra-filtros { position: static; }
+  .app { grid-template-columns: 1fr; }
+  .lateral { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--bd2); }
+  .lateral-pe { margin-top: 12px; }
+  .topo { flex-wrap: wrap; }
+  .busca-caixa { max-width: none; order: 3; flex-basis: 100%; }
+  .topo-estado { margin-left: 0; }
 }
 
 @media (max-width: 640px) {
-  .topo { height: auto; padding: 10px 14px; flex-wrap: wrap; }
-  .tiras { margin: 12px 14px 0; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); }
-  .tira-num { font-size: 21px; }
-  .barra-filtros, main { padding-left: 14px; padding-right: 14px; }
-  .grade { grid-template-columns: 1fr; }
+  .tiras, .barra-filtros, .grade-topo, .secao-frota { padding-left: 14px; padding-right: 14px; }
+  .topo { padding: 12px 14px; }
+  .grade, .grade-lojas { grid-template-columns: 1fr; }
   .dados { grid-template-columns: 1fr; }
   .dados dt { padding-bottom: 0; }
   .dados dt:nth-of-type(odd), .dados dd:nth-of-type(odd) { background: none; }
-  .dados dd { border-bottom: 1px solid var(--borda); }
+  .dados dd { border-bottom: 1px solid var(--bd2); }
   .evento { grid-template-columns: 1fr; gap: 3px; }
+  .cl-celulas { grid-template-columns: repeat(2, 1fr); }
 }

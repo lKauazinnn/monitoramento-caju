@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Monitoramento de Infraestrutura</title>
+  <title>Centro de operações</title>
 
   <!-- NÃO EXISTE TELA DE LOGIN NESTA PÁGINA.
        Na stack local o dashboard abre direto, com o token que o dev-up.ps1
@@ -12,75 +12,260 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=13" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=14" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=13">
+  <link rel="stylesheet" href="styles.css?v=14">
 </head>
 <body>
 
-<div id="app">
+<!-- Malha de fundo. Decorativa, e por isso aria-hidden. -->
+<div class="malha" aria-hidden="true"></div>
 
-  <header class="topo">
-    <div class="topo-esq">
-      <h1>Monitoramento</h1>
-      <span id="indicador-conexao" class="pill pill-neutro">conectando&hellip;</span>
+<div id="app" class="app">
+
+  <!-- =======================================================================
+       Barra lateral
+       =======================================================================
+       O desenho de origem trazia sete destinos de navegação. Este sistema tem
+       UMA tela, e seis links mortos seriam tão ruins quanto um número inventado.
+       No lugar deles ficam VISTAS: cada botão é um filtro real, com a contagem
+       do que ele vai mostrar. É o que aquela barra faz de útil. -->
+  <aside class="lateral">
+
+    <div class="marca-app">
+      <div class="marca-selo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          <path d="m9 12 2 2 4-4"></path>
+        </svg>
+      </div>
+      <div class="marca-texto">
+        <span class="marca-nome-app">Sentinela</span>
+        <span id="marca-escopo" class="mono etiqueta-micro">carregando</span>
+      </div>
     </div>
 
-    <div class="topo-dir">
-      <span id="rotulo-usuario" class="usuario"></span>
-      <button id="btn-adicionar" class="btn-primario" type="button">+ Adicionar PC</button>
-      <button id="btn-atualizar" class="btn-secundario" type="button">Atualizar</button>
+    <nav class="vistas" aria-label="Vistas">
+      <span class="secao-lateral mono">Operação</span>
+
+      <button class="vista ativa" type="button" data-vista="">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span class="vista-rot">Visão geral</span>
+        <span class="vista-num mono" data-cont="total">—</span>
+      </button>
+
+      <button class="vista" type="button" data-vista="offline">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
+        <span class="vista-rot">Offline</span>
+        <span class="vista-num mono ruim" data-cont="offline">—</span>
+      </button>
+
+      <button class="vista" type="button" data-vista="degradado">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <span class="vista-rot">Degradados</span>
+        <span class="vista-num mono alerta" data-cont="degradado">—</span>
+      </button>
+
+      <button class="vista" type="button" data-vista="never_seen">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+        <span class="vista-rot">Nunca vistas</span>
+        <span class="vista-num mono" data-cont="nunca">—</span>
+      </button>
+    </nav>
+
+    <nav id="nav-marcas" class="vistas" aria-label="Marcas"></nav>
+
+    <!-- Pulso da ingestão: responde "os dados estão chegando?" sem depender de
+         nenhuma máquina específica estar reportando. -->
+    <section class="cartao-lateral" aria-label="Ingestão">
+      <div class="cl-topo">
+        <span class="secao-lateral mono">Ingestão</span>
+        <span id="pulso-bolha" class="ponto" aria-hidden="true"></span>
+      </div>
+      <div class="cl-numero">
+        <strong id="pulso-min" class="mono">—</strong>
+        <span class="cl-unidade">amostras/min</span>
+      </div>
+      <div id="pulso-faixa" class="spark spark-lateral" aria-hidden="true"></div>
+      <p id="pulso-nota" class="cl-nota">—</p>
+    </section>
+
+    <section class="cartao-lateral" aria-label="Latência ao gateway">
+      <span class="secao-lateral mono">Latência ao gateway</span>
+      <div class="cl-numero">
+        <strong id="lat-media" class="mono">—</strong>
+        <span class="cl-unidade">média das online</span>
+      </div>
+      <p id="lat-nota" class="cl-nota">—</p>
+    </section>
+
+    <div class="lateral-pe">
+      <button id="btn-tema" class="btn-lateral" type="button">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <span id="btn-tema-rot">Tema claro</span>
+      </button>
+      <div class="usuario-chip">
+        <span id="usuario-iniciais" class="avatar mono" aria-hidden="true">··</span>
+        <div class="usuario-texto">
+          <span id="rotulo-usuario" class="usuario-nome"></span>
+          <span id="usuario-papel" class="mono etiqueta-micro">sessão local</span>
+        </div>
+      </div>
     </div>
-  </header>
+  </aside>
 
-  <section class="tiras" aria-label="Resumo geral">
-    <div class="tira"><span class="tira-num" id="kpi-total">&mdash;</span><span class="tira-rot">máquinas</span></div>
-    <div class="tira tira-ok"><span class="tira-num" id="kpi-online">&mdash;</span><span class="tira-rot">online</span></div>
-    <div class="tira tira-ruim"><span class="tira-num" id="kpi-offline">&mdash;</span><span class="tira-rot">offline</span></div>
-    <div class="tira"><span class="tira-num" id="kpi-nunca">&mdash;</span><span class="tira-rot">nunca vistas</span></div>
-    <div class="tira tira-alerta"><span class="tira-num" id="kpi-alertas">&mdash;</span><span class="tira-rot">alertas abertos</span></div>
-    <div class="tira tira-alerta"><span class="tira-num" id="kpi-disco">&mdash;</span><span class="tira-rot">disco crítico</span></div>
-    <div class="tira tira-alerta"><span class="tira-num" id="kpi-servicos">&mdash;</span><span class="tira-rot">serviços parados</span></div>
-  </section>
+  <!-- =======================================================================
+       Área principal
+       ======================================================================= -->
+  <main class="principal">
 
-  <nav class="barra-filtros" aria-label="Filtros">
-    <label for="filtro-marca">Marca</label>
-    <select id="filtro-marca"><option value="">todas</option></select>
+    <header class="topo">
+      <div class="topo-titulo">
+        <span class="mono etiqueta-micro">Cajupar · tempo real</span>
+        <h1>Centro de operações</h1>
+      </div>
 
-    <label for="filtro-loja">Loja</label>
-    <select id="filtro-loja"><option value="">todas</option></select>
+      <div class="busca-caixa">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="busca" placeholder="máquina, host, loja, IP" autocomplete="off">
+        <span class="mono tecla" aria-hidden="true">/</span>
+      </div>
 
-    <label for="filtro-status">Status</label>
-    <select id="filtro-status">
-      <option value="">todos</option>
-      <option value="offline">offline</option>
-      <option value="online">online</option>
-      <option value="never_seen">nunca vistas</option>
-      <option value="disabled">desativadas</option>
-    </select>
+      <div class="topo-estado">
+        <span class="selo selo-ok"><i class="ponto ponto-ok"></i><b id="selo-ok">—</b> ok</span>
+        <span class="selo selo-alerta"><i class="ponto ponto-alerta"></i><b id="selo-degradado">—</b> degradados</span>
+        <span class="selo selo-ruim"><i class="ponto ponto-ruim"></i><b id="selo-offline">—</b> offline</span>
+        <span id="indicador-conexao" class="selo mono">conectando</span>
+        <button id="btn-adicionar" class="btn-primario" type="button">+ Adicionar PC</button>
+        <button id="btn-atualizar" class="btn-icone" type="button" aria-label="Atualizar agora" title="Atualizar agora">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+        </button>
+      </div>
+    </header>
 
-    <label for="busca">Buscar</label>
-    <input type="search" id="busca" placeholder="máquina, host, loja">
+    <!-- ------------------------------------------------------------- KPIs -->
+    <section class="tiras" aria-label="Resumo da frota">
+      <article class="tira">
+        <header><span class="mono tira-rot">Hosts online</span></header>
+        <div class="tira-valor"><strong id="kpi-total" class="mono">—</strong><span id="kpi-online-de" class="tira-unid">—</span></div>
+        <p id="kpi-online-nota" class="tira-nota">—</p>
+        <div id="spark-online" class="spark" aria-hidden="true"></div>
+      </article>
 
-    <span class="espaco"></span>
-    <span id="rodape-atualizacao" class="atualizacao"></span>
-  </nav>
+      <article class="tira tira-alerta">
+        <header><span class="mono tira-rot">Degradados</span></header>
+        <div class="tira-valor"><strong id="kpi-degradado" class="mono">—</strong><span class="tira-unid">online, com problema</span></div>
+        <p id="kpi-degradado-nota" class="tira-nota">—</p>
+      </article>
 
-  <main id="conteudo" aria-live="polite">
-    <p class="vazio">Carregando&hellip;</p>
+      <article class="tira tira-ruim">
+        <header><span class="mono tira-rot">Offline</span></header>
+        <div class="tira-valor"><strong id="kpi-offline" class="mono">—</strong><span class="tira-unid">sem contato</span></div>
+        <p id="kpi-offline-nota" class="tira-nota">—</p>
+      </article>
+
+      <article class="tira tira-ruim">
+        <header><span class="mono tira-rot">Serviços parados</span></header>
+        <div class="tira-valor"><strong id="kpi-servicos" class="mono">—</strong><span class="tira-unid">máquinas afetadas</span></div>
+        <p id="kpi-servicos-nota" class="tira-nota">—</p>
+      </article>
+
+      <article class="tira tira-alerta">
+        <header><span class="mono tira-rot">Disco crítico</span></header>
+        <div class="tira-valor"><strong id="kpi-disco" class="mono">—</strong><span class="tira-unid">abaixo do piso</span></div>
+        <p id="kpi-disco-nota" class="tira-nota">—</p>
+      </article>
+
+      <article class="tira">
+        <header><span class="mono tira-rot">Ingestão</span></header>
+        <div class="tira-valor"><strong id="kpi-ingest" class="mono">—</strong><span class="tira-unid">amostras/min</span></div>
+        <p id="kpi-ingest-nota" class="tira-nota">—</p>
+        <div id="spark-ingest" class="spark" aria-hidden="true"></div>
+      </article>
+    </section>
+
+    <!-- --------------------------------------------------- barra de filtro -->
+    <nav class="barra-filtros" aria-label="Filtros">
+      <span class="mono rot-filtro">Agrupar por</span>
+      <div class="segmentado" role="tablist" aria-label="Modo de exibição">
+        <button class="seg ativa" type="button" data-modo="lojas" role="tab">Lojas</button>
+        <button class="seg" type="button" data-modo="maquinas" role="tab">Máquinas</button>
+      </div>
+
+      <label class="rotulo-campo" for="filtro-marca">Marca</label>
+      <select id="filtro-marca"><option value="">todas</option></select>
+
+      <label class="rotulo-campo" for="filtro-loja">Loja</label>
+      <select id="filtro-loja"><option value="">todas</option></select>
+
+      <label class="rotulo-campo" for="filtro-status">Status</label>
+      <select id="filtro-status">
+        <option value="">todos</option>
+        <option value="online">online</option>
+        <option value="degradado">degradados</option>
+        <option value="offline">offline</option>
+        <option value="never_seen">nunca vistas</option>
+        <option value="disabled">desativadas</option>
+      </select>
+
+      <span class="espaco"></span>
+      <span id="rodape-atualizacao" class="mono atualizacao"></span>
+    </nav>
+
+    <!-- ------------------------------------------- carga da frota + atenção -->
+    <section class="grade-topo">
+      <article class="painel-caixa">
+        <header class="pc-topo">
+          <div>
+            <h2>Carga da frota</h2>
+            <p id="carga-sub" class="pc-sub">—</p>
+          </div>
+          <div class="faixas" role="tablist" aria-label="Período">
+            <button class="faixa" data-frota="1h" type="button" role="tab">1h</button>
+            <button class="faixa ativa" data-frota="24h" type="button" role="tab">24h</button>
+            <button class="faixa" data-frota="7d" type="button" role="tab">7d</button>
+            <button class="faixa" data-frota="30d" type="button" role="tab">30d</button>
+          </div>
+        </header>
+        <div class="grafico-frota"><canvas id="grafico-frota"></canvas></div>
+      </article>
+
+      <article class="painel-caixa">
+        <header class="pc-topo">
+          <h2>Fila de atenção</h2>
+          <span id="fila-cont" class="selo mono">—</span>
+        </header>
+        <!-- Derivada do estado ATUAL das máquinas, não de uma tabela de alertas.
+             A avaliação de regras (fase 5) ainda não existe, e uma fila sempre
+             vazia daria a impressão errada de que está tudo bem. -->
+        <ul id="fila-alertas" class="fila"></ul>
+      </article>
+    </section>
+
+    <!-- ------------------------------------------------------------ frota -->
+    <section class="secao-frota">
+      <header class="sf-topo">
+        <h2 id="frota-titulo">Lojas</h2>
+        <span id="frota-sub" class="pc-sub">—</span>
+      </header>
+      <div id="conteudo" aria-live="polite">
+        <p class="vazio">Carregando&hellip;</p>
+      </div>
+    </section>
   </main>
 </div>
 
 <!-- =========================================================================
      Painel de detalhe
      ========================================================================= -->
-<div id="painel-fundo" class="painel-fundo" hidden></div>
+<div id="painel-fundo" class="cortina" hidden></div>
 
 <aside id="painel" class="painel" hidden aria-label="Detalhe da máquina">
   <header class="painel-topo">
     <div>
       <h2 id="painel-titulo"></h2>
-      <p id="painel-sub" class="painel-sub"></p>
+      <p id="painel-sub" class="painel-sub mono"></p>
     </div>
     <button id="btn-fechar-painel" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
   </header>
@@ -106,9 +291,9 @@
 <!-- =========================================================================
      Adicionar PC
      =========================================================================
-     Dois passos e nada mais: preencher o nome e copiar um comando. O trabalho
-     de gerar token, montar config e baixar o agente acontece do outro lado. -->
-<div id="modal-fundo" class="painel-fundo" hidden></div>
+     Dois passos e nada mais: preencher o nome e copiar um comando. Gerar token,
+     montar config e baixar o agente acontece do outro lado. -->
+<div id="modal-fundo" class="cortina" hidden></div>
 
 <div id="modal-add" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
   <header class="modal-topo">
@@ -116,7 +301,6 @@
     <button id="btn-fechar-modal" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
   </header>
 
-  <!-- Passo 1: formulário -->
   <div id="add-passo1" class="modal-corpo">
     <label for="add-nome">Nome da máquina</label>
     <input type="text" id="add-nome" placeholder="PDV 02" autocomplete="off">
@@ -147,7 +331,6 @@
     <button id="btn-gerar" class="btn-primario largo" type="button">Gerar comando de instalação</button>
   </div>
 
-  <!-- Passo 2: comando pronto -->
   <div id="add-passo2" class="modal-corpo" hidden>
     <p class="ok-msg" id="add-resumo"></p>
 
@@ -189,13 +372,12 @@
   <strong>Erro</strong>
   <pre id="falha-js-msg"></pre>
   <p class="falha-js-dica">
-    Diagnóstico completo em <a href="diagnostico.html" style="color:#fecaca">diagnostico.html</a>
+    Diagnóstico completo em <a href="diagnostico.html">diagnostico.html</a>
   </p>
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=13"></script>
-<script src="dash.js?v=13"></script>
+<script src="config.js?v=14"></script>
+<script src="dash.js?v=14"></script>
 </body>
 </html>
-

@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.13-ingest-servidor';
+const BUILD = '2026-08-06.14-noc';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -85,7 +85,9 @@ const Estado = {
   resumo: null,
   filtros: { marca: '', loja: '', status: '', busca: '' },
   maquinaAberta: null,
-  faixa: '24h',
+  faixa: '24h',        // faixa do painel de detalhe
+  faixaFrota: '24h',   // faixa do gráfico de carga da frota
+  modo: 'lojas',       // 'lojas' (cartão por loja) ou 'maquinas' (cartão por PC)
   graficos: {},
   timerPoll: null,
   canalRealtime: null,
@@ -285,6 +287,7 @@ async function carregar() {
 
     marcarConexao(true);
     desenharResumo();
+    desenharFila();
     preencherFiltros();
     desenharMaquinas();
 
@@ -293,16 +296,26 @@ async function carregar() {
     marcarConexao(false, e.message);
     brinde(`Falha ao carregar: ${e.message}`, true);
   }
+
+  // Fora do try acima de propósito: a carga da frota é a parte cara, e uma falha
+  // nela não pode derrubar a lista de máquinas, que é o que a equipe realmente
+  // precisa ver quando algo está quebrado.
+  try {
+    await carregarFrota();
+  } catch (e) {
+    txt($('carga-sub'), `série indisponível: ${e.message}`);
+  }
 }
 
 function marcarConexao(ok, detalhe) {
   const p = $('indicador-conexao');
   if (ok) {
-    txt(p, CFG.authMode === 'supabase' && CFG.realtime ? 'ao vivo' : `polling ${CFG.pollSeconds}s`);
-    p.className = 'pill pill-ok';
+    txt(p, CFG.authMode === 'supabase' && CFG.realtime ? 'ao vivo' : `${CFG.pollSeconds}s`);
+    p.className = 'selo mono selo-ok';
+    p.title = '';
   } else {
     txt(p, 'sem conexão');
-    p.className = 'pill pill-ruim';
+    p.className = 'selo mono selo-ruim';
     p.title = detalhe || '';
   }
 }
@@ -310,28 +323,459 @@ function marcarConexao(ok, detalhe) {
 // -----------------------------------------------------------------------------
 // Resumo
 // -----------------------------------------------------------------------------
-function desenharResumo() {
-  const r = Estado.resumo || {};
+// -----------------------------------------------------------------------------
+// Estado derivado: "degradado"
+// -----------------------------------------------------------------------------
+// O banco conhece quatro estados (online, offline, never_seen, disabled). Falta
+// o que a operação mais usa: a máquina que ESTÁ respondendo mas tem algo errado.
+// Sem ele, um PDV com o Spooler parado aparece verde ao lado de um PDV saudável,
+// e a tela deixa de responder "o que precisa de mim agora".
+//
+// Derivado aqui, e não no banco, porque os limiares são de apresentação: mudar
+// "disco crítico" de 10% para 8% não deveria exigir migração.
+const PISO_DISCO = 10;
+const PISO_DISCO_ATENCAO = 20;
+const TETO_TEMP = 85;
+const TETO_CPU = 92;
+const TETO_DESVIO_RELOGIO = 120;
 
-  // Zero apaga a tira. Um "0 alertas abertos" aceso de laranja ensina a equipe a
-  // ignorar laranja, que e o contrario do que a cor existe para fazer.
-  const kpi = (id, valor) => {
+/** Lista de problemas de uma máquina, do mais grave para o menos. */
+function problemasDe(m) {
+  const p = [];
+  if (m.status !== 'online') return p;
+
+  if (m.services_down > 0) {
+    const nomes = Array.isArray(m.services_down_names) ? m.services_down_names.join(', ') : '';
+    p.push({
+      grau: 'crit',
+      tipo: 'servico',
+      titulo: `${m.services_down} serviço(s) parado(s)`,
+      desc: nomes ? `Parados: ${nomes}.` : 'Serviço crítico do perfil não está em execução.',
+    });
+  }
+
+  const disco = m.disk_min_free_pct;
+  if (disco !== null && disco !== undefined) {
+    if (disco <= PISO_DISCO) {
+      p.push({
+        grau: 'crit',
+        tipo: 'disco',
+        titulo: `Disco crítico em ${m.disk_worst_drive || 'volume desconhecido'}`,
+        desc: `${round1(disco)}% livre`
+          + (m.disk_min_free_gb ? ` (${round1(m.disk_min_free_gb)} GB).` : '.'),
+      });
+    } else if (disco <= PISO_DISCO_ATENCAO) {
+      p.push({
+        grau: 'alerta',
+        tipo: 'disco',
+        titulo: `Disco apertado em ${m.disk_worst_drive || 'volume desconhecido'}`,
+        desc: `${round1(disco)}% livre.`,
+      });
+    }
+  }
+
+  if (m.cpu_temp_c !== null && m.cpu_temp_c !== undefined && m.cpu_temp_c >= TETO_TEMP) {
+    p.push({ grau: 'alerta', tipo: 'temp', titulo: 'Temperatura alta',
+      desc: `${round1(m.cpu_temp_c)} °C na CPU.` });
+  }
+
+  if (m.cpu_pct !== null && m.cpu_pct !== undefined && m.cpu_pct >= TETO_CPU) {
+    p.push({ grau: 'alerta', tipo: 'cpu', titulo: 'CPU saturada',
+      desc: `${round1(m.cpu_pct)}% na última amostra.` });
+  }
+
+  const desvio = Math.abs(Number(m.clock_drift_seconds || 0));
+  if (desvio >= TETO_DESVIO_RELOGIO) {
+    p.push({ grau: 'alerta', tipo: 'relogio', titulo: 'Relógio fora de hora',
+      desc: `${Math.round(desvio)}s de desvio — o histórico desta máquina sai torto.` });
+  }
+
+  return p;
+}
+
+/** Estado de exibição, que inclui "degradado". */
+function estadoDe(m) {
+  if (m.status !== 'online') return m.status;
+  return problemasDe(m).length > 0 ? 'degradado' : 'online';
+}
+
+// -----------------------------------------------------------------------------
+// Resumo: KPIs, selos do topo e contadores da barra lateral
+// -----------------------------------------------------------------------------
+function desenharResumo() {
+  const ms = Estado.maquinas;
+  const por = (e) => ms.filter((m) => estadoDe(m) === e);
+
+  const online = por('online');
+  const degradado = por('degradado');
+  const offline = por('offline');
+  const nunca = por('never_seen');
+  const respondendo = online.length + degradado.length;
+
+  const comServico = ms.filter((m) => m.status === 'online' && m.services_down > 0);
+  const comDisco = ms.filter((m) => m.status === 'online'
+    && m.disk_min_free_pct !== null && m.disk_min_free_pct !== undefined
+    && m.disk_min_free_pct <= PISO_DISCO);
+
+  // Zero apaga a tira. Um "0 degradados" aceso de laranja ensina a equipe a
+  // ignorar laranja, que é o contrário do que a cor existe para fazer.
+  const tira = (id, valor, nota) => {
     const n = Number(valor ?? 0);
     txt($(id), n);
-    $(id).parentElement.classList.toggle('zero', n === 0);
+    $(id).closest('.tira').classList.toggle('zero', n === 0);
+    if (nota !== undefined) txt($(`${id}-nota`), nota);
   };
 
-  kpi('kpi-total', r.machines_total);
-  kpi('kpi-online', r.machines_online);
-  kpi('kpi-offline', r.machines_offline);
-  kpi('kpi-nunca', r.machines_never_seen);
-  kpi('kpi-alertas', r.open_alerts);
-  kpi('kpi-disco', r.disk_critical);
-  kpi('kpi-servicos', r.services_down);
+  txt($('kpi-total'), respondendo);
+  $('kpi-total').closest('.tira').classList.toggle('zero', respondendo === 0);
+  txt($('kpi-online-de'), `de ${ms.length}`);
+  txt($('kpi-online-nota'), ms.length
+    ? `${Math.round((respondendo / ms.length) * 100)}% da frota reportando`
+    : 'nenhuma máquina cadastrada');
 
-  document.title = (r.machines_offline > 0)
-    ? `(${r.machines_offline} offline) Monitoramento`
-    : 'Monitoramento de Infraestrutura';
+  tira('kpi-degradado', degradado.length,
+    degradado.length ? resumirLojas(degradado) : 'nenhum problema em máquina online');
+  tira('kpi-offline', offline.length,
+    offline.length ? resumirLojas(offline) : 'todas com contato recente');
+  tira('kpi-servicos', comServico.length,
+    comServico.length ? resumirLojas(comServico) : 'serviços críticos em execução');
+  tira('kpi-disco', comDisco.length,
+    comDisco.length ? resumirLojas(comDisco) : `nenhuma abaixo de ${PISO_DISCO}% livre`);
+
+  // Selos do topo.
+  const selo = (id, n, cls) => {
+    txt($(id), n);
+    const s = $(id).closest('.selo');
+    if (s) s.classList.toggle('zero', n === 0);
+    return cls;
+  };
+  selo('selo-ok', online.length);
+  selo('selo-degradado', degradado.length);
+  selo('selo-offline', offline.length);
+
+  // Contadores das vistas na barra lateral.
+  const conta = { total: ms.length, offline: offline.length, degradado: degradado.length, nunca: nunca.length };
+  for (const no of document.querySelectorAll('[data-cont]')) {
+    const n = conta[no.getAttribute('data-cont')] ?? 0;
+    txt(no, n);
+    no.classList.toggle('zero', n === 0);
+  }
+
+  const lojas = new Set(ms.map((m) => m.site_code).filter(Boolean));
+  txt($('marca-escopo'), `${lojas.size} loja(s) · ${ms.length} host(s)`);
+
+  desenharNavMarcas();
+
+  // Título da aba: quem está com a janela em segundo plano vê o problema.
+  const ruim = offline.length + degradado.length;
+  document.title = ruim > 0
+    ? `(${offline.length} off · ${degradado.length} deg) Operações`
+    : 'Centro de operações';
+}
+
+/** "BSB-001, SP-002 e mais 3" — cabe na tira e diz onde olhar. */
+function resumirLojas(lista) {
+  const codigos = [...new Set(lista.map((m) => m.site_code).filter(Boolean))];
+  if (codigos.length === 0) return '—';
+  if (codigos.length <= 2) return codigos.join(', ');
+  return `${codigos.slice(0, 2).join(', ')} e mais ${codigos.length - 2}`;
+}
+
+function desenharNavMarcas() {
+  const nav = $('nav-marcas');
+  limpar(nav);
+
+  const marcas = new Map();
+  for (const m of Estado.maquinas) {
+    if (!m.brand_code) continue;
+    if (!marcas.has(m.brand_code)) marcas.set(m.brand_code, { nome: m.brand_name, ruins: 0, total: 0 });
+    const b = marcas.get(m.brand_code);
+    b.total++;
+    if (['offline', 'degradado'].includes(estadoDe(m))) b.ruins++;
+  }
+
+  if (marcas.size < 2) return;   // uma marca só não é navegação, é rótulo
+
+  nav.appendChild(el('span', 'secao-lateral mono', 'Marcas'));
+
+  const todas = el('button', `vista${Estado.filtros.marca ? '' : ' ativa'}`);
+  todas.type = 'button';
+  todas.appendChild(el('span', 'marca-cor'));
+  todas.appendChild(el('span', 'vista-rot', 'Todas'));
+  todas.appendChild(el('span', 'vista-num mono', String(Estado.maquinas.length)));
+  todas.addEventListener('click', () => { Estado.filtros.marca = ''; $('filtro-marca').value = ''; aplicarFiltros(); });
+  nav.appendChild(todas);
+
+  for (const [cod, b] of [...marcas.entries()].sort((a, b2) => a[0].localeCompare(b2[0], 'pt-BR'))) {
+    const bt = el('button', `vista${Estado.filtros.marca === cod ? ' ativa' : ''}`);
+    bt.type = 'button';
+    bt.appendChild(el('span', 'marca-cor'));
+    bt.appendChild(el('span', 'vista-rot', b.nome || cod));
+    const n = el('span', `vista-num mono${b.ruins ? ' ruim' : ''}`, String(b.ruins || b.total));
+    bt.appendChild(n);
+    bt.addEventListener('click', () => {
+      Estado.filtros.marca = cod;
+      $('filtro-marca').value = cod;
+      aplicarFiltros();
+    });
+    nav.appendChild(bt);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Fila de atenção
+// -----------------------------------------------------------------------------
+// Derivada do estado ATUAL, não de uma tabela de alertas: a avaliação de regras
+// (fase 5) ainda não existe, e uma fila permanentemente vazia daria a impressão
+// errada de que está tudo bem. Cada linha aponta para a máquina.
+function desenharFila() {
+  const lista = $('fila-alertas');
+  limpar(lista);
+
+  const itens = [];
+
+  for (const m of Estado.maquinas) {
+    const e = estadoDe(m);
+
+    if (e === 'offline') {
+      itens.push({ m, grau: 'crit', ordem: 0, tipo: 'offline',
+        titulo: `${m.label} sem contato`,
+        desc: `Última amostra ${desdeQuando(m.seconds_since_seen, m.status)}.`
+          + (m.in_maintenance ? ' Em manutenção declarada.' : '') });
+      continue;
+    }
+
+    if (e === 'never_seen') {
+      itens.push({ m, grau: 'alerta', ordem: 2, tipo: 'nunca',
+        titulo: `${m.label} nunca reportou`,
+        desc: 'Cadastrada, mas o agente ainda não enviou nenhuma amostra.' });
+      continue;
+    }
+
+    for (const p of problemasDe(m)) {
+      itens.push({ m, grau: p.grau, ordem: p.grau === 'crit' ? 1 : 3, tipo: p.tipo,
+        titulo: `${m.label}: ${p.titulo}`, desc: p.desc });
+    }
+  }
+
+  itens.sort((a, b) => a.ordem - b.ordem
+    || (a.m.site_code || '').localeCompare(b.m.site_code || '', 'pt-BR'));
+
+  const criticos = itens.filter((i) => i.grau === 'crit').length;
+  const cont = $('fila-cont');
+  txt(cont, itens.length ? `${itens.length} em aberto` : 'tudo limpo');
+  cont.className = `selo mono ${criticos ? 'selo-ruim' : itens.length ? 'selo-alerta' : 'selo-ok'}`;
+
+  if (itens.length === 0) {
+    const p = el('li', 'fila-vazia', 'Nenhuma máquina pedindo atenção agora.');
+    lista.appendChild(p);
+    return;
+  }
+
+  for (const it of itens.slice(0, 40)) {
+    const li = el('li', `item-fila if-${it.grau}`);
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
+    li.setAttribute('aria-label', `${it.titulo}. Abrir detalhe.`);
+
+    li.appendChild(iconeFila(it.tipo));
+
+    const corpo = el('div', 'if-corpo');
+    corpo.appendChild(el('div', 'if-titulo', it.titulo));
+    corpo.appendChild(el('div', 'if-desc', it.desc));
+
+    const tags = el('div', 'if-tags');
+    if (it.m.site_code) tags.appendChild(el('span', 'if-tag', it.m.site_code));
+    tags.appendChild(el('span', 'if-tag', it.tipo));
+    corpo.appendChild(tags);
+    li.appendChild(corpo);
+
+    li.appendChild(el('span', 'if-quando', desdeQuando(it.m.seconds_since_seen, it.m.status)));
+
+    const abrir = () => abrirPainel(it.m);
+    li.addEventListener('click', abrir);
+    li.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); abrir(); }
+    });
+
+    lista.appendChild(li);
+  }
+}
+
+/* Ícones em SVG montado por createElement: `innerHTML` com <svg> abriria a porta
+   que a regra 7 fecha, mesmo sendo conteúdo nosso. Um caminho só, por tipo. */
+const CAMINHO_ICONE = {
+  offline: 'M12 2v10 M18.4 6.6a9 9 0 1 1-12.8 0',
+  nunca:   'M12 8v5 M12 17h.01 M12 3 2 21h20L12 3z',
+  servico: 'M6 3h12v4H6z M6 10h12v4H6z M9 17h6v4H9z',
+  disco:   'M4 6h16v5H4z M4 13h16v5H4z M7 8.5h.01 M7 15.5h.01',
+  temp:    'M14 14.8V4a2 2 0 1 0-4 0v10.8a4 4 0 1 0 4 0z',
+  cpu:     'M6 6h12v12H6z M9 1v3 M15 1v3 M9 20v3 M15 20v3 M1 9h3 M1 15h3 M20 9h3 M20 15h3',
+  relogio: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 7v5l3 2',
+};
+
+function iconeFila(tipo) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const caixa = el('span', 'if-icone');
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '15');
+  svg.setAttribute('height', '15');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.9');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+
+  for (const d of (CAMINHO_ICONE[tipo] || CAMINHO_ICONE.nunca).split(' M').map((s, i) => (i ? `M${s}` : s))) {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
+
+  caixa.appendChild(svg);
+  return caixa;
+}
+
+// -----------------------------------------------------------------------------
+// Carga da frota e pulso da ingestão
+// -----------------------------------------------------------------------------
+async function carregarFrota() {
+  const faixa = Estado.faixaFrota;
+
+  const [op, onl] = await Promise.all([
+    rpc('painel_operacao', { p_faixa: faixa }),
+    rpc('serie_online', { p_faixa: faixa }),
+  ]);
+
+  // ------------------------------------------------------------------ pulso
+  const pulso = (op && op.pulso) || {};
+  txt($('pulso-min'), pulso.amostras_min ?? 0);
+  txt($('kpi-ingest'), pulso.amostras_min ?? 0);
+
+  const porHora = Number(pulso.amostras_hora || 0);
+  txt($('pulso-nota'), `${porHora} na última hora · ${pulso.maquinas_reportando || 0} máquina(s) reportando`);
+  txt($('kpi-ingest-nota'), `${pulso.maquinas_reportando || 0} máquina(s) enviando`);
+  $('kpi-ingest').closest('.tira').classList.toggle('zero', !(pulso.amostras_min > 0));
+
+  // A bolha verde só pisca quando dado está mesmo chegando. Verde fixo com a
+  // ingestão parada seria a mentira mais cara desta tela.
+  const bolha = $('pulso-bolha');
+  bolha.className = pulso.amostras_min > 0 ? 'ponto ponto-ok' : 'ponto ponto-ruim';
+
+  const lat = pulso.latencia_gw_media;
+  txt($('lat-media'), lat === null || lat === undefined ? '—' : `${round1(lat)} ms`);
+  txt($('lat-nota'), lat === null || lat === undefined
+    ? 'nenhuma máquina online mediu o gateway'
+    : 'ida e volta até o roteador da loja');
+
+  faixinha('pulso-faixa', Array.isArray(pulso.serie) ? pulso.serie.map(Number) : []);
+  faixinha('spark-ingest', Array.isArray(pulso.serie) ? pulso.serie.map(Number) : []);
+
+  // ----------------------------------------------------------- hosts online
+  const pontos = (onl && Array.isArray(onl.pontos)) ? onl.pontos : [];
+  faixinha('spark-online', pontos.map((p) => Number(p.online || 0)));
+
+  // ------------------------------------------------------------------ carga
+  const carga = (op && Array.isArray(op.carga)) ? op.carga : [];
+
+  if (carga.length === 0) {
+    txt($('carga-sub'), 'sem amostras nesta faixa');
+    if (Estado.graficos['grafico-frota']) {
+      Estado.graficos['grafico-frota'].destroy();
+      delete Estado.graficos['grafico-frota'];
+    }
+    return;
+  }
+
+  const ultimo = carga[carga.length - 1];
+  txt($('carga-sub'),
+    `CPU e memória médias · ${ultimo.maquinas} host(s) na última leitura · `
+    + `agora ${round1(ultimo.cpu)}% CPU e ${round1(ultimo.mem)}% memória`);
+
+  desenharFrota(
+    carga.map((p) => formatarBalde(p.t, faixa)),
+    carga.map((p) => (p.cpu === null ? null : Number(p.cpu))),
+    carga.map((p) => (p.mem === null ? null : Number(p.mem))),
+  );
+}
+
+/** Sparkline em barras. Reamostra para caber sem virar uma pilha de fios. */
+function faixinha(id, valores) {
+  const caixa = $(id);
+  if (!caixa) return;
+  limpar(caixa);
+
+  const vals = (valores || []).filter((v) => Number.isFinite(v));
+  if (vals.length === 0) {
+    caixa.appendChild(el('span', 'spark-vazio', 'sem dados'));
+    return;
+  }
+
+  const ALVO = 26;
+  const passo = Math.max(1, Math.ceil(vals.length / ALVO));
+  const barras = [];
+  for (let i = 0; i < vals.length; i += passo) {
+    const fatia = vals.slice(i, i + passo);
+    barras.push(fatia.reduce((a, b) => a + b, 0) / fatia.length);
+  }
+
+  const max = Math.max(...barras, 1);
+  for (const v of barras) {
+    const b = el('span', v >= max * 0.85 ? 'alta' : null);
+    // Mínimo de 8%: barra de altura zero some, e "zero" é informação.
+    b.style.height = `${Math.max(8, (v / max) * 100)}%`;
+    b.setAttribute('title', String(Math.round(v)));
+    caixa.appendChild(b);
+  }
+}
+
+function desenharFrota(rotulos, cpu, mem) {
+  if (Estado.graficos['grafico-frota']) Estado.graficos['grafico-frota'].destroy();
+
+  const css = getComputedStyle(document.documentElement);
+  const corCpu = css.getPropertyValue('--info').trim() || '#6aa8ff';
+  const corMem = css.getPropertyValue('--vio').trim() || '#a78bfa';
+  const corTexto = css.getPropertyValue('--fg3').trim() || '#5c6a7e';
+  const corGrade = css.getPropertyValue('--bd2').trim() || 'rgba(255,255,255,.05)';
+
+  const ctx = $('grafico-frota').getContext('2d');
+
+  const area = (cor) => {
+    const g = ctx.createLinearGradient(0, 0, 0, 240);
+    g.addColorStop(0, `${cor}55`);
+    g.addColorStop(1, `${cor}00`);
+    return g;
+  };
+
+  Estado.graficos['grafico-frota'] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: rotulos,
+      datasets: [
+        { label: 'CPU média', data: cpu, borderColor: corCpu, backgroundColor: area(corCpu),
+          borderWidth: 1.8, pointRadius: 0, tension: 0.3, fill: true, spanGaps: false },
+        { label: 'Memória média', data: mem, borderColor: corMem, backgroundColor: area(corMem),
+          borderWidth: 1.8, pointRadius: 0, tension: 0.3, fill: true, spanGaps: false },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', align: 'start',
+          labels: { boxWidth: 10, boxHeight: 10, color: corTexto, font: { size: 11 }, usePointStyle: true } },
+        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y}%` } },
+      },
+      scales: {
+        y: { min: 0, max: 100, grid: { color: corGrade }, border: { display: false },
+          ticks: { color: corTexto, font: { size: 10 }, callback: (v) => `${v}%` } },
+        x: { grid: { display: false }, border: { display: false },
+          ticks: { color: corTexto, font: { size: 10 }, maxTicksLimit: 8, maxRotation: 0 } },
+      },
+    },
+  });
 }
 
 function preencherFiltros() {
@@ -374,7 +818,9 @@ function filtrar() {
   return Estado.maquinas.filter((m) => {
     if (f.marca && m.brand_code !== f.marca) return false;
     if (f.loja && m.site_code !== f.loja) return false;
-    if (f.status && m.status !== f.status) return false;
+    // Compara com o estado DERIVADO, senão o filtro "degradado" nunca casaria e
+    // "online" traria também as máquinas com serviço parado.
+    if (f.status && estadoDe(m) !== f.status) return false;
 
     if (busca) {
       const alvo = [m.label, m.hostname, m.site_code, m.site_name, m.brand_name, m.ip_lan]
@@ -391,9 +837,23 @@ function desenharMaquinas() {
 
   const lista = filtrar();
 
+  txt($('frota-titulo'), Estado.modo === 'lojas' ? 'Lojas' : 'Máquinas');
+
   if (lista.length === 0) {
+    txt($('frota-sub'), 'nada corresponde ao filtro');
     const p = el('p', 'vazio', 'Nenhuma máquina corresponde ao filtro.');
     conteudo.appendChild(p);
+    return;
+  }
+
+  const lojasVisiveis = new Set(lista.map((m) => m.site_code).filter(Boolean));
+  const ruins = lista.filter((m) => ['offline', 'degradado'].includes(estadoDe(m))).length;
+  txt($('frota-sub'),
+    `${lojasVisiveis.size} loja(s) · ${lista.length} host(s)`
+    + (ruins ? ` · ${ruins} pedindo atenção` : ''));
+
+  if (Estado.modo === 'lojas') {
+    desenharCartoesDeLoja(conteudo, lista);
     return;
   }
 
@@ -451,15 +911,19 @@ function contadorStatus(maquinas) {
 }
 
 function cartao(m) {
-  const c = el('article', `cartao cartao-${m.status}`);
+  // Estado DERIVADO: uma máquina que responde mas está com o Spooler parado não
+  // pode ficar verde ao lado de uma saudável.
+  const e = estadoDe(m);
+
+  const c = el('article', `cartao cartao-${e}`);
   c.tabIndex = 0;
   c.setAttribute('role', 'button');
   // aria-label recebe TEXTO, nunca markup — um hostname com < e > fica literal.
-  c.setAttribute('aria-label', `${m.label}, ${rotuloStatus(m.status)}`);
+  c.setAttribute('aria-label', `${m.label}, ${rotuloStatus(e)}`);
 
   const topo = el('header', 'cartao-topo');
   topo.appendChild(el('span', 'cartao-nome', m.label));
-  topo.appendChild(el('span', `bolha bolha-${m.status}`));
+  topo.appendChild(el('span', `bolha bolha-${e}`));
   c.appendChild(topo);
 
   // O hostname vem do agente e é o vetor do teste de aceite de XSS.
@@ -467,7 +931,7 @@ function cartao(m) {
   c.appendChild(host);
 
   const linha = el('p', 'cartao-status');
-  linha.appendChild(el('span', `etiqueta etiqueta-${m.status}`, rotuloStatus(m.status)));
+  linha.appendChild(el('span', `etiqueta etiqueta-${e}`, rotuloStatus(e)));
   linha.appendChild(el('span', 'cartao-visto', desdeQuando(m.seconds_since_seen, m.status)));
   c.appendChild(linha);
 
@@ -517,6 +981,126 @@ function metrica(rotulo, valor, elBarra) {
   return w;
 }
 
+// -----------------------------------------------------------------------------
+// Modo "lojas": um cartão por loja, com heatmap de hosts
+// -----------------------------------------------------------------------------
+// É o que faz a tela caber em dezenas de lojas sem virar rolagem infinita. Cada
+// quadrado é uma máquina e abre o painel dela — a densidade não custa o acesso.
+function desenharCartoesDeLoja(conteudo, lista) {
+  const porLoja = new Map();
+  for (const m of lista) {
+    const chave = m.site_code || '(sem loja)';
+    if (!porLoja.has(chave)) {
+      porLoja.set(chave, { code: chave, nome: m.site_name, marca: m.brand_name, maquinas: [] });
+    }
+    porLoja.get(chave).maquinas.push(m);
+  }
+
+  const lojas = [...porLoja.values()];
+
+  // Ordena por GRAVIDADE, não por código: numa tela com trinta lojas, a que está
+  // em incidente não pode depender de rolagem para ser vista.
+  const peso = (l) => {
+    const e = l.maquinas.map(estadoDe);
+    if (e.includes('offline')) return 0;
+    if (e.includes('degradado')) return 1;
+    if (e.includes('never_seen')) return 2;
+    return 3;
+  };
+  lojas.sort((a, b) => peso(a) - peso(b) || a.code.localeCompare(b.code, 'pt-BR'));
+
+  const grade = el('div', 'grade-lojas');
+  for (const l of lojas) grade.appendChild(cartaoLoja(l));
+  conteudo.appendChild(grade);
+}
+
+function cartaoLoja(loja) {
+  const estados = loja.maquinas.map(estadoDe);
+  const offline = estados.filter((e) => e === 'offline').length;
+  const degradado = estados.filter((e) => e === 'degradado').length;
+  const online = estados.filter((e) => e === 'online').length;
+
+  let situacao = 'estavel';
+  let rotulo = 'estável';
+  if (offline > 0) { situacao = 'incidente'; rotulo = 'incidente'; }
+  else if (degradado > 0) { situacao = 'atencao'; rotulo = 'atenção'; }
+  else if (online === 0) { situacao = 'parada'; rotulo = 'sem dados'; }
+
+  const c = el('article', `cartao-loja cl-${situacao}`);
+
+  const cab = el('div', 'cl-cab');
+  const ident = el('div');
+  ident.appendChild(el('div', 'cl-nome', loja.nome || loja.code));
+  ident.appendChild(el('p', 'cl-meta', `${loja.marca || 'sem marca'} · ${loja.code}`));
+  cab.appendChild(ident);
+  cab.appendChild(el('span', `cl-selo cl-selo-${situacao}`, rotulo));
+  c.appendChild(cab);
+
+  // ------------------------------------------------------------- heatmap
+  const mapa = el('div', 'mapa-hosts');
+  for (const m of [...loja.maquinas].sort((a, b) => (a.label || '').localeCompare(b.label || '', 'pt-BR'))) {
+    const e = estadoDe(m);
+    const q = el('button', `host-quad hq-${e}`);
+    q.type = 'button';
+    // O nome da máquina vem do banco: title e aria-label recebem TEXTO, nunca
+    // markup — um hostname com < e > fica literal.
+    const desc = `${m.label} — ${rotuloStatus(e)}`;
+    q.title = desc;
+    q.setAttribute('aria-label', desc);
+    q.addEventListener('click', () => abrirPainel(m));
+    mapa.appendChild(q);
+  }
+  c.appendChild(mapa);
+
+  // -------------------------------------------------------------- números
+  const medias = (campo) => {
+    const v = loja.maquinas
+      .filter((m) => m.status === 'online' && m[campo] !== null && m[campo] !== undefined)
+      .map((m) => Number(m[campo]));
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  };
+
+  const cpu = medias('cpu_pct');
+  const rtt = medias('gw_latency_ms');
+  const discos = loja.maquinas
+    .filter((m) => m.disk_min_free_pct !== null && m.disk_min_free_pct !== undefined)
+    .map((m) => Number(m.disk_min_free_pct));
+  const discoMin = discos.length ? Math.min(...discos) : null;
+
+  const cels = el('div', 'cl-celulas');
+  cels.appendChild(celula('online', `${online + degradado}/${loja.maquinas.length}`,
+    offline > 0 ? 'ruim' : null));
+  cels.appendChild(celula('cpu', cpu === null ? '—' : `${Math.round(cpu)}%`,
+    cpu !== null && cpu >= TETO_CPU ? 'alerta' : null));
+  cels.appendChild(celula('disco', discoMin === null ? '—' : `${Math.round(discoMin)}%`,
+    discoMin === null ? null : discoMin <= PISO_DISCO ? 'ruim' : discoMin <= PISO_DISCO_ATENCAO ? 'alerta' : null));
+  cels.appendChild(celula('rtt', rtt === null ? '—' : `${Math.round(rtt)}ms`, null));
+  c.appendChild(cels);
+
+  return c;
+}
+
+function celula(rotulo, valor, classe) {
+  const d = el('div', 'cel');
+  d.appendChild(el('span', 'cel-rot', rotulo));
+  d.appendChild(el('span', `cel-val${classe ? ` ${classe}` : ''}`, valor));
+  return d;
+}
+
+/** Reaplica filtros e redesenha. Um ponto só, para vista, select e busca. */
+function aplicarFiltros() {
+  desenharResumo();
+  desenharMaquinas();
+  sincronizarVistas();
+}
+
+/** Marca a vista ativa na barra lateral a partir do filtro de status. */
+function sincronizarVistas() {
+  for (const b of document.querySelectorAll('.vista[data-vista]')) {
+    b.classList.toggle('ativa', (b.getAttribute('data-vista') || '') === (Estado.filtros.status || ''));
+  }
+}
+
 /** Barra de progresso. `tetoAlto` alerta quando passa; `pisoBaixo`, quando cai abaixo. */
 function barra(valor, tetoAlto, pisoBaixo) {
   if (valor === null || valor === undefined) return null;
@@ -535,7 +1119,13 @@ function barra(valor, tetoAlto, pisoBaixo) {
 // -----------------------------------------------------------------------------
 // Formatação
 // -----------------------------------------------------------------------------
-const rotulos = { online: 'online', offline: 'OFFLINE', never_seen: 'nunca vista', disabled: 'desativada' };
+const rotulos = {
+  online: 'online',
+  degradado: 'degradado',
+  offline: 'OFFLINE',
+  never_seen: 'nunca vista',
+  disabled: 'desativada',
+};
 const rotuloStatus = (s) => rotulos[s] || s || '?';
 
 const round1 = (v) => (v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10);
@@ -1004,13 +1594,13 @@ function ligarEventos() {
     Estado.filtros.marca = ev.target.value;
     Estado.filtros.loja = '';
     preencherFiltros();
-    desenharMaquinas();
+    aplicarFiltros();
   });
 
   for (const [id, campo] of [['filtro-loja', 'loja'], ['filtro-status', 'status']]) {
     $(id).addEventListener('change', (ev) => {
       Estado.filtros[campo] = ev.target.value;
-      desenharMaquinas();
+      aplicarFiltros();
     });
   }
 
@@ -1024,13 +1614,96 @@ function ligarEventos() {
     }, 200);
   });
 
-  for (const b of document.querySelectorAll('.faixa')) {
+  // Vistas da barra lateral: cada uma é o filtro de status, com atalho visual.
+  for (const b of document.querySelectorAll('.vista[data-vista]')) {
     b.addEventListener('click', () => {
-      for (const o of document.querySelectorAll('.faixa')) o.classList.remove('ativa');
+      Estado.filtros.status = b.getAttribute('data-vista') || '';
+      $('filtro-status').value = Estado.filtros.status;
+      aplicarFiltros();
+    });
+  }
+
+  // Modo de agrupamento: loja (denso, escala) ou máquina (detalhe).
+  for (const b of document.querySelectorAll('.seg[data-modo]')) {
+    b.addEventListener('click', () => {
+      for (const o of document.querySelectorAll('.seg[data-modo]')) o.classList.remove('ativa');
       b.classList.add('ativa');
-      Estado.faixa = b.dataset.faixa;
+      Estado.modo = b.getAttribute('data-modo');
+      try { localStorage.setItem('monitor.modo', Estado.modo); } catch (_) { /* modo privado */ }
+      desenharMaquinas();
+    });
+  }
+
+  // Faixa do gráfico da frota. Separada da faixa do painel de detalhe: são dois
+  // gráficos independentes, e um `.faixa` genérico mexia nos dois ao mesmo tempo.
+  for (const b of document.querySelectorAll('.faixa[data-frota]')) {
+    b.addEventListener('click', async () => {
+      for (const o of document.querySelectorAll('.faixa[data-frota]')) o.classList.remove('ativa');
+      b.classList.add('ativa');
+      Estado.faixaFrota = b.getAttribute('data-frota');
+      try { await carregarFrota(); } catch (e) { txt($('carga-sub'), `falhou: ${e.message}`); }
+    });
+  }
+
+  for (const b of document.querySelectorAll('.faixa[data-faixa]')) {
+    b.addEventListener('click', () => {
+      for (const o of document.querySelectorAll('.faixa[data-faixa]')) o.classList.remove('ativa');
+      b.classList.add('ativa');
+      Estado.faixa = b.getAttribute('data-faixa');
       if (Estado.maquinaAberta) carregarGraficos(Estado.maquinaAberta.machine_id);
     });
+  }
+
+  $('btn-tema').addEventListener('click', () => trocarTema());
+
+  // "/" foca a busca, como em toda ferramenta de operação. Não sequestra a tecla
+  // quando o foco já está num campo — senão seria impossível digitar uma barra.
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== '/' || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+    const a = document.activeElement;
+    if (a && ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName)) return;
+    ev.preventDefault();
+    $('busca').focus();
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Tema
+// -----------------------------------------------------------------------------
+// Claro existe porque loja tem tela em balcão com sol batendo, onde o escuro
+// vira espelho. A escolha fica no navegador de quem usa.
+function aplicarTema(tema) {
+  document.documentElement.setAttribute('data-tema', tema);
+  txt($('btn-tema-rot'), tema === 'light' ? 'Tema escuro' : 'Tema claro');
+
+  // O gráfico lê as cores do CSS na hora de desenhar, então precisa ser
+  // redesenhado — senão fica com a paleta do tema anterior.
+  if (Estado.maquinas.length) {
+    carregarFrota().catch(() => { /* a faixa de erro já cobre */ });
+  }
+}
+
+function trocarTema() {
+  const atual = document.documentElement.getAttribute('data-tema') === 'light' ? 'light' : 'dark';
+  const novo = atual === 'light' ? 'dark' : 'light';
+  try { localStorage.setItem('monitor.tema', novo); } catch (_) { /* modo privado */ }
+  aplicarTema(novo);
+}
+
+function restaurarPreferencias() {
+  let tema = 'dark';
+  let modo = 'lojas';
+  try {
+    tema = localStorage.getItem('monitor.tema') || 'dark';
+    modo = localStorage.getItem('monitor.modo') || 'lojas';
+  } catch (_) { /* modo privado bloqueia storage */ }
+
+  document.documentElement.setAttribute('data-tema', tema);
+  txt($('btn-tema-rot'), tema === 'light' ? 'Tema escuro' : 'Tema claro');
+
+  Estado.modo = modo === 'maquinas' ? 'maquinas' : 'lojas';
+  for (const b of document.querySelectorAll('.seg[data-modo]')) {
+    b.classList.toggle('ativa', b.getAttribute('data-modo') === Estado.modo);
   }
 }
 
@@ -1043,13 +1716,29 @@ function ligarEventos() {
  */
 async function iniciar() {
   $('app').hidden = false;
-  txt($('rotulo-usuario'), Estado.usuario || '');
+
+  const nome = Estado.usuario || '';
+  txt($('rotulo-usuario'), nome);
+  txt($('usuario-iniciais'), iniciaisDe(nome));
 
   await carregar();
   iniciarAtualizacao();
 }
 
+/** "Kaua Larsson" -> "KL"; "kaua@cajupar.com" -> "KA". */
+function iniciaisDe(nome) {
+  const limpo = String(nome || '').trim();
+  if (!limpo) return '··';
+
+  const antesDoArroba = limpo.split('@')[0];
+  const partes = antesDoArroba.split(/[\s._-]+/).filter(Boolean);
+
+  if (partes.length >= 2) return (partes[0][0] + partes[1][0]).toUpperCase();
+  return antesDoArroba.slice(0, 2).toUpperCase();
+}
+
 async function principal() {
+  restaurarPreferencias();
   ligarEventos();
 
   // -------------------------------------------------------------------- token
