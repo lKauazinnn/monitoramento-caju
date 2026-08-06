@@ -60,3 +60,4 @@ agente-ps.err.log
 
 # Pacotes gerados para outros PCs (contem token por maquina)
 pacotes/
+capturas/

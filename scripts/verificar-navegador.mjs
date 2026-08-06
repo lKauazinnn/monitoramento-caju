@@ -294,6 +294,21 @@ try {
   const dados = await js("document.querySelectorAll('#painel-dados dd').length");
   verificar('painel listou os dados da máquina', dados > 8, `${dados} campos`);
 
+  // Fecha o painel e confere pelo ESTILO COMPUTADO, nao pelo atributo: `.painel`
+  // e flex, e um `display` de autor vence o `[hidden]` do navegador. Foi assim
+  // que o painel ficou preso na tela sobre o dashboard sem nenhum teste reclamar.
+  await js("document.getElementById('btn-fechar-painel').click(); true");
+  await dormir(500);
+
+  const painelSumiu = await js(`
+    ['painel', 'painel-fundo'].filter((id) =>
+      getComputedStyle(document.getElementById(id)).display !== 'none')
+  `);
+
+  verificar('painel realmente sai da tela ao fechar (display computado)',
+    Array.isArray(painelSumiu) && painelSumiu.length === 0,
+    `ainda desenhando: ${(painelSumiu || []).join(', ') || 'nada'}`);
+
   // =========================================================================
   console.log('\n== Adicionar PC pela interface ==');
   // =========================================================================
@@ -389,8 +404,26 @@ try {
 
   await js("document.getElementById('btn-fechar-modal').click(); true");
   await dormir(600);
-  const fechou = await js("document.getElementById('modal-add').hidden");
-  verificar('modal fecha', fechou === true);
+
+  // Checar `.hidden` NAO BASTA, e essa foi exatamente a falha que escapou daqui:
+  // o JS marcava hidden = true e o modal continuava na tela, porque `.modal`
+  // declarava `display: flex` e estilo de autor vence o `[hidden]` da folha do
+  // navegador. Por isso a pergunta certa e "o navegador esta desenhando isto?",
+  // e a resposta so vem do estilo computado.
+  const fechou = await js(`
+    (() => {
+      const alvos = ['modal-add', 'modal-fundo', 'painel', 'painel-fundo'];
+      const visiveis = alvos.filter((id) => {
+        const n = document.getElementById(id);
+        return n && getComputedStyle(n).display !== 'none';
+      });
+      return { atributo: document.getElementById('modal-add').hidden, visiveis };
+    })()
+  `);
+
+  verificar('modal fecha (atributo hidden)', fechou.atributo === true);
+  verificar('modal e painel realmente saem da tela (display computado)',
+    fechou.visiveis.length === 0, `ainda desenhando: ${fechou.visiveis.join(', ') || 'nada'}`);
 
   // =========================================================================
   console.log('\n== Token inválido guardado ==');
@@ -431,6 +464,28 @@ try {
   verificar('nenhuma faixa de erro', aposToken.falha === null, aposToken.falha);
   verificar('nenhuma exceção de JavaScript no caminho do token velho',
     erros.length === 0, erros.join('\n        '));
+
+  // Texto ilegível na tela.
+  //
+  // Uma reescrita de arquivo com a codificação errada não quebra nada: a página
+  // carrega, os testes passam, e o usuário vê "Temp. <losango>" e "NÒO EXISTE".
+  // Só olhando a tela se descobre — então esta verificação olha por nós.
+  const lixo = await js(`
+    (() => {
+      const texto = document.body.innerText || '';
+      const ruins = new Set();
+      for (const ch of texto) {
+        const c = ch.codePointAt(0);
+        if (c === 0xFFFD || (c < 32 && c !== 9 && c !== 10 && c !== 13)) {
+          ruins.add('U+' + c.toString(16).toUpperCase().padStart(4, '0'));
+        }
+      }
+      return [...ruins];
+    })()
+  `);
+
+  verificar('nenhum caractere ilegível no texto da tela',
+    Array.isArray(lixo) && lixo.length === 0, `encontrados: ${(lixo || []).join(', ')}`);
 
 
   // =========================================================================

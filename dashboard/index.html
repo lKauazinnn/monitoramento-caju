@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Monitoramento de Infraestrutura</title>
 
-  <!-- NÒO EXISTE TELA DE LOGIN NESTA PÁGINA.
+  <!-- NÃO EXISTE TELA DE LOGIN NESTA PÁGINA.
        Na stack local o dashboard abre direto, com o token que o dev-up.ps1
        grava em dev-config.json. No modo Supabase o login vive em login.html,
-       que autentica e redireciona para cá � este arquivo nunca desenha
+       que autentica e redireciona para cá — este arquivo nunca desenha
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=9" é pedir outro
-       recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE N�aMERO. -->
-  <link rel="stylesheet" href="styles.css?v=9">
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=12" é pedir outro
+       recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
+  <link rel="stylesheet" href="styles.css?v=12">
 </head>
 <body>
 
@@ -23,7 +23,7 @@
   <header class="topo">
     <div class="topo-esq">
       <h1>Monitoramento</h1>
-      <span id="indicador-conexao" class="pill pill-neutro">conectando⬦</span>
+      <span id="indicador-conexao" class="pill pill-neutro">conectando&hellip;</span>
     </div>
 
     <div class="topo-dir">
@@ -34,13 +34,13 @@
   </header>
 
   <section class="tiras" aria-label="Resumo geral">
-    <div class="tira"><span class="tira-num" id="kpi-total">�</span><span class="tira-rot">máquinas</span></div>
-    <div class="tira tira-ok"><span class="tira-num" id="kpi-online">�</span><span class="tira-rot">online</span></div>
-    <div class="tira tira-ruim"><span class="tira-num" id="kpi-offline">�</span><span class="tira-rot">offline</span></div>
-    <div class="tira"><span class="tira-num" id="kpi-nunca">�</span><span class="tira-rot">nunca vistas</span></div>
-    <div class="tira tira-alerta"><span class="tira-num" id="kpi-alertas">�</span><span class="tira-rot">alertas abertos</span></div>
-    <div class="tira tira-alerta"><span class="tira-num" id="kpi-disco">�</span><span class="tira-rot">disco crítico</span></div>
-    <div class="tira tira-alerta"><span class="tira-num" id="kpi-servicos">�</span><span class="tira-rot">serviços parados</span></div>
+    <div class="tira"><span class="tira-num" id="kpi-total">&mdash;</span><span class="tira-rot">máquinas</span></div>
+    <div class="tira tira-ok"><span class="tira-num" id="kpi-online">&mdash;</span><span class="tira-rot">online</span></div>
+    <div class="tira tira-ruim"><span class="tira-num" id="kpi-offline">&mdash;</span><span class="tira-rot">offline</span></div>
+    <div class="tira"><span class="tira-num" id="kpi-nunca">&mdash;</span><span class="tira-rot">nunca vistas</span></div>
+    <div class="tira tira-alerta"><span class="tira-num" id="kpi-alertas">&mdash;</span><span class="tira-rot">alertas abertos</span></div>
+    <div class="tira tira-alerta"><span class="tira-num" id="kpi-disco">&mdash;</span><span class="tira-rot">disco crítico</span></div>
+    <div class="tira tira-alerta"><span class="tira-num" id="kpi-servicos">&mdash;</span><span class="tira-rot">serviços parados</span></div>
   </section>
 
   <nav class="barra-filtros" aria-label="Filtros">
@@ -67,7 +67,7 @@
   </nav>
 
   <main id="conteudo" aria-live="polite">
-    <p class="vazio">Carregando⬦</p>
+    <p class="vazio">Carregando&hellip;</p>
   </main>
 </div>
 
@@ -82,7 +82,7 @@
       <h2 id="painel-titulo"></h2>
       <p id="painel-sub" class="painel-sub"></p>
     </div>
-    <button id="btn-fechar-painel" class="btn-fechar" type="button" aria-label="Fechar">�</button>
+    <button id="btn-fechar-painel" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
   </header>
 
   <div class="painel-corpo">
@@ -113,7 +113,7 @@
 <div id="modal-add" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
   <header class="modal-topo">
     <h2 id="modal-titulo">Adicionar um PC ao monitoramento</h2>
-    <button id="btn-fechar-modal" class="btn-fechar" type="button" aria-label="Fechar">�</button>
+    <button id="btn-fechar-modal" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
   </header>
 
   <!-- Passo 1: formulário -->
@@ -139,7 +139,7 @@
     <input type="text" id="add-servicos" placeholder="Spooler, Dhcp, Dnscache" autocomplete="off">
     <p class="dica">
       Nome curto do serviço, separado por vírgula. Não use o nome exibido
-      (<em>Spooler de Impressão</em>) � ele muda com o idioma do Windows.
+      (<em>Spooler de Impressão</em>) &mdash; ele muda com o idioma do Windows.
     </p>
 
     <p id="add-erro" class="erro" hidden></p>
@@ -162,7 +162,7 @@
       <p class="dica">
         Rode o mesmo comando com <code>-ComTarefa</code> no fim, num PowerShell
         <strong>como administrador</strong>. Ele cria uma tarefa agendada que roda
-        como SYSTEM � e aí temperatura e SMART também passam a ser coletados.
+        como SYSTEM &mdash; e aí temperatura e SMART também passam a ser coletados.
       </p>
       <div class="comando-caixa">
         <pre id="add-comando-tarefa"></pre>
@@ -172,7 +172,7 @@
 
     <p class="aviso-token">
       Este comando contém o token desta máquina e <strong>não será mostrado de
-      novo</strong>. Se perder, cadastre a máquina outra vez � o token antigo pode
+      novo</strong>. Se perder, cadastre a máquina outra vez &mdash; o token antigo pode
       ser revogado depois.
     </p>
 
@@ -194,8 +194,8 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=9"></script>
-<script src="dash.js?v=9"></script>
+<script src="config.js?v=12"></script>
+<script src="dash.js?v=12"></script>
 </body>
 </html>
 

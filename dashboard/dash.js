@@ -6,19 +6,19 @@
 //
 // Existe uma única função que escreve texto na tela (`txt`) e uma única que cria
 // elemento (`el`). Se um dia alguém introduzir innerHTML aqui, vai ter que
-// escrever fora desse caminho � e o teste de aceite (hostname
+// escrever fora desse caminho — e o teste de aceite (hostname
 // `<script>alert(1)</script>` renderizado como texto literal) vai reprovar.
 // =============================================================================
 
 'use strict';
 
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
-// "o navegador está com o código novo?" � que foi exatamente a dúvida que
+// "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.9-add-pc';
+const BUILD = '2026-08-06.12-visual';
 
 // -----------------------------------------------------------------------------
-// Captura global de erro � registrada ANTES de qualquer outra coisa
+// Captura global de erro — registrada ANTES de qualquer outra coisa
 // -----------------------------------------------------------------------------
 // Sem isto, um erro de JavaScript em qualquer ponto produz o pior sintoma
 // possível: o botão é clicado e nada acontece, sem mensagem em lugar nenhum.
@@ -69,8 +69,8 @@ if (!CFG) {
   throw new Error('config.js ausente');
 }
 
-// Só o build e o modo aqui. A restUrl NÒO é logada neste ponto porque ela ainda
-// é o valor padrão do config.js � descobrirApiLocal() a substitui depois. Logá-la
+// Só o build e o modo aqui. A restUrl NÃO é logada neste ponto porque ela ainda
+// é o valor padrão do config.js — descobrirApiLocal() a substitui depois. Logá-la
 // aqui produzia uma linha enganosa (mostrava a porta 3000 quando a API estava na
 // 3001), e diagnóstico que mente custa mais tempo que diagnóstico ausente.
 console.info(`[monitor] build ${BUILD} | authMode=${CFG.authMode}`);
@@ -96,16 +96,16 @@ const Estado = {
 // -----------------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 
-/** Escreve texto com segurança. �0 o �aNICO caminho de texto do banco para a tela. */
+/** Escreve texto com segurança. É o ÚNICO caminho de texto do banco para a tela. */
 function txt(no, valor) {
-  no.textContent = valor === null || valor === undefined || valor === '' ? '�' : String(valor);
+  no.textContent = valor === null || valor === undefined || valor === '' ? '\u2014' : String(valor);
 }
 
 /** Cria elemento. Aceita texto, nunca HTML. */
 function el(tag, classe, texto) {
   const n = document.createElement(tag);
   if (classe) n.className = classe;
-  if (texto !== undefined) n.textContent = texto === null || texto === '' ? '�' : String(texto);
+  if (texto !== undefined) n.textContent = texto === null || texto === '' ? '\u2014' : String(texto);
   return n;
 }
 
@@ -163,7 +163,7 @@ const rpc = (nome, args = {}) =>
 //
 // O token vem do dev-config.json, gravado pelo dev-up.ps1, e o dashboard abre
 // direto. Nada de formulario, nada de sessionStorage, nada de estado
-// "deslogado" � era justamente a transicao entre esses estados que produzia a
+// "deslogado" — era justamente a transicao entre esses estados que produzia a
 // tela travada (formulario na frente, painel aberto atras, app pendurado).
 //
 // Para o modo Supabase, onde autenticacao e obrigatoria, existe login.html
@@ -239,7 +239,7 @@ async function descobrirApiLocal() {
     d = await resp.json();
   } catch (e) {
     // FALHA ALTA, não silenciosa. A versão anterior engolia o erro e o dashboard
-    // seguia com a URL padrão do config.js � que podia ser a porta de um serviço
+    // seguia com a URL padrão do config.js — que podia ser a porta de um serviço
     // completamente diferente. Ficar mudo aqui é o que transformava um problema
     // trivial de porta num "login não funciona" indecifrável.
     throw new Error(
@@ -263,7 +263,7 @@ async function descobrirApiLocal() {
 
   // Endereco da ingestao NA REDE e o segredo compartilhado: e o que o dashboard
   // precisa para montar o comando de instalacao de outro PC. O IP e o da LAN, nao
-  // 127.0.0.1 � que, na outra maquina, aponta para ela mesma.
+  // 127.0.0.1 — que, na outra maquina, aponta para ela mesma.
   CFG.ingestUrlLan = d.ingestUrlLan || null;
   CFG.ingestSecret = d.ingestSecret || null;
 }
@@ -310,13 +310,22 @@ function marcarConexao(ok, detalhe) {
 // -----------------------------------------------------------------------------
 function desenharResumo() {
   const r = Estado.resumo || {};
-  txt($('kpi-total'), r.machines_total ?? 0);
-  txt($('kpi-online'), r.machines_online ?? 0);
-  txt($('kpi-offline'), r.machines_offline ?? 0);
-  txt($('kpi-nunca'), r.machines_never_seen ?? 0);
-  txt($('kpi-alertas'), r.open_alerts ?? 0);
-  txt($('kpi-disco'), r.disk_critical ?? 0);
-  txt($('kpi-servicos'), r.services_down ?? 0);
+
+  // Zero apaga a tira. Um "0 alertas abertos" aceso de laranja ensina a equipe a
+  // ignorar laranja, que e o contrario do que a cor existe para fazer.
+  const kpi = (id, valor) => {
+    const n = Number(valor ?? 0);
+    txt($(id), n);
+    $(id).parentElement.classList.toggle('zero', n === 0);
+  };
+
+  kpi('kpi-total', r.machines_total);
+  kpi('kpi-online', r.machines_online);
+  kpi('kpi-offline', r.machines_offline);
+  kpi('kpi-nunca', r.machines_never_seen);
+  kpi('kpi-alertas', r.open_alerts);
+  kpi('kpi-disco', r.disk_critical);
+  kpi('kpi-servicos', r.services_down);
 
   document.title = (r.machines_offline > 0)
     ? `(${r.machines_offline} offline) Monitoramento`
@@ -329,7 +338,7 @@ function preencherFiltros() {
   preencherSelect($('filtro-loja'), Estado.filtros.loja,
     unicos(Estado.maquinas
       .filter((m) => !Estado.filtros.marca || m.brand_code === Estado.filtros.marca)
-      .map((m) => [m.site_code, `${m.site_code} � ${m.site_name}`])));
+      .map((m) => [m.site_code, `${m.site_code} \u2014 ${m.site_name}`])));
 }
 
 function unicos(pares) {
@@ -443,7 +452,7 @@ function cartao(m) {
   const c = el('article', `cartao cartao-${m.status}`);
   c.tabIndex = 0;
   c.setAttribute('role', 'button');
-  // aria-label recebe TEXTO, nunca markup � um hostname com < e > fica literal.
+  // aria-label recebe TEXTO, nunca markup — um hostname com < e > fica literal.
   c.setAttribute('aria-label', `${m.label}, ${rotuloStatus(m.status)}`);
 
   const topo = el('header', 'cartao-topo');
@@ -471,11 +480,7 @@ function cartao(m) {
   metricas.appendChild(metrica('Temp.', m.cpu_temp_c === null || m.cpu_temp_c === undefined ? null : `${round1(m.cpu_temp_c)} °C`, null));
   c.appendChild(metricas);
 
-  const pe = el('footer', 'cartao-pe');
-  pe.appendChild(el('span', null, `uptime ${uptime(m.uptime_seconds)}`));
-  pe.appendChild(el('span', null, m.agent_version ? `v${m.agent_version}` : 'sem agente'));
-  c.appendChild(pe);
-
+  // ANTES do rodapé: o aviso é conteúdo, e o rodapé é a linha de fecho do cartão.
   if (m.services_down > 0) {
     const s = el('p', 'cartao-servicos');
     // Nome de serviço também vem do banco: montado com textContent.
@@ -483,6 +488,11 @@ function cartao(m) {
     txt(s, `${m.services_down} serviço(s) parado(s)${nomes ? `: ${nomes}` : ''}`);
     c.appendChild(s);
   }
+
+  const pe = el('footer', 'cartao-pe');
+  pe.appendChild(el('span', null, `uptime ${uptime(m.uptime_seconds)}`));
+  pe.appendChild(el('span', null, m.agent_version ? `v${m.agent_version}` : 'sem agente'));
+  c.appendChild(pe);
 
   const abrir = () => abrirPainel(m);
   c.addEventListener('click', abrir);
@@ -496,8 +506,12 @@ function cartao(m) {
 function metrica(rotulo, valor, elBarra) {
   const w = el('div', 'metrica');
   w.appendChild(el('span', 'metrica-rot', rotulo));
+
+  // A barra ocupa a coluna do meio SEMPRE, mesmo quando nao existe (temperatura
+  // nao tem escala de 0 a 100). Sem o vao, o numero da temperatura subiria para
+  // a coluna da barra e sairia do alinhamento das outras linhas do cartao.
+  w.appendChild(elBarra || el('span', 'barra-vazia'));
   w.appendChild(el('span', 'metrica-val', valor));
-  if (elBarra) w.appendChild(elBarra);
   return w;
 }
 
@@ -526,7 +540,7 @@ const round1 = (v) => (v === null || v === undefined ? null : Math.round(Number(
 const pct = (v) => (v === null || v === undefined ? null : `${round1(v)}%`);
 
 function uptime(segundos) {
-  if (segundos === null || segundos === undefined || segundos < 0) return '�';
+  if (segundos === null || segundos === undefined || segundos < 0) return '\u2014';
   const s = Number(segundos);
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
@@ -538,7 +552,7 @@ function uptime(segundos) {
 
 function desdeQuando(segundos, status) {
   if (status === 'never_seen') return 'nunca reportou';
-  if (segundos === null || segundos === undefined) return '�';
+  if (segundos === null || segundos === undefined) return '\u2014';
 
   const s = Number(segundos);
   if (s < 90) return `há ${Math.round(s)}s`;
@@ -554,7 +568,7 @@ async function abrirPainel(m) {
   Estado.maquinaAberta = m;
 
   txt($('painel-titulo'), m.label);
-  txt($('painel-sub'), `${m.site_code} � ${m.site_name} · ${m.brand_name}`);
+  txt($('painel-sub'), `${m.site_code} \u2014 ${m.site_name} · ${m.brand_name}`);
 
   const dl = $('painel-dados');
   limpar(dl);
@@ -562,7 +576,7 @@ async function abrirPainel(m) {
   const campos = [
     ['Status', rotuloStatus(m.status)],
     ['Hostname', m.hostname],
-    ['�altimo contato', desdeQuando(m.seconds_since_seen, m.status)],
+    ['\u00daltimo contato', desdeQuando(m.seconds_since_seen, m.status)],
     ['Perfil', m.role_name || m.role_code],
     ['IP na LAN', m.ip_lan],
     ['Sistema', m.os_caption],
@@ -752,12 +766,12 @@ function conectarRealtime() {
 // -----------------------------------------------------------------------------
 // O comando gerado é a única coisa que o operador precisa levar para a outra
 // máquina. Ele embute servidor, token e segredo, e o script baixa o agente do
-// próprio endpoint de ingestão � não há pasta para copiar nem arquivo para editar.
+// próprio endpoint de ingestão — não há pasta para copiar nem arquivo para editar.
 let opcoesCadastro = null;
 
 function urlIngestao() {
-  // A ingestão fica noutra porta, e o outro PC precisa do ENDERE�!O DESTA MÁQUINA
-  // NA REDE, não de 127.0.0.1 � que, lá, aponta para ele mesmo.
+  // A ingestão fica noutra porta, e o outro PC precisa do ENDEREÇO DESTA MÁQUINA
+  // NA REDE, não de 127.0.0.1 — que, lá, aponta para ele mesmo.
   //
   // Se o dashboard está sendo aberto por 127.0.0.1, esse endereço não serve para
   // ninguém de fora, e é por isso que devTokenIngest traz o IP da LAN detectado
@@ -791,7 +805,7 @@ async function abrirModalAdd() {
   const sel = $('add-loja');
   limpar(sel);
   for (const loja of opcoesCadastro.lojas) {
-    const o = el('option', null, `${loja.code} � ${loja.name}`);
+    const o = el('option', null, `${loja.code} \u2014 ${loja.name}`);
     o.value = loja.code;
     sel.appendChild(o);
   }
@@ -890,7 +904,7 @@ async function gerarComando() {
 
     txt($('add-resumo'),
       `${r.label} cadastrada em ${r.site_code}${r.site_criada ? ' (loja criada agora)' : ''}. `
-      + `Token ${r.token_prefix}⬦`);
+      + `Token ${r.token_prefix}\u2026`);
 
     $('add-passo1').hidden = true;
     $('add-passo2').hidden = false;
@@ -921,7 +935,7 @@ async function copiar(idOrigem, botao) {
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(faixa);
-    botao.textContent = 'selecionado � Ctrl+C';
+    botao.textContent = 'selecionado \u2014 Ctrl+C';
   }
 
   setTimeout(() => { botao.textContent = original; }, 2500);
@@ -1014,7 +1028,7 @@ async function principal() {
   // -------------------------------------------------------------------- token
   if (CFG.authMode === 'supabase') {
     // Em produção a autenticação é obrigatória. O login vive em login.html, que
-    // guarda o token e volta para cá � o dashboard nunca desenha formulário.
+    // guarda o token e volta para cá — o dashboard nunca desenha formulário.
     const guardado = lerTokenGuardado();
     if (!guardado) {
       window.location.href = 'login.html';
