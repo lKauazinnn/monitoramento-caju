@@ -134,13 +134,17 @@ if (Test-Path $envFile) {
 } else {
   $pg  = Aleatorio 24
   $jwt = Aleatorio 32
+  $ing = Aleatorio 32
   @(
     '# Gerado por scripts/dev-up.ps1. NAO comitar (esta no .gitignore).',
     '# Somente ambiente local. Producao usa os segredos do painel do Supabase.',
     "POSTGRES_PASSWORD=$pg",
-    "JWT_SECRET=$jwt"
+    "JWT_SECRET=$jwt",
+    '# Segredo compartilhado da ingestao (regra 6). Vai TAMBEM no config.json de',
+    '# cada agente. E um portao grosso; a credencial real e o token por maquina.',
+    "INGEST_SHARED_SECRET=$ing"
   ) | Out-File -FilePath $envFile -Encoding ascii
-  Ok '.env.local criado com senha e segredo aleatorios'
+  Ok '.env.local criado com senha e segredos aleatorios'
 }
 
 $vars = @{}
@@ -149,6 +153,16 @@ foreach ($linha in Get-Content $envFile) {
 }
 $jwtSecret = $vars['JWT_SECRET']
 if ([string]::IsNullOrWhiteSpace($jwtSecret)) { Write-Host 'JWT_SECRET vazio no .env.local' -ForegroundColor Red; exit 1 }
+
+# INGEST_SHARED_SECRET pode faltar em .env.local criado por versao anterior:
+# acrescenta sem tocar no resto, para nao invalidar o JWT nem a senha do banco.
+$ingestSecret = $vars['INGEST_SHARED_SECRET']
+if ([string]::IsNullOrWhiteSpace($ingestSecret)) {
+  $ingestSecret = Aleatorio 32
+  Add-Content -Path $envFile -Value "INGEST_SHARED_SECRET=$ingestSecret" -Encoding ascii
+  $vars['INGEST_SHARED_SECRET'] = $ingestSecret
+  Ok 'INGEST_SHARED_SECRET gerado e acrescentado ao .env.local'
+}
 
 # ---------------------------------------------------------------------------
 Passo 'Limpando execucao anterior'
@@ -197,8 +211,9 @@ function PortaLivre {
   throw "nenhuma porta livre entre $Preferida e $($Preferida + $Tentativas)"
 }
 
-$restPort = PortaLivre 3000
-$webPort  = PortaLivre 8080
+$restPort   = PortaLivre 3000
+$webPort    = PortaLivre 8080
+$ingestPort = PortaLivre 3010
 
 if ($restPort -ne 3000) {
   $dono = QuemOcupa 3000
@@ -211,7 +226,7 @@ if ($webPort -ne 8080) {
   Write-Host "   -> o DASHBOARD deste projeto vai para $webPort" -ForegroundColor Yellow
   Write-Host "   -> NAO abra 127.0.0.1:8080, ali esta outra aplicacao" -ForegroundColor Yellow
 }
-Ok "API $restPort  |  dashboard $webPort"
+Ok "API $restPort  |  dashboard $webPort  |  ingestao $ingestPort"
 
 # docker compose le .env por padrao. As portas escolhidas entram aqui, nao no
 # .env.local, para que o arquivo de segredos nao seja reescrito a cada execucao.
@@ -219,12 +234,36 @@ Ok "API $restPort  |  dashboard $webPort"
   '# Gerado por scripts/dev-up.ps1 a cada execucao. Nao editar.',
   "POSTGRES_PASSWORD=$($vars['POSTGRES_PASSWORD'])",
   "JWT_SECRET=$jwtSecret",
+  "INGEST_SHARED_SECRET=$ingestSecret",
   "REST_PORT=$restPort",
-  "WEB_PORT=$webPort"
+  "WEB_PORT=$webPort",
+  "INGEST_PORT=$ingestPort"
 ) | Out-File -FilePath (Join-Path $repoRoot '.env') -Encoding ascii
 
 $restUrl = "http://127.0.0.1:$restPort"
 $webUrl  = "http://127.0.0.1:$webPort"
+
+# IP desta maquina NA LAN — e o endereco que os agentes de OUTROS PCs usam.
+#
+# Vem do adaptador que atende a rota padrao, e nao do primeiro IPv4 da lista: num
+# Windows com WSL, Hyper-V ou VPN o primeiro e quase sempre um adaptador virtual,
+# inalcancavel para as outras maquinas da rede.
+$ipLan = $null
+try {
+  $rota = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop |
+            Sort-Object RouteMetric | Select-Object -First 1
+  if ($rota) {
+    $ipLan = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $rota.InterfaceIndex -ErrorAction Stop |
+                Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
+                Select-Object -First 1).IPAddress
+  }
+} catch { }
+
+$ingestUrlLocal = "http://127.0.0.1:$ingestPort"
+$ingestUrlLan   = if ($ipLan) { "http://${ipLan}:$ingestPort" } else { $ingestUrlLocal }
+
+if ($ipLan) { Info "IP desta maquina na LAN: $ipLan (usado pelos agentes de outros PCs)" }
+else { Info 'IP da LAN nao detectado; outros PCs precisarao do endereco informado a mao' }
 
 # ---------------------------------------------------------------------------
 Passo 'Subindo containers'
@@ -649,6 +688,7 @@ Write-Host '   SISTEMA NO AR' -ForegroundColor Green
 Write-Host '  ============================================================' -ForegroundColor Green
 Write-Host "   Dashboard : $webUrl"
 Write-Host "   API       : $restUrl"
+Write-Host "   Ingestao  : $ingestUrlLan   (agentes de outros PCs usam este)"
 Write-Host '   Banco     : sem porta publicada (regra 8) - use docker exec'
 Write-Host ''
 if ($ComLogin) {
@@ -662,6 +702,9 @@ Write-Host ''
 Write-Host '   Parar tudo   : docker compose down'
 Write-Host '   Apagar tudo  : docker compose down -v'
 Write-Host '   SQL          : docker exec -it monitor-db psql -U postgres'
+Write-Host ''
+Write-Host '   Monitorar ESTA maquina  : .\scripts\monitorar-este-pc.ps1' -ForegroundColor Cyan
+Write-Host '   Adicionar OUTRO PC      : .\scripts\adicionar-pc.ps1 -Rotulo NOME' -ForegroundColor Cyan
 if (-not $SemSimulador -and -not $SemAoVivo) {
   Write-Host '   Parar o simulador: Stop-Process -Id (Get-Content .simulador.pid)'
 }

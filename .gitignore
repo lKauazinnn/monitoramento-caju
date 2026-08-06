@@ -57,3 +57,6 @@ simulador.err.log
 .agente-ps.pid
 agente-ps.out.log
 agente-ps.err.log
+
+# Pacotes gerados para outros PCs (contem token por maquina)
+pacotes/

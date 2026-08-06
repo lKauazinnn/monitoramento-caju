@@ -61,6 +61,39 @@ services:
       # falhar em vez de subir com valor conhecido.
       - "127.0.0.1:${REST_PORT:-3000}:3000"
 
+  # Endpoint de ingestão — o equivalente local da Edge Function.
+  #
+  # Existe para que agentes em OUTRAS máquinas carreguem somente o token da
+  # própria máquina. Sem ele, cada PC precisaria de uma credencial service_role
+  # (acesso total ao banco) no disco, o que a regra 1 proíbe.
+  #
+  # É o ÚNICO serviço exposto na rede: Postgres não publica porta (regra 8) e o
+  # PostgREST fica em loopback. Quem vem de fora entra por aqui, e aqui exige o
+  # segredo compartilhado (regra 6) mais o token da máquina.
+  ingest:
+    image: node:24-alpine
+    container_name: monitor-ingest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3001
+      POSTGREST_URL: http://rest:3000
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env.local}
+      INGEST_SHARED_SECRET: ${INGEST_SHARED_SECRET:?defina INGEST_SHARED_SECRET no .env.local}
+    volumes:
+      - ./docker/ingest-local/server.mjs:/app/server.mjs:ro
+      # lib.ts vem do MESMO arquivo que a Edge Function usa. Duplicar a lógica
+      # aqui criaria duas versões da mesma regra.
+      - ./supabase/functions/ingest/lib.ts:/app/lib.ts:ro
+    working_dir: /app
+    # --experimental-strip-types: o servidor importa lib.ts direto, sem build.
+    command: ["node", "--experimental-strip-types", "server.mjs"]
+    ports:
+      # 0.0.0.0 de propósito: é o que permite outro PC da rede alcançar.
+      - "${INGEST_PORT:-3010}:3001"
+
   # Servidor estático para o dashboard. Nginx só porque abrir o index.html
   # direto do disco (file://) faz o navegador bloquear as chamadas fetch por
   # CORS, e o sintoma seria "dashboard vazio sem erro".

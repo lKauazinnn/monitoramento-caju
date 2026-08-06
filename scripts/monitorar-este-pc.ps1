@@ -104,31 +104,30 @@ $devCfg = Get-Content $devCfgPath -Raw | ConvertFrom-Json
 $restUrl = $devCfg.restUrl
 Ok "API $restUrl"
 
-# O agente precisa de um token de service_role para falar com o PostgREST no modo
-# local (nao existe Edge Function aqui). Gerado do segredo em .env.local.
+# Endereco e segredo da INGESTAO, do .env que o dev-up escreveu. O agente usa
+# 127.0.0.1 porque roda nesta mesma maquina; agentes remotos recebem o IP da LAN
+# via adicionar-pc.ps1.
 $vars = @{}
-foreach ($l in Get-Content (Join-Path $repoRoot '.env.local')) {
+foreach ($l in Get-Content (Join-Path $repoRoot '.env')) {
   if ($l -match '^\s*([A-Z_]+)\s*=\s*(.+)\s*$') { $vars[$Matches[1]] = $Matches[2] }
 }
 
-$jsToken = @'
-const crypto = require('crypto');
-const [secret] = process.argv.slice(2);
-const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-const agora = Math.floor(Date.now() / 1000);
-const h = b64({ alg: 'HS256', typ: 'JWT' });
-const p = b64({ aud: 'authenticated', role: 'service_role', iat: agora, exp: agora + 60 * 60 * 24 * 30 });
-process.stdout.write(h + '.' + p + '.' + crypto.createHmac('sha256', secret).update(h + '.' + p).digest('base64url'));
-'@
-$tmpJs = Join-Path $env:TEMP 'monitor-svc-token.js'
-$jsToken | Out-File $tmpJs -Encoding ascii
-$serviceToken = & node $tmpJs $vars['JWT_SECRET']
-Remove-Item $tmpJs -Force -ErrorAction SilentlyContinue
+$ingestSecret = $vars['INGEST_SHARED_SECRET']
+$portaIngest  = $vars['INGEST_PORT']
 
-if ([string]::IsNullOrWhiteSpace($serviceToken)) {
-  Write-Host 'nao foi possivel gerar o token de servico' -ForegroundColor Red
+if (-not $ingestSecret -or -not $portaIngest) {
+  Write-Host 'INGEST_SHARED_SECRET ou INGEST_PORT ausentes. Rode .\scripts\dev-up.ps1' -ForegroundColor Red
   exit 1
 }
+
+$ingestUrl = "http://127.0.0.1:$portaIngest"
+
+$rodandoIngest = & docker ps --filter 'name=monitor-ingest' --format '{{.Names}}' 2>$null
+if ($rodandoIngest -notcontains 'monitor-ingest') {
+  Write-Host 'O container de ingestao nao esta no ar. Rode .\scripts\dev-up.ps1' -ForegroundColor Red
+  exit 1
+}
+Ok "ingestao $ingestUrl"
 
 # ---------------------------------------------------------------------------
 Passo 'Cadastrando esta maquina'
@@ -204,12 +203,20 @@ Passo 'Gravando o config.json'
 New-Item -ItemType Directory -Force -Path $dirDados | Out-Null
 
 $config = [ordered]@{
-  # localRpc = true: fala direto com o PostgREST, porque a stack local nao tem a
-  # Edge Function. Contra o Supabase, isto vira false e o agente passa a usar o
-  # contrato real (x-monitor-secret + Bearer do token da maquina).
-  localRpc         = $true
-  ingestUrl        = "$restUrl/rpc/ingest_batch"
-  serviceToken     = $serviceToken
+  # localRpc = false, e sem serviceToken.
+  #
+  # A versao anterior falava direto com o PostgREST e por isso precisava de um
+  # token de service_role NO CONFIG — credencial de acesso total ao banco no disco
+  # de uma maquina monitorada. Passava na stack local porque a maquina era esta
+  # mesma, mas era o padrao errado: ao adicionar um segundo PC, cada loja
+  # receberia essa chave.
+  #
+  # Agora esta maquina usa o MESMO caminho que qualquer outra: o endpoint de
+  # ingestao, com o segredo compartilhado e o token da propria maquina. A chave de
+  # service_role fica no container e nao sai dele.
+  localRpc         = $false
+  ingestUrl        = $ingestUrl
+  sharedSecret     = $ingestSecret
   token            = $token
   machineId        = $machineId
   siteCode         = $Loja
@@ -222,7 +229,16 @@ $config = [ordered]@{
   spool            = @{ maxRows = 20000; maxAgeHours = 72 }
 }
 
-$config | ConvertTo-Json -Depth 6 | Out-File -FilePath $configPath -Encoding utf8
+# UTF-8 SEM BOM.
+#
+# `Out-File -Encoding utf8` no PowerShell 5.1 grava BOM, e JSON com BOM e recusado
+# por parser estrito — o JSON.parse do Node falha com "Unexpected token" apontando
+# para um caractere invisivel. O ConvertFrom-Json do PowerShell tolera, então o
+# agente funcionava e qualquer outra ferramenta quebrava.
+[System.IO.File]::WriteAllText(
+  $configPath,
+  ($config | ConvertTo-Json -Depth 6),
+  (New-Object System.Text.UTF8Encoding($false)))
 
 # SEM endurecimento de ACL aqui, e de proposito.
 #
