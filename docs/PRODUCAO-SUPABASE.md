@@ -63,31 +63,48 @@ anote quatro coisas:
 > em arquivo do repositório, nunca vai para o dashboard e nunca vai para o agente.
 > Os scripts a pedem no terminal e não a gravam em lugar nenhum.
 
-Autentique a CLI uma vez:
+E crie um **personal access token** em
+[supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens)
+(começa com `sbp_`).
+
+> Essa é uma **quinta** credencial, diferente das quatro acima, e a diferença
+> importa: a `service_role` administra os **dados**; o token pessoal administra o
+> **projeto** — publicar função, definir segredo. Nenhum dos dois substitui o
+> outro, e é por isso que o deploy não sai só com as chaves da API.
+
+### Sobre instalar a CLI: não instale
+
+Não há pacote no winget — `Supabase.CLI` **não é um id válido**, e o
+`npm i -g supabase` foi descontinuado pelo próprio projeto. O que sempre funciona
+é o binário da release do GitHub, e o script **baixa sozinho** para
+`tools\supabase\` (fora do git) quando não encontra a CLI no PATH.
+
+Se preferir instalar por conta:
 
 ```powershell
-supabase login
+scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+scoop install supabase
 ```
-
-Se a CLI não estiver instalada: `winget install -e --id Supabase.CLI`. Sem ela, o
-script cai para `npx -y supabase@latest` automaticamente.
 
 ---
 
 ## Publicar
 
 ```powershell
-.\scripts\publicar-supabase.ps1 -ProjetoRef SEU_REF `
+.\scripts\publicar-supabase.ps1 -ProjetoRef SEU_REF -TokenAcesso 'sbp_...' `
   -AnonKey 'eyJ...' -EmailAdmin 'kaualarsson@cajupar.com' -SenhaAdmin 'uma senha forte'
 ```
 
-A senha do banco e a service_role key são pedidas no terminal, sem aparecer na
-tela. Os três últimos parâmetros são opcionais: sem eles o dashboard continua
-apontado para a stack local (e você ainda pode ver as lojas pelo terminal, veja
-abaixo).
+A **senha do banco** e a **service_role key** são pedidas no terminal, ocultas, e
+não vão para arquivo nenhum.
+
+Sem `-TokenAcesso`, a CLI pede `supabase login`, que abre navegador. Os três
+últimos parâmetros são opcionais: sem eles o dashboard continua apontado para a
+stack local (e você ainda vê as lojas pelo terminal, veja abaixo).
 
 O script faz, na ordem:
 
+0. baixa a CLI se ela não estiver disponível
 1. confere pré-requisitos e se os scripts embutidos estão em dia
 2. roda os testes de lógica da função — não publica código que já falha aqui
 3. liga o repositório ao projeto e aplica as 17 migrations

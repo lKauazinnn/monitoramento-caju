@@ -68,3 +68,6 @@ capturas/
 # sao gerados por scripts/publicar-supabase.ps1 para a instalacao de cada um.
 supabase/config.toml
 dashboard/config.producao.js
+
+# CLI do Supabase baixada por scripts/publicar-supabase.ps1 (~116 MB)
+tools/

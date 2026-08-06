@@ -73,6 +73,14 @@ param(
   [string] $ChaveServiceRole,
   [string] $Segredo,
 
+  # Token pessoal de acesso (sbp_...), de
+  # https://supabase.com/dashboard/account/tokens
+  #
+  # Evita o `supabase login`, que abre navegador. E uma credencial DIFERENTE da
+  # service_role: ela administra o projeto (publicar funcao, definir segredo), e a
+  # service_role administra os DADOS. Nao e gravada em arquivo.
+  [string] $TokenAcesso,
+
   # Dashboard apontado para producao. Os tres andam juntos: sem eles, o passo e
   # pulado e o dashboard continua olhando a stack local.
   [string] $AnonKey,
@@ -245,28 +253,73 @@ $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) { Erro 'node nao encontrado no PATH.'; exit 1 }
 Ok "node: $($node.Version)"
 
-# CLI do Supabase: preferir a instalada; cair para npx, que baixa sob demanda.
+# CLI do Supabase.
+#
+# NAO existe pacote no winget (`Supabase.CLI` nao e um id valido) e o
+# `npm i -g supabase` foi descontinuado pelo proprio projeto. O que sempre
+# funciona e o binario da release do GitHub — entao o script o baixa sozinho, em
+# tools\supabase\, fora do git. "Instale a CLI antes" e justamente o passo em que
+# se perde tempo, e ele nao precisa existir.
 $cliArquivo = $null
 $cliBase = @()
+$cliLocal = Join-Path $repoRoot 'tools\supabase\supabase.exe'
 
 $supa = Get-Command supabase -ErrorAction SilentlyContinue
 if ($supa) {
   $cliArquivo = $supa.Source
   Ok "supabase CLI: $($supa.Source)"
-} else {
-  $npx = Get-Command npx -ErrorAction SilentlyContinue
-  if (-not $npx) {
-    Erro 'nem `supabase` nem `npx` no PATH.'
+} elseif (Test-Path $cliLocal) {
+  $cliArquivo = $cliLocal
+  Ok 'supabase CLI: tools\supabase\supabase.exe'
+} elseif (-not $SoVerificar) {
+  Info 'CLI do Supabase ausente; baixando a release do GitHub (~72 MB)'
+
+  $arq = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+
+  try {
+    $rel = Invoke-RestMethod 'https://api.github.com/repos/supabase/cli/releases/latest' `
+             -Headers @{ 'User-Agent' = 'monitoramento-caju' } -TimeoutSec 60
+    $asset = $rel.assets | Where-Object { $_.name -eq "supabase_$($rel.tag_name.TrimStart('v'))_windows_$arq.zip" } |
+               Select-Object -First 1
+    if (-not $asset) { throw "release $($rel.tag_name) sem pacote windows_$arq" }
+
+    $zip = Join-Path $env:TEMP 'supabase-cli.zip'
+    $pasta = Join-Path $repoRoot 'tools\supabase'
+    New-Item -ItemType Directory -Force -Path $pasta | Out-Null
+
+    # Sem a barra de progresso: no PowerShell 5.1 ela custa mais tempo que o
+    # proprio download quando a saida nao e um console interativo.
+    $pb = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+      Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -TimeoutSec 900
+    } finally {
+      $ProgressPreference = $pb
+    }
+
+    Expand-Archive -Path $zip -DestinationPath $pasta -Force
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+
+    if (-not (Test-Path $cliLocal)) { throw 'o pacote nao trouxe supabase.exe' }
+    $cliArquivo = $cliLocal
+    Ok "supabase CLI $($rel.tag_name) baixada para tools\supabase\"
+  } catch {
+    Erro "nao foi possivel baixar a CLI: $($_.Exception.Message)"
     Write-Host ''
-    Aviso 'Instale a CLI de uma destas formas:'
-    Write-Host '     winget install -e --id Supabase.CLI' -ForegroundColor DarkGray
+    Aviso 'Baixe manualmente e extraia em tools\supabase\:'
+    Write-Host '     https://github.com/supabase/cli/releases/latest' -ForegroundColor DarkGray
+    Aviso 'Ou instale com o scoop:'
+    Write-Host '     scoop bucket add supabase https://github.com/supabase/scoop-bucket.git' -ForegroundColor DarkGray
     Write-Host '     scoop install supabase' -ForegroundColor DarkGray
-    Write-Host '     npm i -g supabase' -ForegroundColor DarkGray
     exit 1
   }
-  $cliArquivo = $npx.Source
-  $cliBase = @('-y', 'supabase@latest')
-  Aviso 'supabase CLI nao instalada; usando `npx -y supabase@latest` (baixa na primeira vez)'
+}
+
+# O token pessoal autentica a CLI sem abrir navegador. Vive so nesta sessao de
+# processo: nao vai para arquivo nem para o ambiente do usuario.
+if (-not [string]::IsNullOrWhiteSpace($TokenAcesso)) {
+  $env:SUPABASE_ACCESS_TOKEN = $TokenAcesso.Trim()
+  Ok 'token de acesso recebido por parametro'
 }
 
 function Supa {
@@ -333,7 +386,9 @@ verify_jwt = false
   Ok 'supabase/config.toml gerado (verify_jwt = false para a funcao ingest)'
 
   if ([string]::IsNullOrWhiteSpace($env:SUPABASE_ACCESS_TOKEN)) {
-    Info 'SUPABASE_ACCESS_TOKEN ausente; a CLI vai usar a sessao do `supabase login`'
+    Aviso 'sem token de acesso: a CLI vai pedir `supabase login` (abre navegador).'
+    Aviso 'Para evitar isso, rode com -TokenAcesso sbp_...'
+    Info  'crie o token em https://supabase.com/dashboard/account/tokens'
   }
 
   $r = Supa @('link', '--project-ref', $ProjetoRef) -Mostrar
