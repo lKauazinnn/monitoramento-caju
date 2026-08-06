@@ -114,9 +114,15 @@ verificar('dash.js não usa eval nem new Function',
 // =============================================================================
 console.log('\n== API responde com dados ==');
 // =============================================================================
+// Contagem esperada vem do BANCO, não cravada aqui. Cravar "5" fez os testes
+// reprovarem no instante em que uma máquina real foi cadastrada — crescimento
+// legítimo virando falso alarme.
+const totalNoBanco = Number(psql('select count(*) from public.machines where is_active;'));
+
 const resumo = await rpc('dashboard_summary');
-verificar('dashboard_summary devolve 5 máquinas',
-  resumo.machines_total === 5, JSON.stringify(resumo));
+verificar('dashboard_summary bate com a contagem do banco',
+  resumo.machines_total === totalNoBanco,
+  `resumo=${resumo.machines_total} banco=${totalNoBanco}`);
 
 // A classificação tem de ser exaustiva: toda máquina cai em exatamente um
 // estado. Um total que não fecha significa que a view tem um caso não coberto.
@@ -151,7 +157,8 @@ verificar('disco crítico detectado (BSB-002)', resumo.disk_critical > 0, `disk_
 verificar('serviço parado detectado (Spooler do PDV 01)', resumo.services_down > 0, `services_down=${resumo.services_down}`);
 
 const maquinas = await get('/machines_status?select=*&order=site_code.asc,label.asc');
-verificar('machines_status devolve 5 linhas', maquinas.length === 5, `${maquinas.length} linhas`);
+verificar('machines_status devolve uma linha por máquina',
+  maquinas.length === totalNoBanco, `${maquinas.length} linhas, ${totalNoBanco} máquinas`);
 
 const comCpu = maquinas.filter((m) => m.cpu_pct !== null);
 verificar('máquinas online têm CPU preenchida', comCpu.length >= 4, `${comCpu.length} com cpu`);

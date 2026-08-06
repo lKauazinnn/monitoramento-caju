@@ -15,7 +15,7 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 
 const raiz = fileURLToPath(new URL('..', import.meta.url));
 const env = readFileSync(join(raiz, '.env'), 'utf8');
@@ -205,18 +205,43 @@ try {
   // =========================================================================
   await dormir(1500);
 
+  // Os números vêm do BANCO, não cravados no teste.
+  //
+  // A versão anterior exigia "5 máquinas, 2 marcas, 3 lojas" — os valores do seed.
+  // No momento em que uma máquina real foi cadastrada, os quatro testes
+  // reprovaram sem que nada estivesse errado. Teste que crava contagem transforma
+  // crescimento legítimo em falso alarme, e falso alarme treina a gente a ignorar
+  // o teste.
+  //
+  // O que interessa é a CONSISTÊNCIA: a tela mostra o que o banco tem.
+  const esperado = JSON.parse(execFileSync('docker', [
+    'exec', 'monitor-db', 'psql', '-U', 'postgres', '-t', '-A', '-c',
+    `select json_build_object(
+       'maquinas', (select count(*) from public.machines where is_active),
+       'lojas',    (select count(distinct m.site_id) from public.machines m where m.is_active),
+       'marcas',   (select count(distinct s.brand_id) from public.machines m
+                      join public.sites s on s.id = m.site_id where m.is_active)
+     )`,
+  ], { encoding: 'utf8' }).trim());
+
+  console.log(`        banco: ${esperado.maquinas} máquinas, ${esperado.lojas} lojas, ${esperado.marcas} marcas`);
+
   const kpiTotal = await js("document.getElementById('kpi-total').textContent");
   verificar('KPI de total preenchido', /^\d+$/.test(kpiTotal || ''), `kpi-total=${kpiTotal}`);
-  verificar('total é 5 máquinas', kpiTotal === '5', `kpi-total=${kpiTotal}`);
+  verificar('KPI de total bate com o banco',
+    Number(kpiTotal) === esperado.maquinas, `tela=${kpiTotal} banco=${esperado.maquinas}`);
 
   const cartoes = await js("document.querySelectorAll('.cartao').length");
-  verificar('cartões de máquina renderizados', cartoes === 5, `${cartoes} cartões`);
+  verificar('um cartão por máquina do banco',
+    cartoes === esperado.maquinas, `${cartoes} cartões, ${esperado.maquinas} máquinas`);
 
   const marcas = await js("document.querySelectorAll('.marca').length");
-  verificar('agrupamento por marca', marcas === 2, `${marcas} marcas`);
+  verificar('agrupamento por marca bate com o banco',
+    marcas === esperado.marcas, `${marcas} na tela, ${esperado.marcas} no banco`);
 
   const lojas = await js("document.querySelectorAll('.loja').length");
-  verificar('agrupamento por loja', lojas === 3, `${lojas} lojas`);
+  verificar('agrupamento por loja bate com o banco',
+    lojas === esperado.lojas, `${lojas} na tela, ${esperado.lojas} no banco`);
 
   const usuario = await js("document.getElementById('rotulo-usuario').textContent");
   verificar('nome do usuário no topo', (usuario || '').length > 0, `usuario="${usuario}"`);
@@ -304,7 +329,7 @@ try {
 
   verificar('token velho guardado não impede o dashboard de abrir',
     aposToken.app === true, JSON.stringify(aposToken));
-  verificar('dados carregaram', aposToken.kpi === '5', `kpi=${aposToken.kpi}`);
+  verificar('dados carregaram', /^[1-9][0-9]*$/.test(aposToken.kpi || ''), `kpi=${aposToken.kpi}`);
   verificar('nenhuma faixa de erro', aposToken.falha === null, aposToken.falha);
   verificar('nenhuma exceção de JavaScript no caminho do token velho',
     erros.length === 0, erros.join('\n        '));

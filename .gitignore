@@ -52,3 +52,8 @@ package-lock.json
 .simulador.pid
 simulador.log
 simulador.err.log
+
+# Agente PowerShell local
+.agente-ps.pid
+agente-ps.out.log
+agente-ps.err.log

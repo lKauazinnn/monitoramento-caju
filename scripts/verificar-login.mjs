@@ -84,7 +84,13 @@ const cab = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/jso
 const resumo = await fetch(`${REST}/rpc/dashboard_summary`, { method: 'POST', headers: cab, body: '{}' });
 const dados = resumo.ok ? await resumo.json() : null;
 verificar('dashboard_summary aceita o token', resumo.ok, `HTTP ${resumo.status}`);
-verificar('admin vê as 5 máquinas', dados?.machines_total === 5, JSON.stringify(dados));
+
+// Contagem do BANCO, não cravada. Cravar "5" fez o teste reprovar no instante em
+// que uma máquina real entrou no sistema.
+const totalNoBanco = Number(psql('select count(*) from public.machines where is_active;'));
+verificar('admin vê todas as máquinas do banco',
+  dados?.machines_total === totalNoBanco,
+  `resumo=${dados?.machines_total} banco=${totalNoBanco}`);
 
 const maquinas = await fetch(`${REST}/machines_status?select=label,status`, { headers: cab });
 verificar('machines_status aceita o token', maquinas.ok, `HTTP ${maquinas.status}`);
