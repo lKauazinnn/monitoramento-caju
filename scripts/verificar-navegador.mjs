@@ -174,71 +174,75 @@ try {
   verificar('faixa de erro de script está oculta', faixaErro === true, `hidden=${faixaErro}`);
 
   // =========================================================================
-  console.log('\n== Tela de login ==');
+  // A stack local entra DIRETO: o dev-up grava um token em dev-config.json e o
+  // dashboard não pede credencial. A tela de login continua existindo para o modo
+  // Supabase e para `dev-up -ComLogin`, e é exercitada mais abaixo.
+  const devCfg = JSON.parse(readFileSync(join(raiz, 'dashboard', 'dev-config.json'), 'utf8'));
+  const semLogin = !!devCfg.devToken && devCfg.pedirLogin !== true;
+
+  console.log(`\n== ${semLogin ? 'Entrada direta (sem login)' : 'Tela de login'} ==`);
   // =========================================================================
-  const loginVisivel = await js("!document.getElementById('tela-login').hidden");
-  verificar('tela de login visível', loginVisivel === true);
+  if (semLogin) {
+    const appJaVisivel = await js("!document.getElementById('app').hidden");
+    verificar('o app abriu SEM pedir login', appJaVisivel === true, `app visível=${appJaVisivel}`);
+
+    const loginOculto = await js("document.getElementById('tela-login').hidden");
+    verificar('a tela de login não aparece', loginOculto === true);
+
+    const usuarioTopo = await js("document.getElementById('rotulo-usuario').textContent");
+    verificar('usuário identificado no topo', (usuarioTopo || '').length > 0, `"${usuarioTopo}"`);
+  } else {
+    const loginVisivel = await js("!document.getElementById('tela-login').hidden");
+    verificar('tela de login visível', loginVisivel === true);
+  }
 
   const aviso = await js("document.getElementById('aviso-dev').textContent");
   verificar('aviso mostra o build e a API', /build .* API http/.test(aviso || ''), aviso);
 
-  const handler = await js(`
-    (() => {
-      const f = document.getElementById('form-login');
-      // getEventListeners não existe fora do console do DevTools; testa disparando
-      // um submit cancelado e vendo se algo o interceptou.
-      let interceptado = false;
-      const espiao = (e) => { interceptado = true; };
-      f.addEventListener('submit', espiao, { once: true, capture: true });
-      f.requestSubmit ? null : null;
-      f.removeEventListener('submit', espiao, { capture: true });
-      return typeof f.onsubmit === 'function' || true;
-    })()
-  `);
-  verificar('formulário existe e é submetível', handler === true);
-
   // =========================================================================
-  console.log('\n== Login pela interface (digitando e clicando) ==');
-  // =========================================================================
-  erros.length = 0;
+  // O login por formulário continua obrigatório em produção, então continua
+  // sendo testado — mas agora só faz sentido exercitá-lo quando a stack está
+  // configurada para pedi-lo.
+  if (!semLogin) {
+    console.log('\n== Login pela interface (digitando e clicando) ==');
+    erros.length = 0;
 
-  await js(`
-    (() => {
-      const e = document.getElementById('email');
-      const s = document.getElementById('senha');
-      e.value = ${JSON.stringify(email)};
-      s.value = ${JSON.stringify(senha)};
-      e.dispatchEvent(new Event('input', { bubbles: true }));
-      s.dispatchEvent(new Event('input', { bubbles: true }));
-      return true;
-    })()
-  `);
+    await js(`
+      (() => {
+        const e = document.getElementById('email');
+        const s = document.getElementById('senha');
+        e.value = ${JSON.stringify(email)};
+        s.value = ${JSON.stringify(senha)};
+        e.dispatchEvent(new Event('input', { bubbles: true }));
+        s.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      })()
+    `);
 
-  const rotuloAntes = await js("document.getElementById('btn-entrar').textContent");
+    const rotuloAntes = await js("document.getElementById('btn-entrar').textContent");
+    await js("document.getElementById('btn-entrar').click(); true");
+    await dormir(3500);
 
-  // Clique de verdade no botão, não chamada direta da função.
-  await js("document.getElementById('btn-entrar').click(); true");
-  await dormir(3500);
+    verificar('nenhuma exceção durante o login', erros.length === 0, erros.join('\n        '));
 
-  verificar('nenhuma exceção durante o login', erros.length === 0, erros.join('\n        '));
+    const erroLogin = await js(`
+      (() => {
+        const e = document.getElementById('erro-login');
+        return e.hidden ? null : e.textContent;
+      })()
+    `);
+    verificar('nenhuma mensagem de erro na tela', erroLogin === null, erroLogin);
 
-  const erroLogin = await js(`
-    (() => {
-      const e = document.getElementById('erro-login');
-      return e.hidden ? null : e.textContent;
-    })()
-  `);
-  verificar('nenhuma mensagem de erro na tela', erroLogin === null, erroLogin);
+    const loginSumiu = await js("document.getElementById('tela-login').hidden");
+    verificar('tela de login desapareceu', loginSumiu === true);
+
+    const rotuloDepois = await js("document.getElementById('btn-entrar').textContent");
+    verificar('botão voltou ao rótulo original', rotuloAntes === rotuloDepois,
+      `antes="${rotuloAntes}" depois="${rotuloDepois}"`);
+  }
 
   const appVisivel = await js("!document.getElementById('app').hidden");
-  verificar('APP APARECEU (login funcionou)', appVisivel === true, `app.hidden=${!appVisivel}`);
-
-  const loginSumiu = await js("document.getElementById('tela-login').hidden");
-  verificar('tela de login desapareceu', loginSumiu === true);
-
-  const rotuloDepois = await js("document.getElementById('btn-entrar').textContent");
-  verificar('botão voltou ao rótulo original', rotuloAntes === rotuloDepois,
-    `antes="${rotuloAntes}" depois="${rotuloDepois}"`);
+  verificar('APP VISÍVEL com dados', appVisivel === true, `app.hidden=${!appVisivel}`);
 
   // =========================================================================
   console.log('\n== Dados na tela ==');
@@ -343,23 +347,37 @@ try {
     })
   `);
 
-  verificar('com sessão inválida, a tela de login aparece', st.login === true, JSON.stringify(st));
-  verificar('o app NÃO fica pendurado visível', st.app === false, `app visível=${st.app}`);
+  // Com entrada direta, uma sessao invalida em sessionStorage e simplesmente
+  // descartada e o token do dev-config assume: o usuario nem ve a tela de login.
+  if (semLogin) {
+    verificar('sessão inválida é ignorada e o app abre direto', st.app === true, JSON.stringify(st));
+    verificar('a tela de login não aparece', st.login === false, JSON.stringify(st));
+  } else {
+    verificar('com sessão inválida, a tela de login aparece', st.login === true, JSON.stringify(st));
+    verificar('o app NÃO fica pendurado visível', st.app === false, );
+  }
   verificar('o painel NÃO fica aberto atrás do login', st.painel === false, `painel visível=${st.painel}`);
-  verificar('a sessão inválida foi descartada', st.sessao === null, `sessao=${st.sessao}`);
-  verificar('o motivo é mostrado ao usuário', (st.erro || '').length > 0, `erro=${st.erro}`);
+  verificar('a sessão inválida foi descartada ou substituída',
+    st.sessao === null || !st.sessao.includes('assinatura-invalida'), `sessao=${st.sessao}`);
+  if (!semLogin) {
+    verificar('o motivo é mostrado ao usuário', (st.erro || '').length > 0, `erro=${st.erro}`);
+  }
   verificar('nenhuma exceção no caminho da sessão inválida', erros.length === 0, erros.join('\n        '));
 
-  // E, a partir desse estado, o login TEM de funcionar.
-  await js(`
-    (() => {
-      document.getElementById('email').value = ${JSON.stringify(email)};
-      document.getElementById('senha').value = ${JSON.stringify(senha)};
-      document.getElementById('btn-entrar').click();
-      return true;
-    })()
-  `);
-  await dormir(3500);
+  // E, a partir desse estado, o dashboard TEM de ficar utilizável. Com login
+  // exigido é preciso preencher o formulário; com entrada direta ele já deve
+  // estar carregado.
+  if (!semLogin) {
+    await js(`
+      (() => {
+        document.getElementById('email').value = ${JSON.stringify(email)};
+        document.getElementById('senha').value = ${JSON.stringify(senha)};
+        document.getElementById('btn-entrar').click();
+        return true;
+      })()
+    `);
+    await dormir(3500);
+  }
 
   const depois = await js(`
     ({
@@ -368,8 +386,9 @@ try {
       kpi:   document.getElementById('kpi-total').textContent,
     })
   `);
-  verificar('login funciona a partir do estado sujo', depois.app === true && depois.login === false,
-    JSON.stringify(depois));
+
+  verificar('dashboard utilizável a partir do estado sujo',
+    depois.app === true && depois.login === false, JSON.stringify(depois));
   verificar('dados carregaram depois disso', depois.kpi === '5', `kpi=${depois.kpi}`);
 
   // =========================================================================

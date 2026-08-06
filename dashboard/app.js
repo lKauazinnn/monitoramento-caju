@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.6';
+const BUILD = '2026-08-06.7';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -350,6 +350,12 @@ async function descobrirApiLocal() {
   }
 
   CFG.restUrl = d.restUrl;
+
+  // Token de entrada direta e a preferência por exigir login, ambos vindos do
+  // dev-up. Ficam em CFG para que principal() decida em um lugar só.
+  CFG.devToken = d.devToken || null;
+  CFG.devUsuario = d.devUsuario || null;
+  CFG.pedirLogin = d.pedirLogin === true;
 }
 
 // -----------------------------------------------------------------------------
@@ -923,6 +929,33 @@ async function iniciar() {
   iniciarAtualizacao();
 }
 
+/**
+ * Modo local SEM tela de login.
+ *
+ * O dev-up.ps1 grava um token pronto no dev-config.json e o dashboard entra
+ * direto. Em produção (authMode 'supabase') a tela de login continua existindo e
+ * é obrigatória.
+ *
+ * TRADE-OFF, explícito: quem alcançar 127.0.0.1:8081 nesta máquina entra sem
+ * senha. Isso é aceitável porque a stack local só escuta em loopback (nada é
+ * exposto na rede) e quem tem acesso à máquina já pode ler o banco por
+ * `docker exec`. O login continua disponível — veja `pedirLogin` no
+ * dev-config.json — para quem quiser exercitá-lo.
+ */
+async function entrarSemLogin(token, usuario) {
+  salvarSessao(token, usuario);
+  await iniciar();
+
+  if ($('app').hidden) {
+    // O token do arquivo não serviu. Cai para o login em vez de deixar a tela
+    // em branco sem explicação.
+    sair('O token da stack local não foi aceito. Rode .\\scripts\\dev-up.ps1');
+    return false;
+  }
+
+  return true;
+}
+
 async function principal() {
   ligarEventos();
 
@@ -950,6 +983,19 @@ async function principal() {
     txt(aviso, `Stack local (build ${BUILD}) — API ${CFG.restUrl}. `
              + 'Entre com o e-mail e a senha criados por criar-usuario.ps1.');
     aviso.hidden = false;
+
+    // ENTRADA DIRETA: com token no dev-config.json, a stack local não pede
+    // login. É o comportamento padrão agora — a tela de login só aparece se o
+    // token faltar, se ele for recusado, ou se pedirLogin estiver marcado.
+    if (CFG.devToken && !CFG.pedirLogin) {
+      console.info('[monitor] stack local: entrando sem login');
+      // Descarta sessão anterior: o token do arquivo é sempre a verdade mais
+      // recente, e uma sessão velha em sessionStorage já causou tela misturada.
+      try { sessionStorage.removeItem(CHAVE_SESSAO); } catch (_) { /* bloqueado */ }
+
+      if (await entrarSemLogin(CFG.devToken, CFG.devUsuario || 'stack local')) return;
+      return;   // entrarSemLogin já mostrou o motivo
+    }
   }
 
   // Sessão guardada de um acesso anterior. Se ela não servir mais (token

@@ -226,6 +226,9 @@ function NovaAmostra {
 $agora = (Get-Date).ToUniversalTime()
 $totalAmostras = [int](($Horas * 3600) / $IntervaloSegundos)
 
+# Horas 0 serve ao modo continuo: nada de historico, so o laco ao vivo.
+if ($Horas -le 0) { $totalAmostras = 0 }
+
 Write-Host "   gerando $Horas h de historico ($totalAmostras amostras por maquina, intervalo ${IntervaloSegundos}s)..." -ForegroundColor DarkGray
 
 $totalAceitas = 0

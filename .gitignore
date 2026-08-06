@@ -49,3 +49,4 @@ dashboard/dev-config.json
 # package.json for realmente necessario, ele PRECISA ter "type": "module".
 package.json
 package-lock.json
+.simulador.pid

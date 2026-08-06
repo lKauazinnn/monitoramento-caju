@@ -35,7 +35,16 @@
 param(
   [switch] $Recriar,
   [switch] $SemSimulador,
-  [int]    $Horas = 24
+  [int]    $Horas = 24,
+
+  # Exige e-mail e senha mesmo na stack local. Por padrao o dashboard entra
+  # direto, porque digitar credencial num ambiente de loopback so atrapalha.
+  [switch] $ComLogin,
+
+  # Nao deixa o simulador rodando em segundo plano. Sem ele, os dados envelhecem
+  # e em poucos minutos TODAS as maquinas aparecem offline — foi exatamente a
+  # confusao de "o dashboard diz que esta tudo off".
+  [switch] $SemAoVivo
 )
 
 $ErrorActionPreference = 'Stop'
@@ -479,16 +488,30 @@ $tokensJson = ($r.Saida -join '')
 $tokens = $tokensJson | ConvertFrom-Json
 Remove-Item $tmpJs -Force -ErrorAction SilentlyContinue
 
-# O arquivo servido ao navegador leva SOMENTE a URL da API. Nenhum token vai
-# para o disco publico: o dashboard obtem o dele fazendo login de verdade, e o de
-# service_role fica em memoria e vai ao simulador por parametro.
+# O token de entrada direta vai aqui, e a stack local passa a NAO pedir login.
 #
-# A versao anterior publicava um token pronto em dev-token.json — quem abrisse a
-# URL entrava sem senha. O login real eliminou isso.
-@{
-  restUrl  = $restUrl
-  authMode = 'local'
-} | ConvertTo-Json | Out-File -FilePath (Join-Path $repoRoot 'dashboard\dev-config.json') -Encoding ascii
+# O token de SERVICE_ROLE continua fora do arquivo: ele nunca vai para o disco
+# servido ao navegador, porque daria acesso total ao banco. Só o token
+# `authenticated`, que e limitado pelo RLS, e publicado.
+#
+# TRADE-OFF explicito: quem alcancar 127.0.0.1 nesta maquina entra sem senha. E
+# aceitavel porque a stack local so escuta em loopback (nada exposto na rede) e
+# quem tem acesso a maquina ja le o banco por `docker exec`. O arquivo esta no
+# .gitignore e nunca vai para o repositorio.
+#
+# Para exigir login mesmo localmente, rode com -ComLogin.
+$devConfig = [ordered]@{
+  restUrl    = $restUrl
+  authMode   = 'local'
+  pedirLogin = [bool]$ComLogin
+}
+
+if (-not $ComLogin) {
+  $devConfig.devToken = $tokens.token
+  $devConfig.devUsuario = if ($vars['DEV_USER_NAME']) { $vars['DEV_USER_NAME'] } else { 'stack local' }
+}
+
+$devConfig | ConvertTo-Json | Out-File -FilePath (Join-Path $repoRoot 'dashboard\dev-config.json') -Encoding ascii
 
 $antigo = Join-Path $repoRoot 'dashboard\dev-token.json'
 if (Test-Path $antigo) {
@@ -552,6 +575,43 @@ if (-not $SemSimulador) {
 }
 
 # ---------------------------------------------------------------------------
+if (-not $SemSimulador -and -not $SemAoVivo) {
+  Passo 'Mantendo as maquinas ONLINE'
+  # ---------------------------------------------------------------------------
+  # Sem isto, a ultima amostra envelhece e em ~3 minutos (offline_timeout_seconds)
+  # TODAS as maquinas viram offline. Foi a causa do "o dashboard diz que esta tudo
+  # off": nao havia defeito nenhum, o dado apenas tinha parado de chegar.
+  #
+  # Um agente de verdade envia a cada 60s para sempre. O simulador em segundo
+  # plano reproduz isso, e o dashboard passa a se comportar como em producao.
+  $pidFile = Join-Path $repoRoot '.simulador.pid'
+
+  # Derruba um simulador de execucao anterior antes de subir outro, senao cada
+  # dev-up deixaria mais um processo enviando metricas.
+  if (Test-Path $pidFile) {
+    $antigo = Get-Content $pidFile -ErrorAction SilentlyContinue
+    if ($antigo) {
+      try { Stop-Process -Id ([int]$antigo) -Force -ErrorAction Stop; Info "simulador anterior (PID $antigo) encerrado" }
+      catch { }
+    }
+  }
+
+  $argsSim = @(
+    '-NoProfile', '-ExecutionPolicy', 'Bypass',
+    '-File', (Join-Path $PSScriptRoot 'simular-agentes.ps1'),
+    '-Horas', '0', '-IntervaloSegundos', '60', '-Continuo',
+    '-RestUrl', $restUrl, '-ServiceToken', $tokens.serviceToken
+  )
+
+  $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argsSim `
+            -WindowStyle Hidden -PassThru
+
+  $proc.Id | Out-File -FilePath $pidFile -Encoding ascii
+  Ok "simulador ao vivo rodando em segundo plano (PID $($proc.Id)), uma amostra por minuto"
+  Info "para parar: Stop-Process -Id $($proc.Id)"
+}
+
+# ---------------------------------------------------------------------------
 Passo 'Pronto'
 # ---------------------------------------------------------------------------
 Write-Host ''
@@ -562,12 +622,20 @@ Write-Host "   Dashboard : $webUrl"
 Write-Host "   API       : $restUrl"
 Write-Host '   Banco     : sem porta publicada (regra 8) - use docker exec'
 Write-Host ''
-Write-Host '   Entre com o e-mail e a senha criados por criar-usuario.ps1.'
-Write-Host '   Criar/trocar: .\scripts\criar-usuario.ps1 -Email voce@empresa.com'
+if ($ComLogin) {
+  Write-Host '   Login EXIGIDO (-ComLogin).' -ForegroundColor Yellow
+  Write-Host '   Criar/trocar senha: .\scripts\criar-usuario.ps1 -Email voce@empresa.com'
+} else {
+  Write-Host '   SEM TELA DE LOGIN: o dashboard entra direto.' -ForegroundColor Green
+  Write-Host '   Para exigir login localmente: .\scripts\dev-up.ps1 -ComLogin'
+}
 Write-Host ''
-Write-Host '   Parar        : docker compose down'
+Write-Host '   Parar tudo   : docker compose down'
 Write-Host '   Apagar tudo  : docker compose down -v'
 Write-Host '   SQL          : docker exec -it monitor-db psql -U postgres'
+if (-not $SemSimulador -and -not $SemAoVivo) {
+  Write-Host '   Parar o simulador: Stop-Process -Id (Get-Content .simulador.pid)'
+}
 Write-Host '  ============================================================' -ForegroundColor Green
 Write-Host ''
 
