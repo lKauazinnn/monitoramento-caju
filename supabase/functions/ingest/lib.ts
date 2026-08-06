@@ -146,3 +146,38 @@ export function tokenPrefixForLog(token: string | null): string | null {
   if (!token) return null;
   return token.slice(0, 16);
 }
+
+/**
+ * Sufixo de rota, a partir do caminho completo da requisição.
+ *
+ * A plataforma serve a função em `/functions/v1/ingest`, e é o que vem DEPOIS
+ * disso que decide a rota. Vive aqui, e não dentro do `Deno.serve`, para poder
+ * ser testado sem Deno: errar este recorte é a falha mais provável no primeiro
+ * deploy, e ela se manifesta como 404 em tudo — sintoma que não diz onde está o
+ * problema.
+ *
+ * Casos que precisam funcionar:
+ *   /functions/v1/ingest              -> ""           (POST de métricas)
+ *   /functions/v1/ingest/            -> "/"           (idem, com barra)
+ *   /functions/v1/ingest/healthz     -> "/healthz"
+ *   /functions/v1/ingest/agente.ps1  -> "/agente.ps1"
+ *   /ingest                          -> ""            (shim local)
+ */
+export function routeSuffix(pathname: string): string {
+  // Âncora no ÚLTIMO "/ingest" e não no primeiro: um projeto hospedado sob um
+  // caminho que contenha "ingest" (por exemplo /ingestao/functions/v1/ingest)
+  // faria o recorte no lugar errado, e a rota sairia como "ao/functions/v1".
+  const i = pathname.lastIndexOf("/ingest");
+  if (i < 0) return pathname;
+
+  const resto = pathname.slice(i + "/ingest".length);
+
+  // "/ingest" e "/ingest/" são a mesma rota: a raiz.
+  if (resto === "" || resto === "/") return resto;
+
+  // "/ingestao" NÃO é "/ingest" com sufixo "ao": sem isto, um caminho parecido
+  // cairia numa rota inexistente em vez de 404 honesto.
+  if (!resto.startsWith("/")) return pathname;
+
+  return resto.replace(/\/+$/, "");
+}

@@ -1,4 +1,17 @@
-﻿<#
+// =============================================================================
+// GERADO — não edite à mão
+// =============================================================================
+// Origem:
+//   agent/agente-powershell.ps1  (22580 bytes, sha256:6b3a8dcb0c56a019)
+//   docker/ingest-local/instalar.ps1  (11721 bytes, sha256:e6f50567e363068b)
+//
+// Regerar:  node scripts/gerar-scripts-embutidos.mjs
+//
+// A Edge Function serve estes dois arquivos em HTTPS para que o comando de uma
+// linha funcione numa loja remota, onde o endpoint local da LAN não existe.
+// =============================================================================
+
+export const AGENTE_PS1: string = `<#
 .SYNOPSIS
   Agente de monitoramento em PowerShell. Coleta metricas REAIS desta maquina.
 
@@ -27,7 +40,7 @@
     - fallback de CPU por contador bruto simplificado
 
 .PARAMETER Config
-  Caminho do config.json. Padrao: %ProgramData%\MonitorAgent\config.json
+  Caminho do config.json. Padrao: %ProgramData%\\MonitorAgent\\config.json
 
 .PARAMETER UmaVez
   Coleta uma amostra, envia e sai. Use para testar.
@@ -36,14 +49,14 @@
   Imprime o JSON que seria enviado e sai, sem enviar nada.
 
 .EXAMPLE
-  .\agent\agente-powershell.ps1 -MostrarJson
+  .\\agent\\agente-powershell.ps1 -MostrarJson
 
 .EXAMPLE
-  .\agent\agente-powershell.ps1
+  .\\agent\\agente-powershell.ps1
 #>
 [CmdletBinding()]
 param(
-  [string] $Config = (Join-Path $env:ProgramData 'MonitorAgent\config.json'),
+  [string] $Config = (Join-Path $env:ProgramData 'MonitorAgent\\config.json'),
   [switch] $UmaVez,
   [switch] $MostrarJson
 )
@@ -81,7 +94,7 @@ foreach ($nome in @('Tls12', 'Tls13')) {
 # ---------------------------------------------------------------------------
 if (-not (Test-Path $Config)) {
   Write-Host "config.json nao encontrado em $Config" -ForegroundColor Red
-  Write-Host 'Gere com: .\scripts\monitorar-este-pc.ps1' -ForegroundColor Yellow
+  Write-Host 'Gere com: .\\scripts\\monitorar-este-pc.ps1' -ForegroundColor Yellow
   exit 1
 }
 
@@ -236,7 +249,7 @@ function NovaAmostra {
   # Quem decide alerta e o BOOLEANO Started; state_raw e so diagnostico.
   if ($servicos.Count -gt 0) {
     Coletar 'servicos' {
-      $filtro = ($servicos | ForEach-Object { "Name='$($_ -replace "'", "\'")'" }) -join ' OR '
+      $filtro = ($servicos | ForEach-Object { "Name='$($_ -replace "'", "\\'")'" }) -join ' OR '
       $achados = @{}
       foreach ($s in Get-CimInstance Win32_Service -Filter $filtro -ErrorAction Stop) {
         $achados[$s.Name] = $s
@@ -327,7 +340,7 @@ function InfoMaquina {
 
     if ($rota) {
       $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $rota.InterfaceIndex -ErrorAction Stop |
-              Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
+              Where-Object { $_.IPAddress -notmatch '^(127\\.|169\\.254\\.)' } |
               Select-Object -First 1
       if ($ip) { $info.ip_lan = $ip.IPAddress }
     }
@@ -337,7 +350,7 @@ function InfoMaquina {
   if (-not $info.ip_lan) {
     try {
       $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-              Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
+              Where-Object { $_.IPAddress -notmatch '^(127\\.|169\\.254\\.)' } |
               Select-Object -First 1
       if ($ip) { $info.ip_lan = $ip.IPAddress }
     } catch { }
@@ -351,7 +364,7 @@ function InfoMaquina {
 # ---------------------------------------------------------------------------
 # UTF-8 SEM BOM, escrito pelo .NET e nao por Add-Content.
 #
-# `Add-Content -Encoding utf8` no PowerShell 5.1 grava BOM ao criar o arquivo, e
+# \`Add-Content -Encoding utf8\` no PowerShell 5.1 grava BOM ao criar o arquivo, e
 # o BOM fica colado no inicio da PRIMEIRA linha. ConvertFrom-Json entao falha
 # naquela linha, o agente a classifica como ilegivel e DESCARTA — a primeira
 # amostra de cada spool novo se perdia em silencio, com a mensagem
@@ -360,17 +373,17 @@ $script:utf8SemBom = New-Object System.Text.UTF8Encoding($false)
 
 function SpoolGravar {
   param([hashtable] $Amostra)
-  $linha = ($Amostra | ConvertTo-Json -Depth 10 -Compress) + "`n"
+  $linha = ($Amostra | ConvertTo-Json -Depth 10 -Compress) + "\`n"
   [System.IO.File]::AppendAllText($spoolPath, $linha, $script:utf8SemBom)
 }
 
 <#
-  ATENCAO AO USAR: sempre escreva `$x = @(SpoolLer)`, com o @() NO CHAMADOR.
+  ATENCAO AO USAR: sempre escreva \`$x = @(SpoolLer)\`, com o @() NO CHAMADOR.
 
   O PowerShell DESEMBRULHA array de um unico elemento ao retornar de uma funcao.
-  O `@()` aqui dentro nao sobrevive ao return: com exatamente uma amostra no
+  O \`@()\` aqui dentro nao sobrevive ao return: com exatamente uma amostra no
   spool, o chamador recebia a STRING em vez de um array de uma posicao. Ai
-  `$pendentes[0]` indexava a string e devolvia um CARACTERE, o ConvertFrom-Json
+  \`$pendentes[0]\` indexava a string e devolvia um CARACTERE, o ConvertFrom-Json
   falhava naquele char, e o agente descartava a amostra como "ilegivel".
 
   O efeito era cruel: funcionava com 2 ou mais amostras pendentes e falhava
@@ -382,7 +395,7 @@ function SpoolLer {
   $texto = [System.IO.File]::ReadAllText($spoolPath, $script:utf8SemBom)
   # TrimStart do BOM tambem na leitura: um spool criado por versao anterior
   # continua legivel em vez de ter a primeira amostra descartada.
-  return @($texto.TrimStart([char]0xFEFF) -split "`r?`n" | Where-Object { $_.Trim() })
+  return @($texto.TrimStart([char]0xFEFF) -split "\`r?\`n" | Where-Object { $_.Trim() })
 }
 
 function SpoolAparar {
@@ -408,7 +421,7 @@ function SpoolAparar {
   }
 
   if ($vivas.Count -ne $antes) {
-    [System.IO.File]::WriteAllText($spoolPath, (($vivas -join "`n") + "`n"), $script:utf8SemBom)
+    [System.IO.File]::WriteAllText($spoolPath, (($vivas -join "\`n") + "\`n"), $script:utf8SemBom)
     Registrar 'AVI' "spool aparado: $antes -> $($vivas.Count) amostras (descarte do mais antigo)"
   }
 }
@@ -420,7 +433,7 @@ function SpoolRemoverPrimeiras {
     [System.IO.File]::WriteAllText($spoolPath, '', $script:utf8SemBom)
   } else {
     $restam = $linhas[$Quantidade..($linhas.Count - 1)]
-    [System.IO.File]::WriteAllText($spoolPath, (($restam -join "`n") + "`n"), $script:utf8SemBom)
+    [System.IO.File]::WriteAllText($spoolPath, (($restam -join "\`n") + "\`n"), $script:utf8SemBom)
   }
 }
 
@@ -456,7 +469,7 @@ function Enviar {
   }
 
   # Regra 18: timeout explicito.
-  $resp = Invoke-RestMethod -Uri $url -Method Post -Headers $cab `
+  $resp = Invoke-RestMethod -Uri $url -Method Post -Headers $cab \`
             -ContentType 'application/json' -Body $corpo -TimeoutSec 30
   return $resp
 }
@@ -479,7 +492,7 @@ if ($MostrarJson) {
 # Laco principal
 # ---------------------------------------------------------------------------
 Registrar 'INF' "agente $VERSAO iniciando | maquina $($cfg.machineLabel) | loja $($cfg.siteCode)"
-Registrar 'INF' "destino $($cfg.ingestUrl) | intervalo ${intervalo}s | spool $spoolPath"
+Registrar 'INF' "destino $($cfg.ingestUrl) | intervalo \${intervalo}s | spool $spoolPath"
 
 $maquina = InfoMaquina
 $tentativa = 0
@@ -510,11 +523,11 @@ while ($true) {
         try {
           $enviar += ($pendentes[$i] | ConvertFrom-Json)
         } catch {
-          # catch que FALA. A versao anterior era `catch { }` e engolia o motivo:
+          # catch que FALA. A versao anterior era \`catch { }\` e engolia o motivo:
           # o agente dizia apenas "descartadas N linhas ilegiveis" e nao havia
           # como saber por que. Um catch silencioso num caminho de descarte de
           # dado e exatamente onde um defeito se esconde.
-          Registrar 'AVI' ("linha {0} do spool ilegivel: {1} | inicio: {2}" -f `
+          Registrar 'AVI' ("linha {0} do spool ilegivel: {1} | inicio: {2}" -f \`
             $i, $_.Exception.Message,
             $pendentes[$i].Substring(0, [Math]::Min(120, $pendentes[$i].Length)))
         }
@@ -527,7 +540,7 @@ while ($true) {
 
         $extra = ''
         if ($r.duplicates -gt 0) { $extra = ", $($r.duplicates) duplicadas" }
-        Registrar 'INF' ("enviadas {0} | aceitas {1}{2} | cpu {3}% mem {4}/{5}MB" -f `
+        Registrar 'INF' ("enviadas {0} | aceitas {1}{2} | cpu {3}% mem {4}/{5}MB" -f \`
           $enviar.Count, $r.accepted, $extra, $amostra.cpu_pct, $amostra.mem_used_mb, $amostra.mem_total_mb)
       } else {
         SpoolRemoverPrimeiras $n
@@ -561,3 +574,254 @@ while ($true) {
 }
 
 Registrar 'INF' 'agente encerrado'
+`;
+
+export const INSTALAR_PS1: string = `<#
+  Instalador do agente de monitoramento — baixado e executado em UMA linha.
+
+  Servido pelo proprio endpoint de ingestao, e o dashboard monta o comando com o
+  token da maquina ja preenchido. O objetivo e nao precisar copiar pasta nenhuma:
+  no PC novo, cola uma linha no PowerShell e acabou.
+
+  O comando que o dashboard gera tem esta forma:
+
+    & ([scriptblock]::Create((irm 'http://SERVIDOR:PORTA/instalar.ps1'))) \`
+        -Servidor 'http://SERVIDOR:PORTA' -Token 'mon_...' -Segredo '...'
+
+  scriptblock::Create em vez de \`iex\` direto porque so assim da para PASSAR
+  ARGUMENTOS para um script baixado — com \`iex\` os parametros seriam ignorados em
+  silencio e o instalador rodaria sem token.
+#>
+[CmdletBinding()]
+param(
+  [Parameter(Mandatory = $true)][string] $Servidor,
+  [Parameter(Mandatory = $true)][string] $Token,
+  [Parameter(Mandatory = $true)][string] $Segredo,
+
+  [int]      $IntervaloSegundos = 60,
+  [string[]] $Servicos = @(),
+
+  # Registra tarefa agendada para o agente voltar sozinho apos reiniciar. Exige
+  # terminal ELEVADO — e, rodando como SYSTEM, temperatura e SMART tambem passam
+  # a ser coletados.
+  [switch]   $ComTarefa,
+
+  [switch]   $Parar
+)
+
+$ErrorActionPreference = 'Stop'
+
+# TLS 1.2/1.3 antes de qualquer requisicao. O PowerShell 5.1 herda o padrao do
+# .NET Framework, que em Windows sem atualizacao ainda negocia SSL3/TLS 1.0, e o
+# Supabase recusa. Sem isto o instalador falharia ja no /healthz com "a conexao
+# subjacente foi fechada" — mensagem que joga o diagnostico para firewall e
+# certificado, quando o problema e a versao do protocolo.
+foreach ($nome in @('Tls12', 'Tls13')) {
+  try {
+    $valor = [Enum]::Parse([Net.SecurityProtocolType], $nome)
+    [Net.ServicePointManager]::SecurityProtocol =
+      [Net.ServicePointManager]::SecurityProtocol -bor $valor
+  } catch { }
+}
+
+$dirDados = Join-Path $env:ProgramData 'MonitorAgent'
+$pidFile = Join-Path $dirDados 'agente.pid'
+$agentePath = Join-Path $dirDados 'agente-powershell.ps1'
+$configPath = Join-Path $dirDados 'config.json'
+
+function Passo { param([string]$T) Write-Host ''; Write-Host "== $T ==" -ForegroundColor Cyan }
+function Ok    { param([string]$T) Write-Host "   $T" -ForegroundColor Green }
+function Info  { param([string]$T) Write-Host "   $T" -ForegroundColor DarkGray }
+
+# ---------------------------------------------------------------------------
+if ($Parar) {
+  if (Test-Path $pidFile) {
+    try { Stop-Process -Id ([int](Get-Content $pidFile)) -Force -ErrorAction Stop; Ok 'agente encerrado' }
+    catch { Info 'agente nao estava rodando' }
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+  } else { Info 'nenhum agente registrado' }
+  try { Unregister-ScheduledTask -TaskName 'MonitorAgent' -Confirm:$false -ErrorAction Stop; Ok 'tarefa agendada removida' } catch { }
+  exit 0
+}
+
+Write-Host ''
+Write-Host '============================================================' -ForegroundColor Cyan
+Write-Host " Instalando o agente de monitoramento em $env:COMPUTERNAME" -ForegroundColor Cyan
+Write-Host '============================================================' -ForegroundColor Cyan
+
+$Servidor = $Servidor.TrimEnd('/')
+
+# ---------------------------------------------------------------------------
+Passo 'Testando a conexao com o servidor'
+# ---------------------------------------------------------------------------
+# ANTES de instalar qualquer coisa. Descobrir aqui que o firewall bloqueia e muito
+# melhor que instalar, subir o agente e ele ficar mudo sem ninguem saber.
+try {
+  $h = Invoke-RestMethod -Uri "$Servidor/healthz" -TimeoutSec 10
+  if (-not $h.ok) { throw 'servidor respondeu, mas nao esta saudavel' }
+  Ok "servidor respondeu: $Servidor"
+} catch {
+  Write-Host ''
+  Write-Host "   NAO CONSEGUI FALAR COM $Servidor" -ForegroundColor Red
+  Write-Host "   $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host ''
+
+  # As duas situacoes pedem verificacoes OPOSTAS, e dar a lista errada custa
+  # horas: numa loja remota nao existe "libere a porta no servidor", e na LAN nao
+  # existe problema de DNS publico.
+  if (([uri]$Servidor).Scheme -eq 'https') {
+    Write-Host '   Endereco publico (HTTPS). Verifique, na ordem:' -ForegroundColor Yellow
+    Write-Host '    1. esta maquina tem internet:'
+    Write-Host '       Test-NetConnection 1.1.1.1 -Port 443' -ForegroundColor DarkGray
+    Write-Host '    2. o nome resolve:'
+    Write-Host "       Resolve-DnsName $(([uri]$Servidor).Host)" -ForegroundColor DarkGray
+    Write-Host '    3. a rede da loja nao bloqueia a saida na 443 nem exige proxy'
+    Write-Host '    4. o TLS desta maquina fecha com o servidor:'
+    Write-Host "       Invoke-RestMethod '$Servidor/healthz'" -ForegroundColor DarkGray
+    Write-Host '       (se falhar so aqui, o Windows esta sem atualizacao de TLS)'
+    Write-Host '    5. a funcao de ingestao esta publicada e com os segredos definidos'
+  } else {
+    Write-Host '   Endereco de rede local (HTTP). Verifique, na ordem:' -ForegroundColor Yellow
+    Write-Host '    1. o PC servidor esta ligado e a stack no ar'
+    Write-Host '    2. as duas maquinas estao na MESMA rede'
+    Write-Host '    3. o Firewall do Windows no servidor libera a porta:'
+    Write-Host "       New-NetFirewallRule -DisplayName 'Monitoramento' -Direction Inbound -Protocol TCP -LocalPort $(([uri]$Servidor).Port) -Action Allow" -ForegroundColor DarkGray
+    Write-Host '    4. o IP do servidor nao mudou (gere o comando de novo no dashboard)'
+  }
+
+  Write-Host ''
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+Passo 'Baixando o agente'
+# ---------------------------------------------------------------------------
+New-Item -ItemType Directory -Force -Path $dirDados | Out-Null
+
+try {
+  $script = Invoke-RestMethod -Uri "$Servidor/agente.ps1" -TimeoutSec 30
+} catch {
+  Write-Host "   nao foi possivel baixar o agente: $($_.Exception.Message)" -ForegroundColor Red
+  exit 1
+}
+
+# BOM UTF-8 de proposito: o PowerShell 5.1 le .ps1 como ANSI quando nao ha BOM, e
+# um acento no arquivo viraria caractere de aspas que quebra a analise sintatica.
+[System.IO.File]::WriteAllText($agentePath, $script, (New-Object System.Text.UTF8Encoding($true)))
+Ok "agente em $agentePath"
+
+# ---------------------------------------------------------------------------
+Passo 'Detectando a rede desta maquina'
+# ---------------------------------------------------------------------------
+$gateway = ''
+try {
+  $rota = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop |
+            Sort-Object RouteMetric | Select-Object -First 1
+  if ($rota -and $rota.NextHop -ne '0.0.0.0') { $gateway = $rota.NextHop }
+} catch { }
+
+if ($gateway) { Ok "gateway: $gateway" } else { Info 'gateway nao detectado (latencia da LAN ficara desligada)' }
+
+# ---------------------------------------------------------------------------
+Passo 'Gravando a configuracao'
+# ---------------------------------------------------------------------------
+$listaServicos = @($Servicos | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($listaServicos.Count -eq 0) { $listaServicos = @('Spooler', 'Dhcp', 'Dnscache') }
+
+$config = [ordered]@{
+  localRpc         = $false
+  ingestUrl        = $Servidor
+  sharedSecret     = $Segredo
+  token            = $Token
+  machineLabel     = $env:COMPUTERNAME
+  intervalSeconds  = $IntervaloSegundos
+  batchSize        = 200
+  gatewayIp        = $gateway
+  criticalServices = $listaServicos
+  spool            = @{ maxRows = 20000; maxAgeHours = 72 }
+}
+
+# UTF-8 SEM BOM: JSON com BOM e recusado por parser estrito.
+[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 6),
+  (New-Object System.Text.UTF8Encoding($false)))
+
+Ok "configuracao em $configPath"
+Info "servicos vigiados: $($listaServicos -join ', ')"
+
+# ---------------------------------------------------------------------------
+Passo 'Coleta de teste'
+# ---------------------------------------------------------------------------
+& powershell -NoProfile -ExecutionPolicy Bypass -File "$agentePath" -UmaVez
+if ($LASTEXITCODE -ne 0) {
+  Write-Host ''
+  Write-Host '   a coleta de teste falhou — veja a mensagem acima' -ForegroundColor Red
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+Passo 'Subindo o agente'
+# ---------------------------------------------------------------------------
+if (Test-Path $pidFile) {
+  try { Stop-Process -Id ([int](Get-Content $pidFile)) -Force -ErrorAction Stop; Info 'agente anterior encerrado' } catch { }
+}
+
+$ehAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+  [Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if ($ComTarefa -and $ehAdmin) {
+  # Tarefa agendada como SYSTEM: sobrevive a reinicio e a logoff, e coleta
+  # temperatura e SMART, que exigem privilegio.
+  try { Unregister-ScheduledTask -TaskName 'MonitorAgent' -Confirm:$false -ErrorAction Stop } catch { }
+
+  $acao = New-ScheduledTaskAction -Execute 'powershell.exe' \`
+            -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \`"$agentePath\`""
+  $gatilho = New-ScheduledTaskTrigger -AtStartup
+  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+  $cfgTarefa = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries \`
+                 -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+
+  Register-ScheduledTask -TaskName 'MonitorAgent' -Action $acao -Trigger $gatilho \`
+    -Principal $principal -Settings $cfgTarefa -Description 'Agente de monitoramento de infraestrutura' | Out-Null
+
+  Start-ScheduledTask -TaskName 'MonitorAgent'
+  Ok 'tarefa agendada criada (roda como SYSTEM, volta apos reiniciar)'
+  Info 'como SYSTEM elevado, temperatura e SMART tambem sao coletados'
+} else {
+  if ($ComTarefa -and -not $ehAdmin) {
+    Write-Host '   -ComTarefa exige terminal ELEVADO; subindo apenas nesta sessao' -ForegroundColor Yellow
+  }
+
+  # Caminho ENTRE ASPAS: Start-Process junta os argumentos sem citar, e
+  # %ProgramData% pode conter espaco.
+  $proc = Start-Process -FilePath 'powershell.exe' -PassThru -WindowStyle Hidden \`
+            -RedirectStandardOutput (Join-Path $dirDados 'agente.out.log') \`
+            -RedirectStandardError  (Join-Path $dirDados 'agente.err.log') \`
+            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "\`"$agentePath\`"")
+
+  $proc.Id | Out-File -FilePath $pidFile -Encoding ascii
+  Start-Sleep -Seconds 4
+
+  if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {
+    Ok "agente no ar (PID $($proc.Id))"
+  } else {
+    Write-Host '   o agente morreu ao iniciar:' -ForegroundColor Red
+    Get-Content (Join-Path $dirDados 'agente.err.log') -Tail 10 -ErrorAction SilentlyContinue |
+      ForEach-Object { Write-Host "     $_" -ForegroundColor Red }
+    exit 1
+  }
+}
+
+Write-Host ''
+Write-Host '============================================================' -ForegroundColor Green
+Write-Host " $env:COMPUTERNAME ESTA SENDO MONITORADA" -ForegroundColor Green
+Write-Host '============================================================' -ForegroundColor Green
+Write-Host "  Log   : $dirDados\\agente.out.log"
+Write-Host "  Parar : & ([scriptblock]::Create((irm '$Servidor/instalar.ps1'))) -Servidor '$Servidor' -Token x -Segredo x -Parar"
+if (-not $ComTarefa) {
+  Write-Host ''
+  Write-Host '  O agente NAO volta sozinho apos reiniciar o Windows.' -ForegroundColor Yellow
+  Write-Host '  Para isso, rode o mesmo comando com -ComTarefa num terminal ELEVADO.' -ForegroundColor Yellow
+}
+Write-Host '============================================================' -ForegroundColor Green
+Write-Host ''
+`;

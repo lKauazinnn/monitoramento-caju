@@ -61,3 +61,10 @@ agente-ps.err.log
 # Pacotes gerados para outros PCs (contem token por maquina)
 pacotes/
 capturas/
+
+# Producao (Supabase)
+# config.toml nomeia o SEU projeto; config.producao.js traz a anon key daquele
+# projeto. Nenhum dos dois e segredo, mas tambem nao pertencem ao repositorio:
+# sao gerados por scripts/publicar-supabase.ps1 para a instalacao de cada um.
+supabase/config.toml
+dashboard/config.producao.js

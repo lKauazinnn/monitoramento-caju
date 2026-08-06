@@ -13,6 +13,7 @@ import {
   extractBearer,
   httpStatusForSqlState,
   logLine,
+  routeSuffix,
   safeErrorMessage,
   SQLSTATE_TO_HTTP,
   timingSafeEqual,
@@ -237,6 +238,48 @@ teste("tokenPrefixForLog corta em 16 e não registra credencial", () => {
 
 teste("tokenPrefixForLog aceita null", () => {
   assert.equal(tokenPrefixForLog(null), null);
+});
+
+// -----------------------------------------------------------------------------
+// routeSuffix
+// -----------------------------------------------------------------------------
+// Errar este recorte é a falha mais provável no primeiro deploy, e ela aparece
+// como 404 em TUDO — sintoma que não indica a causa. Testado aqui porque não
+// precisa de Deno nem de projeto publicado.
+teste("routeSuffix: raiz é POST de métricas", () => {
+  assert.equal(routeSuffix("/functions/v1/ingest"), "");
+  assert.equal(routeSuffix("/functions/v1/ingest/"), "/");
+});
+
+teste("routeSuffix: healthz", () => {
+  assert.equal(routeSuffix("/functions/v1/ingest/healthz"), "/healthz");
+  assert.equal(routeSuffix("/functions/v1/ingest/healthz/"), "/healthz");
+});
+
+teste("routeSuffix: scripts servidos em HTTPS", () => {
+  assert.equal(routeSuffix("/functions/v1/ingest/agente.ps1"), "/agente.ps1");
+  assert.equal(routeSuffix("/functions/v1/ingest/instalar.ps1"), "/instalar.ps1");
+});
+
+teste("routeSuffix: caminho do shim local", () => {
+  assert.equal(routeSuffix("/ingest"), "");
+  assert.equal(routeSuffix("/ingest/healthz"), "/healthz");
+});
+
+teste("routeSuffix ancora no ULTIMO /ingest", () => {
+  // Com âncora no primeiro, isto sairia como "ao/functions/v1" e a função
+  // responderia 404 para uma requisição perfeitamente válida.
+  assert.equal(routeSuffix("/ingestao/functions/v1/ingest/healthz"), "/healthz");
+});
+
+teste("routeSuffix não confunde /ingestao com /ingest + sufixo", () => {
+  // "ao" não começa com "/", então não é sufixo de rota: devolve o caminho
+  // inteiro, que não casa com nenhuma rota e vira 404 honesto.
+  assert.equal(routeSuffix("/functions/v1/ingestao"), "/functions/v1/ingestao");
+});
+
+teste("routeSuffix devolve o caminho quando não há /ingest", () => {
+  assert.equal(routeSuffix("/functions/v1/outra"), "/functions/v1/outra");
 });
 
 console.log("");

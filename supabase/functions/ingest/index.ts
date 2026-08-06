@@ -26,11 +26,14 @@ import {
   extractBearer,
   httpStatusForSqlState,
   logLine,
+  routeSuffix,
   safeErrorMessage,
   timingSafeEqual,
   tokenPrefixForLog,
   validateEnvelopeShape,
 } from "./lib.ts";
+
+import { AGENTE_PS1, INSTALAR_PS1 } from "./scripts-embutidos.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -146,6 +149,43 @@ async function handleHealthz(req: Request): Promise<Response> {
 }
 
 // -----------------------------------------------------------------------------
+// GET /agente.ps1  e  GET /instalar.ps1
+// -----------------------------------------------------------------------------
+// Numa loja remota o comando de instalação é `irm https://.../instalar.ps1`. Esse
+// endereço precisa existir em HTTPS, e esta função é o único componente do
+// projeto que já está publicado em HTTPS — subir um segundo serviço para servir
+// dois arquivos de texto seria uma peça a mais para manter no ar sem motivo.
+//
+// SEM SEGREDO, de propósito. Três razões:
+//   1. o `irm` do comando de uma linha não manda header nenhum;
+//   2. não há segredo NO conteúdo: token e segredo chegam como argumento, e o
+//      script é o mesmo que está no repositório;
+//   3. saber baixar o instalador não dá acesso a nada — a ingestão continua
+//      exigindo o segredo compartilhado E o token da máquina.
+//
+// O BOM UTF-8 é deliberado. O PowerShell 5.1 lê .ps1 sem BOM como ANSI, e um
+// acento no arquivo viraria caractere de aspas que quebra a análise sintática —
+// o script nem chegaria a rodar. `Invoke-RestMethod` devolve o texto decodificado
+// pelo charset do header, e o instalador regrava com BOM no disco; servir com BOM
+// mantém o comportamento igual em quem baixar com curl ou pelo navegador.
+const BOM = "﻿";
+
+function servirScript(nome: "agente" | "instalar"): Response {
+  const corpo = nome === "agente" ? AGENTE_PS1 : INSTALAR_PS1;
+
+  return new Response(BOM + corpo, {
+    status: 200,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      // Curto de propósito: ao corrigir o agente, a loja seguinte já pega a
+      // versão nova sem ninguém precisar limpar cache em lugar nenhum.
+      "cache-control": "public, max-age=300",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+// -----------------------------------------------------------------------------
 // POST /ingest
 // -----------------------------------------------------------------------------
 async function handleIngest(req: Request): Promise<Response> {
@@ -241,12 +281,16 @@ async function handleIngest(req: Request): Promise<Response> {
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   // A plataforma serve em /functions/v1/<nome>; o sufixo é o que importa.
-  const rota = url.pathname.replace(/^.*\/ingest/, "") || "/";
+  // Recorte em lib.ts, testado sem Deno em lib.test.mjs.
+  const rota = routeSuffix(url.pathname) || "/";
 
   try {
     if (req.method === "GET" && (rota === "/healthz" || rota === "/healthz/")) {
       return await handleHealthz(req);
     }
+
+    if (req.method === "GET" && rota === "/agente.ps1") return servirScript("agente");
+    if (req.method === "GET" && rota === "/instalar.ps1") return servirScript("instalar");
 
     if (req.method === "POST" && (rota === "/" || rota === "")) {
       if (CONFIG_ERROR) {

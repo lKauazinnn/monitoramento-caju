@@ -539,18 +539,46 @@ Remove-Item $tmpJs -Force -ErrorAction SilentlyContinue
 # .gitignore e nunca vai para o repositorio.
 #
 # Para exigir login mesmo localmente, rode com -ComLogin.
+
+# ---------------------------------------------------------------------------
+Passo 'Registrando o endereco da ingestao no banco'
+# ---------------------------------------------------------------------------
+# O SEGREDO COMPARTILHADO NAO VAI MAIS PARA dev-config.json.
+#
+# Aqui na LAN isso passava, mas em producao o dashboard e um site estatico: o
+# arquivo de configuracao e baixado por qualquer um que abra a URL, antes de
+# qualquer login. Publicar ali o segredo que protege a Edge Function anularia a
+# regra 6.
+#
+# Agora ele mora em public.ingest_config, tabela sem policy e sem grant, e sai
+# apenas por funcao SECURITY DEFINER que exige admin. O local usa o MESMO caminho
+# que a producao — se quebrasse so em producao, ninguem descobriria antes da loja.
+$r = ExecScript -Nome 'ingestao.sh' -Conteudo @"
+psql -U postgres -q -v ON_ERROR_STOP=1 -c "select public.definir_ingestao('$ingestUrlLan', '$ingestSecret');"
+"@
+
+if ($r.Codigo -ne 0) {
+  $r.Saida | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
+  Write-Host '   nao foi possivel registrar o endereco da ingestao' -ForegroundColor Red
+  exit 1
+}
+
+Ok "ingestao apontada para $ingestUrlLan"
+Info 'segredo guardado no banco, fora de qualquer arquivo servido ao navegador'
+
 $devConfig = [ordered]@{
   restUrl    = $restUrl
   authMode   = 'local'
   pedirLogin = [bool]$ComLogin
 
-  # Endereco da ingestao NA LAN e o segredo compartilhado.
+  # Endereco da ingestao NA LAN, para diagnostico e como referencia visivel.
   #
-  # O dashboard usa os dois para montar o comando de instalacao de outro PC. Tem
-  # de ser o IP da rede, e nao 127.0.0.1: na outra maquina, loopback aponta para
-  # ela mesma, e o agente tentaria falar consigo proprio.
+  # Tem de ser o IP da rede, e nao 127.0.0.1: na outra maquina, loopback aponta
+  # para ela mesma, e o agente tentaria falar consigo proprio.
+  #
+  # NAO ha ingestSecret aqui, e a ausencia e o ponto: este arquivo e servido ao
+  # navegador. O segredo vem do banco, via provisionar_maquina_ui, so para admin.
   ingestUrlLan = $ingestUrlLan
-  ingestSecret = $ingestSecret
 }
 
 if (-not $ComLogin) {

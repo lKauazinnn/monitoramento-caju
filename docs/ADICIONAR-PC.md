@@ -99,6 +99,15 @@ Se isso funciona na sua mesa, funciona a 900 km.
 
 ## Levando para as outras lojas
 
+> **Isto já está pronto.** O caminho de produção em HTTPS está implementado e o
+> passo a passo está em **[PRODUCAO-SUPABASE.md](PRODUCAO-SUPABASE.md)**. Em
+> resumo: `.\scripts\publicar-supabase.ps1 -ProjetoRef SEU_REF` publica e
+> verifica, `.\scripts\comando-para-loja.ps1` gera o comando da máquina, e
+> `.\scripts\ver-producao.ps1 -Vigiar` mostra a loja chegando.
+>
+> O resto desta seção explica **por quê** o endereço da LAN não serve e por que a
+> Edge Function foi o caminho escolhido.
+
 Aqui o teste local para de valer, e é honesto dizer por quê: hoje o comando
 aponta para `http://192.168.14.222:3010`. Esse endereço **não existe** em outra
 loja, e é HTTP puro — o que contraria a regra de "tudo em HTTPS, sem exceção
@@ -147,12 +156,13 @@ máximo como caminho alternativo.
 
 ## Resumo da recomendação
 
-| Fase | Endpoint | Quando |
+| Fase | Endpoint | Como |
 |---|---|---|
-| Teste na sua rede | `http://192.168.14.222:3010` | agora, com o segundo PC |
-| Produção | Edge Function em `https://…supabase.co` | antes da primeira loja remota |
+| Teste na sua rede | `http://192.168.14.222:3010` | `.\scripts\dev-up.ps1` |
+| Produção | `https://…supabase.co/functions/v1/ingest` | `.\scripts\publicar-supabase.ps1` |
 | Alternativa | VPN `10.x.0.100` | só como reserva |
 
-Depois de trocar para o Supabase, **teste com uma máquina** antes de sair
-instalando na frota. O comando do dashboard passa a sair com a URL nova
-automaticamente.
+Depois de publicar, **teste com uma máquina** antes de sair instalando na frota.
+O comando passa a sair com a URL nova automaticamente, porque tanto o dashboard
+quanto o `comando-para-loja.ps1` leem o endereço do banco (`ingest_config`) — não
+de arquivo de configuração. Trocar de fase é uma linha, num lugar só.

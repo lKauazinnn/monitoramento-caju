@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.12-visual';
+const BUILD = '2026-08-06.13-ingest-servidor';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -261,11 +261,13 @@ async function descobrirApiLocal() {
   CFG.devUsuario = d.devUsuario || null;
   CFG.pedirLogin = d.pedirLogin === true;
 
-  // Endereco da ingestao NA REDE e o segredo compartilhado: e o que o dashboard
-  // precisa para montar o comando de instalacao de outro PC. O IP e o da LAN, nao
-  // 127.0.0.1 — que, na outra maquina, aponta para ela mesma.
+  // Endereço da ingestão na LAN, só para diagnóstico e para a mensagem de erro
+  // saber o que sugerir.
+  //
+  // NÃO existe mais `ingestSecret` aqui, e a ausência é o ponto: este arquivo é
+  // servido ao navegador antes de qualquer login. Endereço e segredo da ingestão
+  // vêm do BANCO, na resposta de provisionar_maquina_ui, e só para admin.
   CFG.ingestUrlLan = d.ingestUrlLan || null;
-  CFG.ingestSecret = d.ingestSecret || null;
 }
 
 // -----------------------------------------------------------------------------
@@ -769,15 +771,17 @@ function conectarRealtime() {
 // próprio endpoint de ingestão — não há pasta para copiar nem arquivo para editar.
 let opcoesCadastro = null;
 
-function urlIngestao() {
-  // A ingestão fica noutra porta, e o outro PC precisa do ENDEREÇO DESTA MÁQUINA
-  // NA REDE, não de 127.0.0.1 — que, lá, aponta para ele mesmo.
-  //
-  // Se o dashboard está sendo aberto por 127.0.0.1, esse endereço não serve para
-  // ninguém de fora, e é por isso que devTokenIngest traz o IP da LAN detectado
-  // pelo dev-up.
-  if (CFG.ingestUrlLan) return CFG.ingestUrlLan;
-  return null;
+/**
+ * Para onde o agente da máquina nova deve falar.
+ *
+ * Vem do SERVIDOR (`ingest_config`), não de arquivo estático. Assim o mesmo
+ * dashboard serve para a fase de teste na LAN (`http://192.168.x.x:3010`) e para
+ * produção (`https://…/functions/v1/ingest`) sem editar nada no navegador — quem
+ * troca é o `definir_ingestao`, num lugar só.
+ */
+function ingestaoConfigurada() {
+  const i = opcoesCadastro && opcoesCadastro.ingestao;
+  return i && i.configurada === true ? i : null;
 }
 
 async function abrirModalAdd() {
@@ -798,6 +802,17 @@ async function abrirModalAdd() {
 
   if (!opcoesCadastro.is_admin) {
     erroAdd('somente administradores podem cadastrar máquinas.');
+    $('btn-gerar').disabled = true;
+    return;
+  }
+
+  // Checado ANTES do formulário. Descobrir isto depois de confirmar deixaria uma
+  // máquina cadastrada no banco e um operador sem comando para rodar nela.
+  $('btn-gerar').disabled = false;
+
+  if (!ingestaoConfigurada()) {
+    erroAdd('a ingestão não está configurada. Rode scripts\\dev-up.ps1 (local) '
+      + 'ou scripts\\publicar-supabase.ps1 (produção) antes de cadastrar.');
     $('btn-gerar').disabled = true;
     return;
   }
@@ -867,12 +882,6 @@ async function gerarComando() {
     if (!codigoLoja) { erroAdd('informe o código da loja nova'); return; }
   }
 
-  const alvo = urlIngestao();
-  if (!alvo) {
-    erroAdd('endereço de ingestão desconhecido. Rode .\\scripts\\dev-up.ps1 novamente.');
-    return;
-  }
-
   const btn = $('btn-gerar');
   const rotulo = btn.textContent;
   btn.disabled = true;
@@ -889,11 +898,23 @@ async function gerarComando() {
 
     if (!r?.token) throw new Error('resposta sem token');
 
+    // Endereço e segredo vêm da MESMA resposta que o token: os três nascem no
+    // servidor, na mesma transação, para o mesmo admin. Não existe caminho em que
+    // o comando saia com token novo e endereço velho.
+    const alvo = r.ingest_url;
+    if (!alvo || !r.ingest_secret) {
+      throw new Error(
+        'a máquina foi cadastrada, mas a ingestão não está configurada no banco. '
+        + 'Rode scripts\\publicar-supabase.ps1 (produção) ou scripts\\dev-up.ps1 '
+        + '(local), e cadastre a máquina outra vez.',
+      );
+    }
+
     // scriptblock::Create e não `iex` direto: só assim é possível PASSAR
     // ARGUMENTOS a um script baixado. Com `iex`, os parâmetros seriam ignorados
     // em silêncio e o instalador rodaria sem token.
     const base = `& ([scriptblock]::Create((irm '${alvo}/instalar.ps1'))) `
-      + `-Servidor '${alvo}' -Token '${r.token}' -Segredo '${CFG.ingestSecret}'`;
+      + `-Servidor '${alvo}' -Token '${r.token}' -Segredo '${r.ingest_secret}'`;
 
     const comServicos = servicos.length
       ? `${base} -Servicos '${servicos.join(',')}'`
@@ -902,9 +923,15 @@ async function gerarComando() {
     txt($('add-comando'), comServicos);
     txt($('add-comando-tarefa'), `${comServicos} -ComTarefa`);
 
+    // Diz em que fase o comando est\u00e1. Um comando apontando para IP de rede local
+    // s\u00f3 funciona dentro dela, e descobrir isso j\u00e1 na loja \u00e9 tarde.
+    const onde = r.ingest_https
+      ? 'Vale em qualquer rede.'
+      : 'Vale SO nesta rede local.';
+
     txt($('add-resumo'),
       `${r.label} cadastrada em ${r.site_code}${r.site_criada ? ' (loja criada agora)' : ''}. `
-      + `Token ${r.token_prefix}\u2026`);
+      + `Token ${r.token_prefix}\u2026 ${onde}`);
 
     $('add-passo1').hidden = true;
     $('add-passo2').hidden = false;

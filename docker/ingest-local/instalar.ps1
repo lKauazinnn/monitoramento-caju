@@ -32,6 +32,20 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# TLS 1.2/1.3 antes de qualquer requisicao. O PowerShell 5.1 herda o padrao do
+# .NET Framework, que em Windows sem atualizacao ainda negocia SSL3/TLS 1.0, e o
+# Supabase recusa. Sem isto o instalador falharia ja no /healthz com "a conexao
+# subjacente foi fechada" — mensagem que joga o diagnostico para firewall e
+# certificado, quando o problema e a versao do protocolo.
+foreach ($nome in @('Tls12', 'Tls13')) {
+  try {
+    $valor = [Enum]::Parse([Net.SecurityProtocolType], $nome)
+    [Net.ServicePointManager]::SecurityProtocol =
+      [Net.ServicePointManager]::SecurityProtocol -bor $valor
+  } catch { }
+}
+
 $dirDados = Join-Path $env:ProgramData 'MonitorAgent'
 $pidFile = Join-Path $dirDados 'agente.pid'
 $agentePath = Join-Path $dirDados 'agente-powershell.ps1'
@@ -73,12 +87,30 @@ try {
   Write-Host "   NAO CONSEGUI FALAR COM $Servidor" -ForegroundColor Red
   Write-Host "   $($_.Exception.Message)" -ForegroundColor Red
   Write-Host ''
-  Write-Host '   Verifique, na ordem:' -ForegroundColor Yellow
-  Write-Host '    1. o PC servidor esta ligado e a stack no ar'
-  Write-Host '    2. as duas maquinas estao na MESMA rede'
-  Write-Host '    3. o Firewall do Windows no servidor libera a porta:'
-  Write-Host "       New-NetFirewallRule -DisplayName 'Monitoramento' -Direction Inbound -Protocol TCP -LocalPort $(([uri]$Servidor).Port) -Action Allow" -ForegroundColor DarkGray
-  Write-Host '    4. o IP do servidor nao mudou (gere o comando de novo no dashboard)'
+
+  # As duas situacoes pedem verificacoes OPOSTAS, e dar a lista errada custa
+  # horas: numa loja remota nao existe "libere a porta no servidor", e na LAN nao
+  # existe problema de DNS publico.
+  if (([uri]$Servidor).Scheme -eq 'https') {
+    Write-Host '   Endereco publico (HTTPS). Verifique, na ordem:' -ForegroundColor Yellow
+    Write-Host '    1. esta maquina tem internet:'
+    Write-Host '       Test-NetConnection 1.1.1.1 -Port 443' -ForegroundColor DarkGray
+    Write-Host '    2. o nome resolve:'
+    Write-Host "       Resolve-DnsName $(([uri]$Servidor).Host)" -ForegroundColor DarkGray
+    Write-Host '    3. a rede da loja nao bloqueia a saida na 443 nem exige proxy'
+    Write-Host '    4. o TLS desta maquina fecha com o servidor:'
+    Write-Host "       Invoke-RestMethod '$Servidor/healthz'" -ForegroundColor DarkGray
+    Write-Host '       (se falhar so aqui, o Windows esta sem atualizacao de TLS)'
+    Write-Host '    5. a funcao de ingestao esta publicada e com os segredos definidos'
+  } else {
+    Write-Host '   Endereco de rede local (HTTP). Verifique, na ordem:' -ForegroundColor Yellow
+    Write-Host '    1. o PC servidor esta ligado e a stack no ar'
+    Write-Host '    2. as duas maquinas estao na MESMA rede'
+    Write-Host '    3. o Firewall do Windows no servidor libera a porta:'
+    Write-Host "       New-NetFirewallRule -DisplayName 'Monitoramento' -Direction Inbound -Protocol TCP -LocalPort $(([uri]$Servidor).Port) -Action Allow" -ForegroundColor DarkGray
+    Write-Host '    4. o IP do servidor nao mudou (gere o comando de novo no dashboard)'
+  }
+
   Write-Host ''
   exit 1
 }

@@ -386,6 +386,42 @@ try {
     verificar(`comando ${nome}`, ok_ === true, gerado.comando.slice(0, 220));
   }
 
+  // ---- o segredo vem do BANCO, não de arquivo servido ao navegador ----------
+  //
+  // Esta é a diferença entre funcionar na LAN e poder ir para produção. Enquanto
+  // o segredo morava em dev-config.json, o comando saía correto e o teste
+  // passava — e em produção, num site estático, aquele arquivo é público. Aqui a
+  // pergunta é outra: o segredo do comando é o que está no banco, e ele NÃO
+  // aparece em nenhum arquivo que o navegador baixe?
+  const segredoBanco = execFileSync('docker', [
+    'exec', 'monitor-db', 'psql', '-U', 'postgres', '-t', '-A', '-c',
+    'select shared_secret from public.ingest_config',
+  ], { encoding: 'utf8' }).trim();
+
+  const segredoNoComando = (/-Segredo '([^']+)'/.exec(gerado.comando) || [])[1] || '';
+
+  verificar('segredo do comando é o que está no banco',
+    segredoBanco.length >= 24 && segredoNoComando === segredoBanco,
+    `banco=${segredoBanco.length}ch comando=${segredoNoComando.length}ch`);
+
+  const estaticos = await js(`
+    (async () => {
+      const fora = [];
+      for (const arq of ['config.js', 'dev-config.json', 'dash.js', 'index.html']) {
+        try {
+          const r = await fetch(arq + '?v=teste-' + Date.now(), { cache: 'reload' });
+          if (!r.ok) continue;
+          if ((await r.text()).includes(${JSON.stringify(segredoBanco)})) fora.push(arq);
+        } catch (_) { /* arquivo ausente é aceitável */ }
+      }
+      return fora;
+    })()
+  `);
+
+  verificar('segredo NÃO aparece em nenhum arquivo estático do dashboard',
+    Array.isArray(estaticos) && estaticos.length === 0,
+    `vazando em: ${(estaticos || []).join(', ') || 'nenhum'}`);
+
   verificar('variante com -ComTarefa oferecida', /-ComTarefa$/.test((gerado.tarefa || '').trim()),
     gerado.tarefa.slice(-40));
 
