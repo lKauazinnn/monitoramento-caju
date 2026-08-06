@@ -85,10 +85,15 @@
 </div>
 
 <div class="bloco">
-  <h2>Testar o login</h2>
+  <h2>Simular exatamente o que o dashboard faz</h2>
+  <p class="sub" style="margin:0 0 10px">
+    Faz login e depois usa o token nas mesmas chamadas que o dashboard faz ao
+    abrir. Se alguma delas devolver 401, é isso que te joga de volta para a tela
+    de login.
+  </p>
   <input type="email" id="email" placeholder="e-mail" value="kaualarsson@cajupar.com">
   <input type="password" id="senha" placeholder="senha">
-  <button id="btn-login" type="button">Tentar login</button>
+  <button id="btn-login" type="button">Rodar a sequência completa</button>
   <div id="res-login"></div>
 </div>
 
@@ -100,7 +105,7 @@
 <script>
 'use strict';
 
-var BUILD_DIAG = '2026-08-06.5';
+var BUILD_DIAG = '2026-08-06.6';
 var saida = document.getElementById('saida');
 var relatorio = [];
 
@@ -297,15 +302,41 @@ async function testar() {
 // -----------------------------------------------------------------------------
 // Teste de login
 // -----------------------------------------------------------------------------
+function resultado(destino, estado, rotulo, detalhe) {
+  var d = document.createElement('div');
+  d.className = 'linha';
+
+  var ic = document.createElement('span');
+  ic.className = estado === 'ok' ? 'ok' : (estado === 'aviso' ? 'aviso' : 'ruim');
+  ic.textContent = estado === 'ok' ? 'OK' : (estado === 'aviso' ? '!' : 'X');
+  d.appendChild(ic);
+
+  var cx = document.createElement('div');
+  var rr = document.createElement('div');
+  rr.className = 'rot';
+  rr.textContent = rotulo;
+  cx.appendChild(rr);
+
+  if (detalhe) {
+    var dd = document.createElement('div');
+    dd.className = 'det';
+    dd.textContent = detalhe;
+    cx.appendChild(dd);
+  }
+
+  d.appendChild(cx);
+  destino.appendChild(d);
+
+  relatorio.push((estado === 'ok' ? '[OK] ' : estado === 'aviso' ? '[!] ' : '[X] ') +
+                 rotulo + (detalhe ? '\n     ' + detalhe : ''));
+}
+
 document.getElementById('btn-login').addEventListener('click', async function () {
   var res = document.getElementById('res-login');
   res.textContent = '';
 
   if (!API) {
-    var e0 = document.createElement('div');
-    e0.className = 'linha';
-    e0.textContent = 'API desconhecida — rode o teste acima primeiro.';
-    res.appendChild(e0);
+    resultado(res, 'ruim', 'API desconhecida', 'Rode "Testar de novo" primeiro.');
     return;
   }
 
@@ -313,8 +344,13 @@ document.getElementById('btn-login').addEventListener('click', async function ()
   var senha = document.getElementById('senha').value;
   var btn = this;
   btn.disabled = true;
-  btn.textContent = 'Testando...';
+  btn.textContent = 'Rodando...';
 
+  var token = null;
+
+  // ---------------------------------------------------------------------------
+  // Passo 1 — login
+  // ---------------------------------------------------------------------------
   try {
     var ctrl = new AbortController();
     var t = setTimeout(function () { ctrl.abort(); }, 15000);
@@ -331,60 +367,87 @@ document.getElementById('btn-login').addEventListener('click', async function ()
     var corpo = {};
     try { corpo = JSON.parse(texto); } catch (_) { corpo = { raw: texto }; }
 
-    var d = document.createElement('div');
-    d.className = 'linha';
-
-    var ic = document.createElement('span');
-    var bom = corpo.ok === true && !!corpo.access_token;
-    ic.className = bom ? 'ok' : 'ruim';
-    ic.textContent = bom ? 'OK' : 'X';
-    d.appendChild(ic);
-
-    var cx = document.createElement('div');
-    var rr = document.createElement('div');
-    rr.className = 'rot';
-    rr.textContent = bom
-      ? 'LOGIN FUNCIONOU — usuário: ' + (corpo.user ? corpo.user.full_name : '?')
-      : 'login recusado';
-    cx.appendChild(rr);
-
-    var dd = document.createElement('div');
-    dd.className = 'det';
-    dd.textContent = 'HTTP ' + r.status + '\n' +
-      (bom ? 'token recebido (' + corpo.access_token.length + ' caracteres)'
-           : (corpo.message || texto).slice(0, 300));
-    cx.appendChild(dd);
-
-    d.appendChild(cx);
-    res.appendChild(d);
-
-    if (bom) {
-      mostrarVeredito(true,
-        'O login funciona neste navegador. Clique no botão VERDE para abrir o ' +
-        'dashboard com o cache limpo.');
+    if (corpo.ok === true && corpo.access_token) {
+      token = corpo.access_token;
+      resultado(res, 'ok', '1. login — usuário: ' + (corpo.user ? corpo.user.full_name : '?'),
+        'HTTP ' + r.status + '  |  token de ' + token.length + ' caracteres');
+    } else {
+      resultado(res, 'ruim', '1. login RECUSADO',
+        'HTTP ' + r.status + '\n' + (corpo.message || texto).slice(0, 300));
+      mostrarVeredito(false, 'O login foi recusado. Verifique a senha, ou recrie o ' +
+        'usuário com scripts\\criar-usuario.ps1');
+      btn.disabled = false;
+      btn.textContent = 'Rodar a sequência completa';
+      return;
     }
   } catch (e) {
-    var de = document.createElement('div');
-    de.className = 'linha';
-    var ie = document.createElement('span');
-    ie.className = 'ruim';
-    ie.textContent = 'X';
-    de.appendChild(ie);
-    var ce = document.createElement('div');
-    ce.className = 'rot';
-    ce.textContent = 'a requisição de login falhou';
-    var dt = document.createElement('div');
-    dt.className = 'det';
-    dt.textContent = String(e) +
+    resultado(res, 'ruim', '1. a requisição de login falhou', String(e) +
       '\n\nCausas: container parado, porta errada, ou extensão do navegador ' +
-      'bloqueando a chamada (adblock, antivírus).';
-    ce.appendChild(dt);
-    de.appendChild(ce);
-    res.appendChild(de);
-  } finally {
+      'bloqueando a chamada (adblock, antivírus).');
     btn.disabled = false;
-    btn.textContent = 'Tentar login';
+    btn.textContent = 'Rodar a sequência completa';
+    return;
   }
+
+  // ---------------------------------------------------------------------------
+  // Passos 2 e 3 — EXATAMENTE o que o dashboard chama ao abrir
+  // ---------------------------------------------------------------------------
+  // Este e o pedaco que faltava no diagnostico anterior, e e onde o problema
+  // aparece: se o token for recusado aqui, o dashboard chama sair() e volta para
+  // a tela de login — o que, de fora, parece "o login nao funciona".
+  var cab = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + token,
+  };
+
+  var chamadas = [
+    { nome: '2. dashboard_summary', url: API + '/rpc/dashboard_summary', metodo: 'POST', corpo: '{}' },
+    { nome: '3. machines_status', url: API + '/machines_status?select=machine_id,label,status', metodo: 'GET', corpo: null },
+  ];
+
+  var houve401 = false;
+
+  for (var i = 0; i < chamadas.length; i++) {
+    var c = chamadas[i];
+    try {
+      var op = { method: c.metodo, headers: cab };
+      if (c.corpo) op.body = c.corpo;
+
+      var rc = await fetch(c.url, op);
+      var tc = await rc.text();
+
+      if (rc.status === 401 || rc.status === 403) {
+        houve401 = true;
+        resultado(res, 'ruim', c.nome + ' — TOKEN RECUSADO (HTTP ' + rc.status + ')',
+          tc.slice(0, 300) +
+          '\n\nESTA E A CAUSA. O login funciona, mas a API recusa o token nas ' +
+          'chamadas seguintes, e o dashboard volta para a tela de login.' +
+          '\nO segredo que assina o token (no banco) esta diferente do que a API ' +
+          'usa para validar. Corrija rodando: .\\scripts\\dev-up.ps1');
+      } else if (rc.ok) {
+        var resumo = tc.length > 120 ? tc.slice(0, 120) + '...' : tc;
+        resultado(res, 'ok', c.nome, 'HTTP ' + rc.status + '\n' + resumo);
+      } else {
+        resultado(res, 'ruim', c.nome + ' — HTTP ' + rc.status, tc.slice(0, 300));
+      }
+    } catch (e2) {
+      resultado(res, 'ruim', c.nome + ' — falhou', String(e2));
+    }
+  }
+
+  if (houve401) {
+    mostrarVeredito(false,
+      'O login devolve token, mas a API RECUSA esse token. E por isso que o ' +
+      'dashboard volta para a tela de login. Rode .\\scripts\\dev-up.ps1 para ' +
+      'sincronizar o segredo de assinatura.');
+  } else {
+    mostrarVeredito(true,
+      'A sequência completa funcionou: login, resumo e lista de máquinas. O ' +
+      'dashboard vai abrir. Clique no botão VERDE acima.');
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Rodar a sequência completa';
 });
 
 // -----------------------------------------------------------------------------

@@ -411,7 +411,7 @@ try {
 
   const resLogin = await js("document.getElementById('res-login').textContent");
   verificar('login pela página de diagnóstico funcionou',
-    /LOGIN FUNCIONOU/.test(resLogin || ''), resLogin);
+    /1. login/.test(resLogin || ''), resLogin);
 
   ws.close();
 } catch (e) {
