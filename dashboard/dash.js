@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.15-remover';
+const BUILD = '2026-08-06.16-lojas-vazias';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -847,10 +847,24 @@ function desenharMaquinas() {
 
   txt($('frota-titulo'), Estado.modo === 'lojas' ? 'Lojas' : 'Máquinas');
 
-  if (lista.length === 0) {
-    txt($('frota-sub'), 'nada corresponde ao filtro');
-    const p = el('p', 'vazio', 'Nenhuma máquina corresponde ao filtro.');
-    conteudo.appendChild(p);
+  // Zero máquinas NÃO significa zero a mostrar.
+  //
+  // No modo lojas, uma loja sem nenhuma máquina continua sendo uma loja: ela
+  // precisa aparecer para poder receber um PC ou ser removida. A versão anterior
+  // saía aqui e desenhava "nenhuma máquina corresponde ao filtro", e as lojas
+  // vazias sumiam da tela outra vez — o mesmo defeito que eu tinha corrigido um
+  // nível abaixo, reintroduzido por este atalho.
+  const lojasVazias = Estado.modo === 'lojas' && lista.length === 0
+    && !Estado.filtros.status && !Estado.filtros.busca.trim()
+    && Estado.lojas.some((s) => (!Estado.filtros.marca || s.brand_code === Estado.filtros.marca)
+      && (!Estado.filtros.loja || s.site_code === Estado.filtros.loja));
+
+  if (lista.length === 0 && !lojasVazias) {
+    const nada = Estado.maquinas.length === 0;
+    txt($('frota-sub'), nada ? 'nenhuma máquina cadastrada' : 'nada corresponde ao filtro');
+    conteudo.appendChild(el('p', 'vazio', nada
+      ? 'Nenhuma máquina cadastrada ainda. Use "+ Adicionar PC" para começar.'
+      : 'Nenhuma máquina corresponde ao filtro.'));
     return;
   }
 

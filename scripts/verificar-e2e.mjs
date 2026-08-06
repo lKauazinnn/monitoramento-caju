@@ -112,6 +112,63 @@ verificar('dash.js não usa eval nem new Function',
   !/\beval\s*\(|new\s+Function\s*\(/.test(appJs));
 
 // =============================================================================
+// Cenário próprio
+// =============================================================================
+// Boa parte das verificações abaixo precisa de PELO MENOS UMA máquina com
+// histórico. Depender das que estiverem no banco fazia a suíte explodir com
+// "Cannot read properties of undefined" assim que o operador limpava o
+// ambiente — e limpar é uma operação que o próprio dashboard oferece.
+//
+// Criado aqui, com prefixo ZZE2E, e removido no fim.
+const FIX = 'ZZE2E';
+const FIX_MAQ = 'PC-VERIFICACAO-E2E';
+const PAYLOAD = '<script>alert(1)</script>';
+
+function limparFixtureE2E() {
+  psql(`delete from public.machines where label in ('${FIX_MAQ}', 'XSS-ACEITE-E2E');
+        delete from public.sites  where code in ('${FIX}', 'ZZXSS');
+        delete from public.brands where code in ('${FIX}', 'ZZXSS');`);
+}
+
+limparFixtureE2E();
+psql(`
+  insert into public.brands (code, name)
+  select '${FIX}', 'verificacao e2e'
+  where not exists (select 1 from public.brands where code = '${FIX}');
+
+  insert into public.sites (brand_id, code, name)
+  select b.id, '${FIX}', 'loja de verificacao' from public.brands b
+  where b.code = '${FIX}' and not exists (select 1 from public.sites where code = '${FIX}');
+
+  insert into public.machines (site_id, role_code, label, hostname, agent_version, last_seen_at)
+  select s.id, 'pdv', '${FIX_MAQ}', 'HOST-E2E', 'verificacao-1.0.0', now()
+  from public.sites s where s.code = '${FIX}';
+`);
+
+// Três amostras: a mais recente deixa a máquina online, e as três juntas dão
+// série para o histórico de 24 h e para a leitura direta de `metrics`, que pede
+// as três últimas linhas.
+psql(`
+  insert into public.metrics (machine_id, "time", agent_version, cpu_pct, mem_pct, uptime_seconds)
+  select m.id, now() - (i * interval '20 minutes'),
+         'verificacao-1.0.0', 10 + i, 44 + i, 7200 - (i * 1200)
+  from public.machines m, generate_series(0, 2) as i
+  where m.label = '${FIX_MAQ}';
+`);
+
+// Evento de provisionamento: uma máquina inserida direto no banco não tem
+// trilha, e `machine_events` devolveria lista vazia. Inserido com o mesmo tipo
+// que o provisionamento real usa.
+psql(`
+  insert into public.events (machine_id, site_id, kind, severity, message, payload)
+  select m.id, m.site_id, 'machine_provisioned', 'info',
+         'cadastrada pela verificacao ponta a ponta',
+         jsonb_build_object('via', 'verificar-e2e')
+  from public.machines m where m.label = '${FIX_MAQ}';
+`);
+console.log(`cenário próprio: loja ${FIX} com 1 máquina, 3 amostras e 1 evento`);
+
+// =============================================================================
 console.log('\n== API responde com dados ==');
 // =============================================================================
 // Contagem esperada vem do BANCO, não cravada aqui. Cravar "5" fez os testes
@@ -220,6 +277,7 @@ if (temSeed) {
 
 // Alvo do histórico: o do seed quando existe, senão qualquer uma que reporte.
 const alvoHistorico = servidor
+  || maquinas.find((m) => m.label === FIX_MAQ)
   || maquinas.find((m) => m.status === 'online')
   || maquinas[0];
 
@@ -283,37 +341,15 @@ verificar('machine_events devolve a trilha', Array.isArray(eventos) && eventos.l
 // =============================================================================
 console.log('\n== Critério de aceite da Fase 4: XSS ==');
 // =============================================================================
-const PAYLOAD = '<script>alert(1)</script>';
-
-// Máquina PRÓPRIA, criada aqui e removida no fim.
+// Usa a máquina do cenário próprio, criada lá em cima.
 //
 // Antes isto sobrescrevia o hostname do 'PDV 02' do seed, e tinha dois defeitos:
 // o critério de aceite mais importante do projeto deixava de rodar assim que
 // alguém removesse os dados de demonstração — que é uma operação legítima e
 // oferecida na própria interface — e, enquanto rodava, deixava um hostname com
 // `<script>` gravado numa máquina que o operador via no dashboard.
-const ROTULO_XSS = 'XSS-ACEITE-E2E';
-// `where not exists` em vez de `on conflict`: nem toda coluna de código aqui tem
-// restrição de unicidade, e ON CONFLICT sem índice correspondente é erro de
-// execução, não um no-op silencioso.
-psql(`
-  insert into public.brands (code, name)
-  select 'ZZXSS', 'aceite xss'
-  where not exists (select 1 from public.brands where code = 'ZZXSS');
-
-  insert into public.sites (brand_id, code, name)
-  select b.id, 'ZZXSS', 'aceite xss' from public.brands b
-  where b.code = 'ZZXSS'
-    and not exists (select 1 from public.sites where code = 'ZZXSS');
-
-  insert into public.machines (site_id, role_code, label, hostname)
-  select s.id, 'pdv', '${ROTULO_XSS}', '${PAYLOAD}'
-  from public.sites s
-  where s.code = 'ZZXSS'
-    and not exists (select 1 from public.machines where label = '${ROTULO_XSS}');
-
-  update public.machines set hostname = '${PAYLOAD}' where label = '${ROTULO_XSS}';
-`);
+const ROTULO_XSS = FIX_MAQ;
+psql(`update public.machines set hostname = '${PAYLOAD}' where label = '${ROTULO_XSS}';`);
 
 const apos = await get(`/machines_status?select=machine_id,label,hostname&label=eq.${encodeURIComponent(ROTULO_XSS)}`);
 const alvo = apos.find((m) => m.hostname === PAYLOAD);
@@ -389,12 +425,8 @@ console.log('');
 // <script> visivel no dashboard seria confuso, e uma loja "ZZXSS" poluiria os
 // filtros. Removida aqui, e nao no meio, para que as asercoes acima possam
 // consulta-la.
-psql(`
-  delete from public.machines where label = '${ROTULO_XSS}';
-  delete from public.sites  where code = 'ZZXSS';
-  delete from public.brands where code = 'ZZXSS';
-`);
-console.log('  (alvo de aceite de XSS removido)');
+limparFixtureE2E();
+console.log('  (cenario proprio removido)');
 
 if (falhas.length > 0) {
   console.log(`FALHARAM ${falhas.length} de ${ok + falhas.length} verificações:`);
