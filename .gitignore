@@ -41,3 +41,11 @@ desktop.ini
 dashboard/dev-token.json
 dashboard/dev-config.json
 .claude/settings.local.json
+
+# ESTE PROJETO NAO TEM DEPENDENCIA NPM, e isso e deliberado: os testes .mjs
+# importam .ts direto usando a remocao nativa de tipos do Node 22+.
+# Um package.json gerado por `npm init -y` vem com "type": "commonjs" e QUEBRA
+# esses testes ("does not provide an export named ..."). Se algum dia um
+# package.json for realmente necessario, ele PRECISA ter "type": "module".
+package.json
+package-lock.json
