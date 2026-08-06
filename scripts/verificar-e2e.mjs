@@ -167,15 +167,51 @@ verificar('metadados espelhados de machine{} no envelope',
 // =============================================================================
 console.log('\n== Histórico dos gráficos ==');
 // =============================================================================
+// A faixa de 24h só tem pontos se existir amostra nas últimas 24h, e os dados do
+// simulador envelhecem. Amarrar a asserção ao relógio faria o teste falhar
+// conforme a hora em que roda — foi o que aconteceu na primeira versão.
+//
+// Então a asserção é condicional à existência de dado na janela, e o resultado
+// diz explicitamente quando a causa é dado velho.
+const idades = {
+  '24h': 24 * 3600,
+  '7d': 7 * 24 * 3600,
+  '30d': 30 * 24 * 3600,
+};
+
+const maisNova = await get('/metrics?select=time&order=time.desc&limit=1');
+const idadeDado = maisNova.length
+  ? (Date.now() - new Date(maisNova[0].time).getTime()) / 1000
+  : Number.MAX_SAFE_INTEGER;
+
+let algumaFaixaComPontos = false;
+
 for (const faixa of ['24h', '7d', '30d']) {
   const h = await rpc('machine_history', { p_machine_id: servidor.machine_id, p_range: faixa });
-  verificar(`machine_history ${faixa} devolve pontos`, Array.isArray(h) && h.length > 0, `${h?.length} pontos`);
+  const temDadoNaJanela = idadeDado < idades[faixa];
 
-  if (faixa === '24h' && h.length) {
-    verificar('pontos têm cpu_avg numérico', typeof h[0].cpu_avg === 'number', JSON.stringify(h[0]));
-    verificar('pontos vêm em ordem crescente',
-      new Date(h[0].bucket) < new Date(h[h.length - 1].bucket));
+  if (temDadoNaJanela) {
+    verificar(`machine_history ${faixa} devolve pontos`, h.length > 0, `${h.length} pontos`);
+    if (h.length) algumaFaixaComPontos = true;
+  } else {
+    verificar(`machine_history ${faixa} vazia é correto (dado mais novo tem ${Math.round(idadeDado / 3600)}h)`,
+      h.length === 0, `${h.length} pontos`);
   }
+
+  if (h.length > 1) {
+    verificar(`${faixa}: pontos têm cpu_avg numérico`, typeof h[0].cpu_avg === 'number', JSON.stringify(h[0]));
+    verificar(`${faixa}: pontos vêm em ordem crescente`,
+      new Date(h[0].bucket) < new Date(h[h.length - 1].bucket));
+    algumaFaixaComPontos = true;
+  }
+}
+
+// Independente da idade, ALGUMA faixa tem de ter dado — senão a função de
+// histórico está quebrada, e não é questão de dado velho.
+verificar('a função de histórico devolve série em alguma faixa', algumaFaixaComPontos);
+
+if (idadeDado > 3600) {
+  console.log(`        (dado mais novo tem ${Math.round(idadeDado / 3600)}h — rode dev-up.ps1 ou o simulador para renovar)`);
 }
 
 const eventos = await rpc('machine_events', { p_machine_id: servidor.machine_id, p_limit: 10 });

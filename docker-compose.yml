@@ -70,6 +70,10 @@ services:
     restart: unless-stopped
     volumes:
       - ./dashboard:/usr/share/nginx/html:ro
+      # Cache-Control: no-store. Sem esta configuração o navegador guarda o
+      # app.js por conta própria e edições no dashboard simplesmente não
+      # aparecem — sem erro nenhum. Ver o comentário no próprio arquivo.
+      - ./docker/nginx-dashboard.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "127.0.0.1:${WEB_PORT:-8080}:80"
 

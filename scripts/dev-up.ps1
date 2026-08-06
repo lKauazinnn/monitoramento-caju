@@ -361,28 +361,30 @@ if ($devEmail -and $devHash) {
   $devNome = if ($vars['DEV_USER_NAME']) { $vars['DEV_USER_NAME'] } else { '' }
   $devRole = if ($vars['DEV_USER_ROLE']) { $vars['DEV_USER_ROLE'] } else { 'admin' }
 
+  # SQL puro, SEM bloco DO.
+  #
+  # A versao anterior usava `do $do$ ... $do$` e nao funcionava: dentro de um
+  # here-string @"..."@ do PowerShell, escapar o `$` exige backtick, e eu escrevi
+  # `\$do\$` — a barra invertida ia LITERAL para o arquivo e o psql respondia
+  # "invalid command \$do". Dois statements independentes eliminam a necessidade
+  # de dollar-quoting e a classe inteira de erro de escape.
   $r = ExecScript -Nome 'usuario-real.sh' -Conteudo @"
 set -e
 psql -U postgres -q -v ON_ERROR_STOP=1 <<'SQL'
-do \`$do\`$
-declare
-  v_id uuid;
-begin
-  insert into public.app_users (email, password_hash, full_name)
-  values (lower('$devEmail'), '$devHash', '$devNome')
-  on conflict (lower(email)) do update
-    set password_hash = excluded.password_hash,
-        full_name = excluded.full_name,
-        is_active = true,
-        failed_attempts = 0,
-        locked_until = null
-  returning user_id into v_id;
+insert into public.app_users (email, password_hash, full_name)
+values (lower('$devEmail'), '$devHash', '$devNome')
+on conflict (lower(email)) do update
+  set password_hash = excluded.password_hash,
+      full_name = excluded.full_name,
+      is_active = true,
+      failed_attempts = 0,
+      locked_until = null;
 
-  insert into public.user_roles (user_id, role, note)
-  values (v_id, '$devRole', 'login local')
-  on conflict (user_id) do update set role = excluded.role;
-end
-\`$do\`$;
+insert into public.user_roles (user_id, role, note)
+select u.user_id, '$devRole', 'login local'
+from public.app_users u
+where lower(u.email) = lower('$devEmail')
+on conflict (user_id) do update set role = excluded.role;
 SQL
 "@
 

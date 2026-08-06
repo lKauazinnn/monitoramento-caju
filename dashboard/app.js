@@ -98,7 +98,12 @@ const rpc = (nome, args = {}) =>
 // -----------------------------------------------------------------------------
 // Autenticação
 // -----------------------------------------------------------------------------
-const CHAVE_SESSAO = 'monitor.sessao';
+// A chave leva VERSÃO. O fluxo anterior guardava um token vindo de arquivo; uma
+// sessão daquele formato sobrevivendo no navegador faria o dashboard tentar usar
+// um token que já não vale, cair para a tela de login e confundir o diagnóstico.
+// Subir a versão descarta sessões antigas de uma vez, sem depender de o usuário
+// limpar o navegador.
+const CHAVE_SESSAO = 'monitor.sessao.v2';
 
 function salvarSessao(token, usuario) {
   Estado.token = token;
