@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagnóstico do Monitoramento</title>
+
+<!-- =============================================================================
+     PÁGINA DE DIAGNÓSTICO — deliberadamente autocontida
+     =============================================================================
+     Todo o CSS e JS estão AQUI DENTRO, sem nenhum arquivo externo. Isso é
+     essencial: se o problema é o navegador servir uma versão antiga de app.js ou
+     config.js do cache, uma página de diagnóstico que dependesse deles herdaria
+     exatamente a falha que precisa investigar.
+
+     A URL /diagnostico.html também nunca foi visitada antes, então não existe
+     cópia em cache dela.
+     ============================================================================= -->
+
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 20px;
+    background: #0f1115; color: #e6e8ec;
+    font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #9aa3b2; margin: 0 0 20px; font-size: 13px; }
+  .bloco {
+    background: #171a21; border: 1px solid #2a2f3a; border-radius: 8px;
+    padding: 14px 16px; margin-bottom: 12px;
+  }
+  .bloco h2 { font-size: 14px; margin: 0 0 10px; color: #9aa3b2; }
+  .linha {
+    display: grid; grid-template-columns: 26px 1fr; gap: 8px;
+    padding: 5px 0; border-bottom: 1px solid #21252e; align-items: start;
+  }
+  .linha:last-child { border-bottom: 0; }
+  .ok { color: #22c55e; font-weight: 700; }
+  .ruim { color: #ef4444; font-weight: 700; }
+  .aviso { color: #f59e0b; font-weight: 700; }
+  .rot { font-weight: 600; }
+  .det {
+    color: #9aa3b2; font-size: 12px;
+    font-family: ui-monospace, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-all; margin-top: 2px;
+  }
+  button {
+    background: #3b82f6; color: #fff; border: 0; border-radius: 6px;
+    padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+    margin: 4px 6px 4px 0;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.consertar { background: #22c55e; }
+  button.secundaria { background: #2a2f3a; }
+  input {
+    padding: 8px 10px; background: #0f1115; border: 1px solid #2a2f3a;
+    border-radius: 6px; color: #e6e8ec; font-size: 14px; width: 260px;
+    margin: 4px 6px 4px 0;
+  }
+  .veredito { padding: 14px 16px; border-radius: 8px; margin-bottom: 12px; font-size: 15px; }
+  .veredito-ok { background: #14532d; border: 1px solid #22c55e; }
+  .veredito-ruim { background: #3f1d1d; border: 1px solid #ef4444; }
+  code { background: #21252e; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Diagnóstico do Monitoramento</h1>
+<p class="sub">
+  Esta página não usa nenhum arquivo externo, então ela funciona mesmo que o
+  navegador esteja com uma versão antiga do dashboard em cache.
+</p>
+
+<div id="veredito" class="veredito" hidden></div>
+
+<div class="bloco">
+  <h2>Ações</h2>
+  <button id="btn-testar" type="button">Testar de novo</button>
+  <button id="btn-consertar" class="consertar" type="button">
+    Limpar cache e abrir o dashboard
+  </button>
+  <button id="btn-copiar" class="secundaria" type="button">Copiar relatório</button>
+</div>
+
+<div class="bloco">
+  <h2>Testar o login</h2>
+  <input type="email" id="email" placeholder="e-mail" value="kaualarsson@cajupar.com">
+  <input type="password" id="senha" placeholder="senha">
+  <button id="btn-login" type="button">Tentar login</button>
+  <div id="res-login"></div>
+</div>
+
+<div class="bloco">
+  <h2>Resultado</h2>
+  <div id="saida"></div>
+</div>
+
+<script>
+'use strict';
+
+var BUILD_DIAG = '2026-08-06.4';
+var saida = document.getElementById('saida');
+var relatorio = [];
+
+function linha(estado, rotulo, detalhe) {
+  var d = document.createElement('div');
+  d.className = 'linha';
+
+  var ic = document.createElement('span');
+  ic.className = estado === 'ok' ? 'ok' : (estado === 'aviso' ? 'aviso' : 'ruim');
+  ic.textContent = estado === 'ok' ? 'OK' : (estado === 'aviso' ? '!' : 'X');
+  d.appendChild(ic);
+
+  var caixa = document.createElement('div');
+  var r = document.createElement('div');
+  r.className = 'rot';
+  r.textContent = rotulo;
+  caixa.appendChild(r);
+
+  if (detalhe) {
+    var dd = document.createElement('div');
+    dd.className = 'det';
+    dd.textContent = detalhe;
+    caixa.appendChild(dd);
+  }
+
+  d.appendChild(caixa);
+  saida.appendChild(d);
+
+  relatorio.push((estado === 'ok' ? '[OK] ' : estado === 'aviso' ? '[!] ' : '[X] ') +
+                 rotulo + (detalhe ? '\n     ' + detalhe : ''));
+}
+
+function mostrarVeredito(bom, texto) {
+  var v = document.getElementById('veredito');
+  v.className = 'veredito ' + (bom ? 'veredito-ok' : 'veredito-ruim');
+  v.textContent = texto;
+  v.hidden = false;
+}
+
+var API = null;
+
+async function testar() {
+  saida.textContent = '';
+  relatorio = [];
+  document.getElementById('veredito').hidden = true;
+  document.getElementById('btn-testar').disabled = true;
+
+  var problemas = [];
+
+  // ---------------------------------------------------------------------------
+  linha('ok', 'Página de diagnóstico carregou', 'build ' + BUILD_DIAG + '  |  ' + location.href);
+  linha('ok', 'Navegador', navigator.userAgent);
+
+  // ---------------------------------------------------------------------------
+  // dev-config.json — quem diz a porta da API
+  // ---------------------------------------------------------------------------
+  try {
+    var r = await fetch('dev-config.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var cfg = await r.json();
+    API = cfg.restUrl;
+    linha('ok', 'dev-config.json lido', 'API = ' + API);
+  } catch (e) {
+    linha('ruim', 'dev-config.json NÃO pôde ser lido', String(e) +
+      '\nRode: .\\scripts\\dev-up.ps1');
+    problemas.push('dev-config.json ausente');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Qual versão do app.js e do config.js o navegador tem
+  // ---------------------------------------------------------------------------
+  // Sem cache-buster de propósito: quero ver o que o navegador ENTREGARIA ao
+  // dashboard, cache incluído.
+  try {
+    var ra = await fetch('app.js');
+    var ta = await ra.text();
+    var m = /BUILD = '([^']+)'/.exec(ta);
+    var buildApp = m ? m[1] : '(não encontrado)';
+
+    if (buildApp === BUILD_DIAG) {
+      linha('ok', 'app.js está atualizado', 'build ' + buildApp);
+    } else {
+      linha('ruim', 'app.js está DESATUALIZADO no navegador',
+        'app.js = ' + buildApp + '   esperado = ' + BUILD_DIAG +
+        '\nÉ o cache do navegador. Use o botão verde acima.');
+      problemas.push('app.js em cache antigo');
+    }
+  } catch (e) {
+    linha('ruim', 'não foi possível ler app.js', String(e));
+    problemas.push('app.js inacessível');
+  }
+
+  try {
+    var rc = await fetch('config.js');
+    var tc = await rc.text();
+    var mu = /restUrl:\s*'([^']*)'/.exec(tc);
+    var padrao = mu ? mu[1] : '(?)';
+
+    if (padrao === '') {
+      linha('ok', 'config.js está atualizado', 'restUrl padrão vazio (correto)');
+    } else {
+      linha('ruim', 'config.js está DESATUALIZADO no navegador',
+        'restUrl padrão = "' + padrao + '"' +
+        '\nA versão atual traz vazio. Se apontar para a porta 3000, o dashboard ' +
+        'tentaria falar com outro serviço desta máquina.');
+      problemas.push('config.js em cache antigo');
+    }
+  } catch (e) {
+    linha('ruim', 'não foi possível ler config.js', String(e));
+    problemas.push('config.js inacessível');
+  }
+
+  // ---------------------------------------------------------------------------
+  // A API responde?
+  // ---------------------------------------------------------------------------
+  if (API) {
+    try {
+      var ctrl = new AbortController();
+      var t = setTimeout(function () { ctrl.abort(); }, 8000);
+
+      // A sonda é um POST de login com credencial VAZIA.
+      //
+      // Não é GET na raiz (o PostgREST responde 404 ali, com OpenAPI desabilitado)
+      // nem OPTIONS manual (o navegador exige preflight para o próprio OPTIONS e
+      // bloqueia por CORS). Este POST prova três coisas de uma vez: a porta
+      // responde, é PostgREST, e a função local_sign_in existe — que é
+      // exatamente o que o login precisa.
+      var rh = await fetch(API + '/rpc/local_sign_in', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_email: '', p_password: '' }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+
+      var servidor = rh.headers.get('server') || '(sem header Server)';
+      var corpoSonda = await rh.text();
+
+      if (rh.status === 200 && /"ok":\s*false/.test(corpoSonda)) {
+        linha('ok', 'API respondeu e a função de login existe',
+          'HTTP 200  |  Server: ' + servidor +
+          '\ncredencial vazia recusada, como esperado');
+      } else if (/postgrest/i.test(servidor) && rh.status === 404) {
+        linha('ruim', 'é o PostgREST, mas a função local_sign_in NÃO existe',
+          'HTTP 404\nAs migrations não foram aplicadas. Rode: .\\scripts\\dev-up.ps1');
+        problemas.push('migration 0014 não aplicada');
+      } else if (!/postgrest/i.test(servidor)) {
+        linha('ruim', 'a porta responde, mas NÃO é o PostgREST deste projeto',
+          'HTTP ' + rh.status + '  |  Server: ' + servidor +
+          '\nOutro serviço está nessa porta. Rode dev-up.ps1 para escolher outra.' +
+          '\nResposta: ' + corpoSonda.slice(0, 150));
+        problemas.push('porta da API ocupada por outro serviço');
+      } else {
+        linha('aviso', 'API respondeu de forma inesperada',
+          'HTTP ' + rh.status + '  |  Server: ' + servidor +
+          '\n' + corpoSonda.slice(0, 200));
+      }
+    } catch (e) {
+      linha('ruim', 'a API não respondeu', API + '\n' + String(e) +
+        '\nO container está no ar? docker ps');
+      problemas.push('API inalcançável');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sessão guardada
+  // ---------------------------------------------------------------------------
+  try {
+    var chaves = [];
+    for (var i = 0; i < sessionStorage.length; i++) chaves.push(sessionStorage.key(i));
+    linha(chaves.length ? 'aviso' : 'ok',
+      'Sessão no navegador',
+      chaves.length ? 'chaves: ' + chaves.join(', ') : 'nenhuma (limpo)');
+  } catch (e) {
+    linha('aviso', 'sessionStorage bloqueado', String(e));
+  }
+
+  // ---------------------------------------------------------------------------
+  document.getElementById('btn-testar').disabled = false;
+
+  if (problemas.length === 0) {
+    mostrarVeredito(true,
+      'Tudo em ordem. Faça o teste de login abaixo — se ele funcionar aqui, ' +
+      'o dashboard também vai funcionar.');
+  } else {
+    mostrarVeredito(false,
+      'Encontrado: ' + problemas.join(' | ') +
+      (problemas.some(function (p) { return p.indexOf('cache') >= 0; })
+        ? '  →  Clique no botão VERDE acima.'
+        : ''));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Teste de login
+// -----------------------------------------------------------------------------
+document.getElementById('btn-login').addEventListener('click', async function () {
+  var res = document.getElementById('res-login');
+  res.textContent = '';
+
+  if (!API) {
+    var e0 = document.createElement('div');
+    e0.className = 'linha';
+    e0.textContent = 'API desconhecida — rode o teste acima primeiro.';
+    res.appendChild(e0);
+    return;
+  }
+
+  var email = document.getElementById('email').value.trim();
+  var senha = document.getElementById('senha').value;
+  var btn = this;
+  btn.disabled = true;
+  btn.textContent = 'Testando...';
+
+  try {
+    var ctrl = new AbortController();
+    var t = setTimeout(function () { ctrl.abort(); }, 15000);
+
+    var r = await fetch(API + '/rpc/local_sign_in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_email: email, p_password: senha }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(t);
+
+    var texto = await r.text();
+    var corpo = {};
+    try { corpo = JSON.parse(texto); } catch (_) { corpo = { raw: texto }; }
+
+    var d = document.createElement('div');
+    d.className = 'linha';
+
+    var ic = document.createElement('span');
+    var bom = corpo.ok === true && !!corpo.access_token;
+    ic.className = bom ? 'ok' : 'ruim';
+    ic.textContent = bom ? 'OK' : 'X';
+    d.appendChild(ic);
+
+    var cx = document.createElement('div');
+    var rr = document.createElement('div');
+    rr.className = 'rot';
+    rr.textContent = bom
+      ? 'LOGIN FUNCIONOU — usuário: ' + (corpo.user ? corpo.user.full_name : '?')
+      : 'login recusado';
+    cx.appendChild(rr);
+
+    var dd = document.createElement('div');
+    dd.className = 'det';
+    dd.textContent = 'HTTP ' + r.status + '\n' +
+      (bom ? 'token recebido (' + corpo.access_token.length + ' caracteres)'
+           : (corpo.message || texto).slice(0, 300));
+    cx.appendChild(dd);
+
+    d.appendChild(cx);
+    res.appendChild(d);
+
+    if (bom) {
+      mostrarVeredito(true,
+        'O login funciona neste navegador. Clique no botão VERDE para abrir o ' +
+        'dashboard com o cache limpo.');
+    }
+  } catch (e) {
+    var de = document.createElement('div');
+    de.className = 'linha';
+    var ie = document.createElement('span');
+    ie.className = 'ruim';
+    ie.textContent = 'X';
+    de.appendChild(ie);
+    var ce = document.createElement('div');
+    ce.className = 'rot';
+    ce.textContent = 'a requisição de login falhou';
+    var dt = document.createElement('div');
+    dt.className = 'det';
+    dt.textContent = String(e) +
+      '\n\nCausas: container parado, porta errada, ou extensão do navegador ' +
+      'bloqueando a chamada (adblock, antivírus).';
+    ce.appendChild(dt);
+    de.appendChild(ce);
+    res.appendChild(de);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Tentar login';
+  }
+});
+
+// -----------------------------------------------------------------------------
+// Consertar o cache
+// -----------------------------------------------------------------------------
+// fetch(url, {cache:'reload'}) IGNORA a cópia em cache e ATUALIZA a entrada com o
+// que o servidor devolver. É o equivalente programático de um Ctrl+Shift+R
+// aplicado arquivo por arquivo — e é o que permite consertar sem depender de o
+// usuário conhecer o atalho.
+document.getElementById('btn-consertar').addEventListener('click', async function () {
+  var btn = this;
+  btn.disabled = true;
+  btn.textContent = 'Limpando...';
+
+  try { sessionStorage.clear(); } catch (_) { /* bloqueado */ }
+  try { localStorage.clear(); } catch (_) { /* bloqueado */ }
+
+  // Cache API (usado por service workers). Normalmente vazio aqui, mas se
+  // houver, tem de ir também.
+  try {
+    if (window.caches && caches.keys) {
+      var nomes = await caches.keys();
+      for (var i = 0; i < nomes.length; i++) await caches.delete(nomes[i]);
+    }
+  } catch (_) { /* indisponível */ }
+
+  // Remove service workers, que poderiam interceptar e servir versões antigas.
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      var regs = await navigator.serviceWorker.getRegistrations();
+      for (var j = 0; j < regs.length; j++) await regs[j].unregister();
+    }
+  } catch (_) { /* indisponível */ }
+
+  var arquivos = ['index.html', 'app.js', 'config.js', 'styles.css',
+                  'dev-config.json', 'vendor/chart.umd.js'];
+  for (var k = 0; k < arquivos.length; k++) {
+    try { await fetch(arquivos[k], { cache: 'reload' }); } catch (_) { /* segue */ }
+  }
+
+  btn.textContent = 'Abrindo...';
+  // Query nova: uma URL que o navegador nunca viu não pode vir do cache.
+  location.href = 'index.html?v=' + Date.now();
+});
+
+// -----------------------------------------------------------------------------
+document.getElementById('btn-copiar').addEventListener('click', function () {
+  var texto = 'DIAGNOSTICO ' + new Date().toISOString() + '\n' +
+              location.href + '\n\n' + relatorio.join('\n');
+  var btn = this;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(texto).then(function () {
+      btn.textContent = 'Copiado';
+      setTimeout(function () { btn.textContent = 'Copiar relatório'; }, 2000);
+    });
+  } else {
+    window.prompt('Copie o relatório:', texto);
+  }
+});
+
+document.getElementById('btn-testar').addEventListener('click', testar);
+testar();
+</script>
+</body>
+</html>

@@ -300,6 +300,47 @@ try {
   const dados = await js("document.querySelectorAll('#painel-dados dd').length");
   verificar('painel listou os dados da máquina', dados > 8, `${dados} campos`);
 
+  // =========================================================================
+  console.log('\n== Página de diagnóstico ==');
+  // =========================================================================
+  // Testada por último porque navega para fora do dashboard. Ela é a ferramenta
+  // que o operador usa quando o dashboard não abre, então precisa funcionar
+  // exatamente nessa situação — e por isso não depende de app.js nem config.js.
+  erros.length = 0;
+  await cmd('Page.navigate', { url: `${URL_DASH}/diagnostico.html` });
+  await dormir(4000);
+
+  verificar('diagnóstico carregou sem exceção', erros.length === 0, erros.join('\n        '));
+
+  const veredito = await js("document.getElementById('veredito').textContent");
+  verificar('diagnóstico emitiu veredito', (veredito || '').length > 0, veredito);
+  verificar('veredito diz que está tudo em ordem',
+    /ordem/i.test(veredito || ''), veredito);
+
+  const achados = await js(`
+    [...document.querySelectorAll('#saida .linha')]
+      .map(l => l.textContent.replace(/\\s+/g, ' ').trim())
+      .join('\\n')
+  `);
+  console.log((achados || '').split('\n').map((l) => `        ${l}`).join('\n'));
+
+  const ruins = await js("document.querySelectorAll('#saida .ruim').length");
+  verificar('nenhuma verificação vermelha no diagnóstico', ruins === 0, `${ruins} vermelhas`);
+
+  // O botão de login da própria página de diagnóstico.
+  await js(`
+    (() => {
+      document.getElementById('senha').value = ${JSON.stringify(senha)};
+      document.getElementById('btn-login').click();
+      return true;
+    })()
+  `);
+  await dormir(3000);
+
+  const resLogin = await js("document.getElementById('res-login').textContent");
+  verificar('login pela página de diagnóstico funcionou',
+    /LOGIN FUNCIONOU/.test(resLogin || ''), resLogin);
+
   ws.close();
 } catch (e) {
   console.error(`\nERRO NO TESTE: ${e.message}`);
