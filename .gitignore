@@ -50,3 +50,5 @@ dashboard/dev-config.json
 package.json
 package-lock.json
 .simulador.pid
+simulador.log
+simulador.err.log

@@ -596,19 +596,48 @@ if (-not $SemSimulador -and -not $SemAoVivo) {
     }
   }
 
+  # O caminho do script PRECISA vir entre aspas.
+  #
+  # Start-Process junta o -ArgumentList com espacos e nao cita nada. O caminho
+  # deste projeto contem um espaco ("deashboard servidor"), entao sem as aspas o
+  # PowerShell recebia `-File C:\...\deashboard` e morria imediatamente. Como o
+  # processo rodava oculto e sem log, a falha era invisivel: o dev-up dizia que o
+  # simulador estava no ar e, minutos depois, todas as maquinas apareciam offline.
+  $scriptSim = Join-Path $PSScriptRoot 'simular-agentes.ps1'
+  $logSim = Join-Path $repoRoot 'simulador.log'
+  $logErr = Join-Path $repoRoot 'simulador.err.log'
+
   $argsSim = @(
     '-NoProfile', '-ExecutionPolicy', 'Bypass',
-    '-File', (Join-Path $PSScriptRoot 'simular-agentes.ps1'),
+    '-File', "`"$scriptSim`"",
     '-Horas', '0', '-IntervaloSegundos', '60', '-Continuo',
-    '-RestUrl', $restUrl, '-ServiceToken', $tokens.serviceToken
+    '-RestUrl', "`"$restUrl`"", '-ServiceToken', "`"$($tokens.serviceToken)`""
   )
 
+  # Saida em arquivo: processo de segundo plano sem log e um processo que falha em
+  # silencio, e foi exatamente o que aconteceu.
   $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argsSim `
-            -WindowStyle Hidden -PassThru
+            -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $logSim -RedirectStandardError $logErr
 
   $proc.Id | Out-File -FilePath $pidFile -Encoding ascii
-  Ok "simulador ao vivo rodando em segundo plano (PID $($proc.Id)), uma amostra por minuto"
-  Info "para parar: Stop-Process -Id $($proc.Id)"
+
+  # Confirma que ele SOBREVIVEU. Anunciar "esta no ar" sem verificar foi o erro
+  # anterior.
+  Start-Sleep -Seconds 4
+
+  if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {
+    Ok "simulador ao vivo no ar (PID $($proc.Id)), uma amostra por minuto"
+    Info "log: $logSim   |   parar: Stop-Process -Id $($proc.Id)"
+  } else {
+    Write-Host '   AVISO: o simulador ao vivo morreu ao iniciar.' -ForegroundColor Yellow
+    if (Test-Path $logErr) {
+      Get-Content $logErr -Tail 8 | ForEach-Object { Write-Host "     $_" -ForegroundColor Yellow }
+    }
+    Write-Host '   As maquinas vao aparecer offline depois de alguns minutos.' -ForegroundColor Yellow
+    Write-Host '   Rode em primeiro plano para ver o erro:' -ForegroundColor Yellow
+    Write-Host "     .\scripts\simular-agentes.ps1 -Horas 0 -IntervaloSegundos 60 -Continuo -RestUrl $restUrl -ServiceToken <token>" -ForegroundColor DarkGray
+  }
 }
 
 # ---------------------------------------------------------------------------

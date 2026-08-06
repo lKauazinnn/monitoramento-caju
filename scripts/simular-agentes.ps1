@@ -53,6 +53,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
+# UTF-8 nos dois sentidos. Sem isto, "Estação gerência" volta do banco corrompida
+# e qualquer coisa que dependa do texto (inclusive a comparacao de label) quebra.
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$env:PGCLIENTENCODING = 'UTF8'
+
 function Sql {
   param([string] $Consulta)
   $r = docker exec $Container psql -U postgres -q -t -A -c $Consulta
@@ -78,9 +84,16 @@ foreach ($linha in $linhas) {
   if ([string]::IsNullOrWhiteSpace($linha)) { continue }
   $p = $linha.Trim().Split('|')
 
-  # p_rotate => true para ser idempotente: reexecutar o simulador nao explode
-  # com "maquina ja possui token ativo".
-  $t = Sql "select token from public.provision_machine('$($p[1])', '$($p[2])', '$($p[3])', 'simulador', true);"
+  # issue_agent_token e nao provision_machine, e a diferenca importa:
+  #
+  # provision_machine CRIA a maquina quando o label nao existe. Como o label
+  # trafega por PowerShell -> docker -> psql, um acento corrompido em
+  # "Estação gerência" fazia o banco ganhar uma maquina fantasma a cada execucao,
+  # com historico proprio e contando nos totais do dashboard.
+  #
+  # Aqui a identidade e o GUID, que e ASCII e nao se corrompe, e a funcao FALHA se
+  # a maquina nao existir em vez de criar.
+  $t = Sql "select token from public.issue_agent_token('$($p[0])'::uuid, 'simulador');"
   $token = ($t | Where-Object { $_ -match '^mon_' } | Select-Object -First 1)
 
   if ([string]::IsNullOrWhiteSpace($token)) { throw "nao obtive token para $($p[1])/$($p[2])" }
