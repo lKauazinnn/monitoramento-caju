@@ -343,16 +343,41 @@ Ok (($r.Saida | Where-Object { $_ -match 'migrations' } | Select-Object -Last 1)
 # ---------------------------------------------------------------------------
 Passo 'Seed'
 # ---------------------------------------------------------------------------
+# NAO RESSUSCITA O QUE O OPERADOR REMOVEU.
+#
+# O dashboard oferece "Remover dados de demonstracao". Se o dev-up reaplicasse o
+# seed cegamente, as lojas de exemplo voltariam na proxima subida — e remover
+# algo que volta sozinho e pior que nao ter o botao, porque a pessoa deixa de
+# confiar no que a tela diz que fez.
+#
+# O criterio: ha maquina cadastrada, mas nenhuma do seed. Isso so acontece
+# quando alguem removeu a demonstracao de proposito. Banco novo (zero maquinas)
+# recebe o seed normalmente.
 $r = ExecScript -Nome 'seed.sh' -Conteudo @'
 set -e
+total=$(psql -U postgres -qtA -c "select count(*) from public.machines;")
+demo=$(psql -U postgres -qtA -c "select count(*) from public.machines where id::text like 'bbbbbbbb-%';")
+
+if [ "$total" -gt 0 ] && [ "$demo" -eq 0 ]; then
+  echo "PULADO: a demonstracao foi removida e ha $total maquina(s) real(is)"
+  exit 0
+fi
+
 psql -U postgres -q -v ON_ERROR_STOP=1 -f /work/s/seed_demo.sql
+echo "APLICADO"
 '@
 
 if ($r.Codigo -ne 0) {
   $r.Saida | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
   exit 1
 }
-Ok '2 marcas, 3 lojas, 5 maquinas'
+
+if (($r.Saida -join ' ') -match 'PULADO') {
+  Info ($r.Saida | Where-Object { $_ -match 'PULADO' } | Select-Object -First 1)
+  Info 'para trazer a demonstracao de volta: docker compose down -v  (apaga TUDO)'
+} else {
+  Ok '2 marcas, 3 lojas, 5 maquinas'
+}
 
 # ---------------------------------------------------------------------------
 Passo 'Recarregando o cache de schema da API'

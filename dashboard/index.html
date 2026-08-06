@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=14" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=15" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=14">
+  <link rel="stylesheet" href="styles.css?v=15">
 </head>
 <body>
 
@@ -143,6 +143,17 @@
         </button>
       </div>
     </header>
+
+    <!-- Faixa de dados de demonstração.
+         Só aparece quando eles existem. Sem isso, as lojas do seed convivem com
+         as reais para sempre e ninguém sabe quais são quais. -->
+    <div id="faixa-demo" class="faixa-demo" hidden>
+      <div class="fd-texto">
+        <strong id="fd-titulo">—</strong>
+        <span class="fd-sub">Servem para conhecer a tela. Podem sair quando as lojas reais entrarem.</span>
+      </div>
+      <button id="btn-remover-demo" class="btn-perigo" type="button">Remover dados de demonstração</button>
+    </div>
 
     <!-- ------------------------------------------------------------- KPIs -->
     <section class="tiras" aria-label="Resumo da frota">
@@ -285,6 +296,18 @@
 
     <h3>Eventos recentes</h3>
     <ul id="painel-eventos" class="eventos"></ul>
+
+    <!-- Zona destrutiva, no fim e separada: remover leva o histórico junto, e
+         não pode ficar ao lado de um botão de uso rotineiro. -->
+    <section id="zona-perigo" class="zona-perigo" hidden>
+      <h3>Remover esta máquina</h3>
+      <p class="dica">
+        Apaga o cadastro e <strong>todo o histórico</strong> dela: métricas, discos,
+        serviços, tokens e eventos. Não há como desfazer. Para apenas parar de
+        monitorar sem perder o histórico, desative a máquina.
+      </p>
+      <button id="btn-remover-maquina" class="btn-perigo largo" type="button">Remover máquina</button>
+    </section>
   </div>
 </aside>
 
@@ -377,7 +400,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=14"></script>
-<script src="dash.js?v=14"></script>
+<script src="config.js?v=15"></script>
+<script src="dash.js?v=15"></script>
 </body>
 </html>

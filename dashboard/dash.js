@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.14-noc';
+const BUILD = '2026-08-06.15-remover';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -82,9 +82,11 @@ const Estado = {
   token: null,
   usuario: null,
   maquinas: [],
+  lojas: [],
   resumo: null,
   filtros: { marca: '', loja: '', status: '', busca: '' },
   maquinaAberta: null,
+  ehAdmin: false,
   faixa: '24h',        // faixa do painel de detalhe
   faixaFrota: '24h',   // faixa do gráfico de carga da frota
   modo: 'lojas',       // 'lojas' (cartão por loja) ou 'maquinas' (cartão por PC)
@@ -277,19 +279,25 @@ async function descobrirApiLocal() {
 // -----------------------------------------------------------------------------
 async function carregar() {
   try {
-    const [maquinas, resumo] = await Promise.all([
+    const [maquinas, resumo, lojas] = await Promise.all([
       api('/machines_status?select=*&order=site_code.asc,label.asc'),
       rpc('dashboard_summary'),
+      // As lojas vêm de fonte PRÓPRIA, e não deduzidas das máquinas: uma loja
+      // sem nenhuma máquina não apareceria em lugar nenhum da tela, e loja
+      // invisível é loja que ninguém consegue remover nem cadastrar PC dentro.
+      api('/sites_status?select=site_code,site_name,brand_code,brand_name,machines_total&order=site_code.asc'),
     ]);
 
     Estado.maquinas = maquinas || [];
     Estado.resumo = resumo || {};
+    Estado.lojas = lojas || [];
 
     marcarConexao(true);
     desenharResumo();
     desenharFila();
     preencherFiltros();
     desenharMaquinas();
+    verificarDadosDemo();
 
     txt($('rodape-atualizacao'), `atualizado ${new Date().toLocaleTimeString('pt-BR')}`);
   } catch (e) {
@@ -996,6 +1004,25 @@ function desenharCartoesDeLoja(conteudo, lista) {
     porLoja.get(chave).maquinas.push(m);
   }
 
+  // Lojas VAZIAS entram aqui. Sem isto elas somem da tela — e sumir não é o
+  // mesmo que não existir: a loja continua no banco, contando nos filtros, e sem
+  // nenhum caminho na interface para removê-la ou cadastrar um PC nela.
+  //
+  // Só quando não há filtro de status ou busca: se o operador pediu "offline",
+  // uma loja sem máquina nenhuma não é resposta para a pergunta que ele fez.
+  const semFiltroDeMaquina = !Estado.filtros.status && !Estado.filtros.busca.trim();
+
+  if (semFiltroDeMaquina) {
+    for (const s of Estado.lojas) {
+      if (porLoja.has(s.site_code)) continue;
+      if (Estado.filtros.marca && s.brand_code !== Estado.filtros.marca) continue;
+      if (Estado.filtros.loja && s.site_code !== Estado.filtros.loja) continue;
+      porLoja.set(s.site_code, {
+        code: s.site_code, nome: s.site_name, marca: s.brand_name, maquinas: [],
+      });
+    }
+  }
+
   const lojas = [...porLoja.values()];
 
   // Ordena por GRAVIDADE, não por código: numa tela com trinta lojas, a que está
@@ -1022,7 +1049,8 @@ function cartaoLoja(loja) {
 
   let situacao = 'estavel';
   let rotulo = 'estável';
-  if (offline > 0) { situacao = 'incidente'; rotulo = 'incidente'; }
+  if (loja.maquinas.length === 0) { situacao = 'parada'; rotulo = 'sem máquinas'; }
+  else if (offline > 0) { situacao = 'incidente'; rotulo = 'incidente'; }
   else if (degradado > 0) { situacao = 'atencao'; rotulo = 'atenção'; }
   else if (online === 0) { situacao = 'parada'; rotulo = 'sem dados'; }
 
@@ -1033,7 +1061,19 @@ function cartaoLoja(loja) {
   ident.appendChild(el('div', 'cl-nome', loja.nome || loja.code));
   ident.appendChild(el('p', 'cl-meta', `${loja.marca || 'sem marca'} · ${loja.code}`));
   cab.appendChild(ident);
-  cab.appendChild(el('span', `cl-selo cl-selo-${situacao}`, rotulo));
+
+  const acoes = el('div', 'cl-cab-acoes');
+  acoes.appendChild(el('span', `cl-selo cl-selo-${situacao}`, rotulo));
+
+  const lixeira = el('button', 'cl-remover');
+  lixeira.type = 'button';
+  lixeira.title = `Remover a loja ${loja.code} e as ${loja.maquinas.length} máquina(s) dela`;
+  lixeira.setAttribute('aria-label', lixeira.title);
+  lixeira.appendChild(iconeLixeira());
+  armarLixeira(lixeira, () => removerLoja(loja));
+  acoes.appendChild(lixeira);
+
+  cab.appendChild(acoes);
   c.appendChild(cab);
 
   // ------------------------------------------------------------- heatmap
@@ -1080,11 +1120,163 @@ function cartaoLoja(loja) {
   return c;
 }
 
+/** Lixeira em SVG por createElementNS: `innerHTML` abriria a porta da regra 7. */
+function iconeLixeira() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  for (const d of ['M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 14H6L5 6', 'M10 11v6', 'M14 11v6']) {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+
+/**
+ * Mesma ideia do armarPerigo, para um botão que é só ícone: o primeiro clique
+ * troca a lixeira por um "×" sólido, o segundo remove.
+ */
+function armarLixeira(botao, acao) {
+  let temporizador = null;
+
+  const desarmar = () => {
+    clearTimeout(temporizador);
+    temporizador = null;
+    botao.classList.remove('armado');
+    limpar(botao);
+    botao.appendChild(iconeLixeira());
+  };
+
+  botao.addEventListener('click', async (ev) => {
+    ev.stopPropagation();
+
+    if (!temporizador) {
+      botao.classList.add('armado');
+      limpar(botao);
+      botao.appendChild(document.createTextNode('×'));
+      temporizador = setTimeout(desarmar, ESPERA_CONFIRMA_MS);
+      return;
+    }
+
+    desarmar();
+    botao.disabled = true;
+    try { await acao(); } catch (e) { brinde(e.message, true); } finally { botao.disabled = false; }
+  });
+}
+
 function celula(rotulo, valor, classe) {
   const d = el('div', 'cel');
   d.appendChild(el('span', 'cel-rot', rotulo));
   d.appendChild(el('span', `cel-val${classe ? ` ${classe}` : ''}`, valor));
   return d;
+}
+
+// -----------------------------------------------------------------------------
+// Remoção
+// -----------------------------------------------------------------------------
+// CONFIRMAÇÃO EM DOIS CLIQUES, e não `confirm()` do navegador.
+//
+// O diálogo nativo é fácil de dispensar no piloto automático, some da tela sem
+// deixar rastro e trava a página inteira. Aqui o botão vira "Confirmar" em
+// vermelho sólido, pulsando, e desarma sozinho em 5 segundos — quem não quis
+// remover só precisa não clicar de novo.
+const ESPERA_CONFIRMA_MS = 5000;
+
+/**
+ * Transforma um botão em botão de duas etapas.
+ * A ação só roda no segundo clique, e o rótulo diz exatamente o que vai sumir.
+ */
+function armarPerigo(botao, rotuloConfirma, acao) {
+  const original = botao.textContent;
+  let temporizador = null;
+
+  const desarmar = () => {
+    clearTimeout(temporizador);
+    temporizador = null;
+    botao.classList.remove('armado');
+    txt(botao, original);
+  };
+
+  botao.addEventListener('click', async () => {
+    if (!temporizador) {
+      botao.classList.add('armado');
+      txt(botao, rotuloConfirma);
+      temporizador = setTimeout(desarmar, ESPERA_CONFIRMA_MS);
+      return;
+    }
+
+    desarmar();
+    botao.disabled = true;
+    try {
+      await acao();
+    } catch (e) {
+      brinde(e.message, true);
+    } finally {
+      botao.disabled = false;
+    }
+  });
+
+  return desarmar;
+}
+
+async function removerMaquinaAberta() {
+  const m = Estado.maquinaAberta;
+  if (!m) return;
+
+  const r = await rpc('remover_maquina_ui', { p_machine_id: m.machine_id });
+  fecharPainel();
+  brinde(`${r.label} removida (${r.amostras_removidas} amostra(s) apagadas).`);
+  await carregar();
+}
+
+async function removerLoja(loja) {
+  const qtd = loja.maquinas.length;
+  const r = await rpc('remover_loja_ui', { p_site_code: loja.code, p_com_maquinas: true });
+  brinde(`Loja ${r.site_code} removida com ${r.maquinas_removidas} máquina(s).`);
+  if (qtd && Estado.maquinaAberta
+      && loja.maquinas.some((x) => x.machine_id === Estado.maquinaAberta.machine_id)) {
+    fecharPainel();
+  }
+  await carregar();
+}
+
+async function removerDemo() {
+  const r = await rpc('remover_dados_demo');
+  if (r.nada_a_remover) {
+    brinde('Não havia dados de demonstração.');
+  } else {
+    brinde(`Demonstração removida: ${r.maquinas} máquina(s), ${r.lojas} loja(s).`);
+  }
+  await carregar();
+}
+
+/** Mostra a faixa de demonstração só quando ela existe, e só para admin. */
+async function verificarDadosDemo() {
+  const faixa = $('faixa-demo');
+  try {
+    const d = await rpc('tem_dados_demo');
+
+    // Aproveita a mesma resposta para saber o papel: é o dado que decide se a
+    // zona de remoção do painel aparece, e ele precisa estar pronto ANTES de o
+    // operador abrir a primeira máquina.
+    Estado.ehAdmin = d.is_admin === true;
+
+    const tem = (d.maquinas > 0 || d.lojas > 0) && d.is_admin === true;
+    faixa.hidden = !tem;
+    if (tem) {
+      txt($('fd-titulo'),
+        `${d.maquinas} máquina(s) e ${d.lojas} loja(s) são de demonstração`);
+    }
+  } catch (_) {
+    // Nunca esconde a frota por causa disto: é informação secundária.
+    faixa.hidden = true;
+  }
 }
 
 /** Reaplica filtros e redesenha. Um ponto só, para vista, select e busca. */
@@ -1190,6 +1382,10 @@ async function abrirPainel(m) {
     dl.appendChild(el('dt', null, rot));
     dl.appendChild(el('dd', null, val));
   }
+
+  // A zona de remoção só existe para quem pode remover. Mostrar um botão que
+  // vai responder "apenas administradores" é convidar para a frustração.
+  $('zona-perigo').hidden = Estado.ehAdmin !== true;
 
   $('painel-fundo').hidden = false;
   $('painel').hidden = false;
@@ -1655,6 +1851,10 @@ function ligarEventos() {
   }
 
   $('btn-tema').addEventListener('click', () => trocarTema());
+
+  // Remoção: dois cliques, e o rótulo do segundo diz o que vai sumir.
+  armarPerigo($('btn-remover-demo'), 'Confirmar remoção', removerDemo);
+  armarPerigo($('btn-remover-maquina'), 'Confirmar: apagar tudo', removerMaquinaAberta);
 
   // "/" foca a busca, como em toda ferramenta de operação. Não sequestra a tecla
   // quando o foco já está num campo — senão seria impossível digitar uma barra.

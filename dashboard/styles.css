@@ -33,6 +33,11 @@
   --grid:    rgba(255, 255, 255, .024);
   --chrome:  rgba(9, 12, 19, .78);
 
+  /* Superficie OPACA, para o que o sistema operacional desenha por conta —
+     a lista suspensa de um <select>. Ela nao compoe com o fundo da pagina: uma
+     cor com alfa vira quase-branco sobre o popup do Windows, e o texto some. */
+  --pop:     #151922;
+
   --r-p: 8px;
   --r-m: 12px;
   --r-g: 16px;
@@ -65,7 +70,19 @@ html[data-tema="light"] {
   --sh-alta: 0 20px 48px rgba(15, 23, 42, .18);
   --grid:    rgba(15, 23, 42, .04);
   --chrome:  rgba(255, 255, 255, .82);
+  --pop:     #ffffff;
 }
+
+/* A lista suspensa do <select> e desenhada pelo sistema, nao pela pagina: ela
+   ignora backdrop-filter e nao compoe alfa com o que esta atras. Sem cor OPACA
+   aqui, as opcoes ficavam cinza-escuro sobre cinza-escuro e so a selecionada
+   (que o Windows pinta de azul) era legivel. */
+select option {
+  background-color: var(--pop);
+  color: var(--fg);
+}
+
+select option:checked { font-weight: 600; }
 
 * { box-sizing: border-box; }
 
@@ -848,6 +865,84 @@ input::placeholder { color: var(--fg3); }
   border-radius: var(--r-p);
   word-break: break-word;
 }
+
+/* =========================================================== destrutivo === */
+/* Vermelho contornado, nao preenchido: preenchido competiria com o "+ Adicionar
+   PC" e um botao que apaga historico nao pode disputar atencao com um de uso
+   rotineiro. So fica solido quando ARMADO, no segundo clique. */
+.btn-perigo {
+  padding: 7px 13px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--crit);
+  background: color-mix(in srgb, var(--crit) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--crit) 34%, transparent);
+  transition: background .12s, color .12s;
+}
+
+.btn-perigo:hover { background: color-mix(in srgb, var(--crit) 18%, transparent); }
+.btn-perigo.largo { width: 100%; padding: 11px; font-size: 13px; }
+.btn-perigo:disabled { opacity: .55; cursor: default; }
+
+.btn-perigo.armado {
+  background: var(--crit);
+  color: #fff;
+  border-color: var(--crit);
+  animation: pulseDot 1.1s ease-in-out infinite;
+}
+
+.faixa-demo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 22px 0;
+  padding: 11px 15px;
+  border-radius: var(--r-m);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+}
+
+.fd-texto { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.fd-texto strong { font-size: 12.5px; color: var(--warn); }
+.fd-sub { font-size: 10.5px; color: var(--fg2); }
+.faixa-demo .btn-perigo { margin-left: auto; }
+
+.zona-perigo {
+  margin-top: 30px;
+  padding: 14px 15px;
+  border-radius: var(--r-m);
+  border: 1px solid color-mix(in srgb, var(--crit) 26%, transparent);
+  background: color-mix(in srgb, var(--crit) 6%, transparent);
+}
+
+.zona-perigo h3 { margin: 0 0 6px; color: var(--crit); font-family: var(--fonte); font-size: 12.5px; letter-spacing: 0; text-transform: none; }
+.zona-perigo .dica { margin-bottom: 4px; }
+
+/* Botao de remover no cartao de loja: so aparece no hover ou com foco pelo
+   teclado, para nao poluir uma grade de trinta lojas com trinta lixeiras. */
+.cl-remover {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--fg3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s, color .12s, background .12s;
+}
+
+.cartao-loja:hover .cl-remover,
+.cl-remover:focus-visible { opacity: 1; }
+.cl-remover:hover { color: var(--crit); background: color-mix(in srgb, var(--crit) 14%, transparent); }
+.cl-remover.armado { opacity: 1; color: #fff; background: var(--crit); border-color: var(--crit); }
+.cl-remover svg { width: 13px; height: 13px; }
+.cl-cab-acoes { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 
 /* ============================================================== painel === */
 .cortina { position: fixed; inset: 0; background: rgba(3, 5, 9, .62); backdrop-filter: blur(2px); z-index: 40; }

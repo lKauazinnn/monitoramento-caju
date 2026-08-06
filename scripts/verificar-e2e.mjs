@@ -119,6 +119,16 @@ console.log('\n== API responde com dados ==');
 // legítimo virando falso alarme.
 const totalNoBanco = Number(psql('select count(*) from public.machines where is_active;'));
 
+// O seed de demonstracao pode ter sido removido pela interface — e remove-lo e
+// uma operacao oferecida no dashboard, nao um defeito. As asercoes que descrevem
+// AQUELE cenario passam a ser condicionais.
+const temCenarioDemo = Number(psql(
+  "select count(*) from public.machines where id::text like 'bbbbbbbb-%';")) > 0;
+
+if (!temCenarioDemo) {
+  console.log('        sem dados de demonstração — asserções daquele cenário serão adaptadas');
+}
+
 const resumo = await rpc('dashboard_summary');
 verificar('dashboard_summary bate com a contagem do banco',
   resumo.machines_total === totalNoBanco,
@@ -132,7 +142,16 @@ verificar('todo estado é coberto (online+offline+nunca+desativada = total)',
   somaEstados === resumo.machines_total,
   `${somaEstados} != ${resumo.machines_total}`);
 
-verificar('há máquina offline (PDV 02 mudo há 3h)', resumo.machines_offline > 0, `offline=${resumo.machines_offline}`);
+// Depende do cenario de demonstracao. Sem ele, a asercao correta e outra: os
+// contadores tem de ser coerentes com o que ha, e nao "tem de haver problema".
+if (temCenarioDemo) {
+  verificar('há máquina offline (PDV 02 mudo há 3h)', resumo.machines_offline > 0, `offline=${resumo.machines_offline}`);
+} else {
+  verificar('contador de offline é um número coerente',
+    Number.isInteger(resumo.machines_offline) && resumo.machines_offline >= 0
+      && resumo.machines_offline <= resumo.machines_total,
+    `offline=${resumo.machines_offline} de ${resumo.machines_total}`);
+}
 
 // "Online" depende de quão recente é o último dado, e os dados do simulador
 // envelhecem. Amarrar a asserção ao relógio faria o teste passar ou falhar
@@ -153,23 +172,56 @@ if (idadeMin < janela) {
     `online=${resumo.machines_online} com dado de ${idadeMin}s`);
   console.log('        (para ver máquinas online, rode dev-up.ps1 ou o simulador com -Continuo)');
 }
-verificar('disco crítico detectado (BSB-002)', resumo.disk_critical > 0, `disk_critical=${resumo.disk_critical}`);
-verificar('serviço parado detectado (Spooler do PDV 01)', resumo.services_down > 0, `services_down=${resumo.services_down}`);
+if (temCenarioDemo) {
+  verificar('disco crítico detectado (BSB-002)', resumo.disk_critical > 0, `disk_critical=${resumo.disk_critical}`);
+  verificar('serviço parado detectado (Spooler do PDV 01)', resumo.services_down > 0, `services_down=${resumo.services_down}`);
+} else {
+  verificar('contadores de disco e serviço são coerentes',
+    resumo.disk_critical >= 0 && resumo.services_down >= 0
+      && resumo.disk_critical <= resumo.machines_total,
+    `disco=${resumo.disk_critical} servicos=${resumo.services_down}`);
+}
 
 const maquinas = await get('/machines_status?select=*&order=site_code.asc,label.asc');
 verificar('machines_status devolve uma linha por máquina',
   maquinas.length === totalNoBanco, `${maquinas.length} linhas, ${totalNoBanco} máquinas`);
 
-const comCpu = maquinas.filter((m) => m.cpu_pct !== null);
-verificar('máquinas online têm CPU preenchida', comCpu.length >= 4, `${comCpu.length} com cpu`);
-
-const comDisco = maquinas.filter((m) => m.disk_min_free_pct !== null);
-verificar('disco chegou pela ingestão', comDisco.length >= 4, `${comDisco.length} com disco`);
-
+// As contagens abaixo dependem do SEED de demonstração, que o operador pode ter
+// removido pela interface — e removê-lo é uma operação legítima, não um defeito.
+// Amarrar o teste a "pelo menos 4 máquinas" fazia o suíte explodir com
+// `Cannot read properties of undefined` justamente depois de o dashboard fazer
+// o que foi pedido. As asserções passam a ser condicionais, e dizem em voz alta
+// quando foram puladas.
 const servidor = maquinas.find((m) => m.label === 'Servidor de loja');
-verificar('metadados espelhados de machine{} no envelope',
-  servidor?.os_arch === '64 bits' && servidor?.cpu_cores === 4,
-  `os_arch=${servidor?.os_arch} cores=${servidor?.cpu_cores}`);
+const temSeed = servidor !== undefined;
+
+if (!temSeed) {
+  console.log('        seed de demonstração ausente — verificações que dependem dele foram PULADAS');
+  console.log('        (recrie com: .\\scripts\\dev-up.ps1)');
+}
+
+const comCpu = maquinas.filter((m) => m.cpu_pct !== null);
+const comDisco = maquinas.filter((m) => m.disk_min_free_pct !== null);
+
+if (temSeed) {
+  verificar('máquinas online têm CPU preenchida', comCpu.length >= 4, `${comCpu.length} com cpu`);
+  verificar('disco chegou pela ingestão', comDisco.length >= 4, `${comDisco.length} com disco`);
+  verificar('metadados espelhados de machine{} no envelope',
+    servidor.os_arch === '64 bits' && servidor.cpu_cores === 4,
+    `os_arch=${servidor.os_arch} cores=${servidor.cpu_cores}`);
+} else {
+  // Mesmo sem seed, o que existir tem de estar coerente: se há máquina
+  // reportando, ela precisa ter CPU. Isto não depende de quantas são.
+  const reportando = maquinas.filter((m) => m.status === 'online');
+  verificar('toda máquina online tem CPU preenchida',
+    reportando.every((m) => m.cpu_pct !== null),
+    `${reportando.length} online, ${comCpu.length} com cpu`);
+}
+
+// Alvo do histórico: o do seed quando existe, senão qualquer uma que reporte.
+const alvoHistorico = servidor
+  || maquinas.find((m) => m.status === 'online')
+  || maquinas[0];
 
 // =============================================================================
 console.log('\n== Histórico dos gráficos ==');
@@ -191,10 +243,14 @@ const idadeDado = maisNova.length
   ? (Date.now() - new Date(maisNova[0].time).getTime()) / 1000
   : Number.MAX_SAFE_INTEGER;
 
+if (!alvoHistorico) {
+  console.log('        nenhuma maquina no banco - historico nao verificavel');
+}
+
 let algumaFaixaComPontos = false;
 
-for (const faixa of ['24h', '7d', '30d']) {
-  const h = await rpc('machine_history', { p_machine_id: servidor.machine_id, p_range: faixa });
+for (const faixa of (alvoHistorico ? ['24h', '7d', '30d'] : [])) {
+  const h = await rpc('machine_history', { p_machine_id: alvoHistorico.machine_id, p_range: faixa });
   const temDadoNaJanela = idadeDado < idades[faixa];
 
   if (temDadoNaJanela) {
@@ -221,16 +277,45 @@ if (idadeDado > 3600) {
   console.log(`        (dado mais novo tem ${Math.round(idadeDado / 3600)}h — rode dev-up.ps1 ou o simulador para renovar)`);
 }
 
-const eventos = await rpc('machine_events', { p_machine_id: servidor.machine_id, p_limit: 10 });
+const eventos = await rpc('machine_events', { p_machine_id: alvoHistorico.machine_id, p_limit: 10 });
 verificar('machine_events devolve a trilha', Array.isArray(eventos) && eventos.length > 0, `${eventos?.length} eventos`);
 
 // =============================================================================
 console.log('\n== Critério de aceite da Fase 4: XSS ==');
 // =============================================================================
 const PAYLOAD = '<script>alert(1)</script>';
-psql(`update public.machines set hostname = '${PAYLOAD}' where label = 'PDV 02';`);
 
-const apos = await get('/machines_status?select=machine_id,label,hostname&label=eq.PDV%2002');
+// Máquina PRÓPRIA, criada aqui e removida no fim.
+//
+// Antes isto sobrescrevia o hostname do 'PDV 02' do seed, e tinha dois defeitos:
+// o critério de aceite mais importante do projeto deixava de rodar assim que
+// alguém removesse os dados de demonstração — que é uma operação legítima e
+// oferecida na própria interface — e, enquanto rodava, deixava um hostname com
+// `<script>` gravado numa máquina que o operador via no dashboard.
+const ROTULO_XSS = 'XSS-ACEITE-E2E';
+// `where not exists` em vez de `on conflict`: nem toda coluna de código aqui tem
+// restrição de unicidade, e ON CONFLICT sem índice correspondente é erro de
+// execução, não um no-op silencioso.
+psql(`
+  insert into public.brands (code, name)
+  select 'ZZXSS', 'aceite xss'
+  where not exists (select 1 from public.brands where code = 'ZZXSS');
+
+  insert into public.sites (brand_id, code, name)
+  select b.id, 'ZZXSS', 'aceite xss' from public.brands b
+  where b.code = 'ZZXSS'
+    and not exists (select 1 from public.sites where code = 'ZZXSS');
+
+  insert into public.machines (site_id, role_code, label, hostname)
+  select s.id, 'pdv', '${ROTULO_XSS}', '${PAYLOAD}'
+  from public.sites s
+  where s.code = 'ZZXSS'
+    and not exists (select 1 from public.machines where label = '${ROTULO_XSS}');
+
+  update public.machines set hostname = '${PAYLOAD}' where label = '${ROTULO_XSS}';
+`);
+
+const apos = await get(`/machines_status?select=machine_id,label,hostname&label=eq.${encodeURIComponent(ROTULO_XSS)}`);
 const alvo = apos.find((m) => m.hostname === PAYLOAD);
 
 verificar('banco guarda o payload literalmente (25 caracteres)',
@@ -296,10 +381,21 @@ console.log('\n== Idempotência pelo HTTP (regra 13) ==');
 const total1 = Number(psql("select count(*) from public.metrics where agent_version = 'sim-1.0.0';"));
 
 // Reenvia o lote mais recente de uma máquina, exatamente igual.
-const ultima = await get(`/metrics?select=*&machine_id=eq.${servidor.machine_id}&order=time.desc&limit=3`);
+const ultima = await get(`/metrics?select=*&machine_id=eq.${alvoHistorico.machine_id}&order=time.desc&limit=3`);
 verificar('leitura direta de metrics funciona para o dashboard', ultima.length === 3, `${ultima.length} linhas`);
 
 console.log('');
+// A maquina de aceite de XSS nao pode sobreviver ao teste: um hostname com
+// <script> visivel no dashboard seria confuso, e uma loja "ZZXSS" poluiria os
+// filtros. Removida aqui, e nao no meio, para que as asercoes acima possam
+// consulta-la.
+psql(`
+  delete from public.machines where label = '${ROTULO_XSS}';
+  delete from public.sites  where code = 'ZZXSS';
+  delete from public.brands where code = 'ZZXSS';
+`);
+console.log('  (alvo de aceite de XSS removido)');
+
 if (falhas.length > 0) {
   console.log(`FALHARAM ${falhas.length} de ${ok + falhas.length} verificações:`);
   for (const f of falhas) console.log(`  - ${f}`);
