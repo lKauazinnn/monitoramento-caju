@@ -88,7 +88,7 @@ const psql = (sql) =>
 // =============================================================================
 console.log('== Arquivos servidos pelo nginx ==');
 // =============================================================================
-for (const arquivo of ['/', '/app.js', '/styles.css', '/config.js', '/vendor/chart.umd.js', '/dev-config.json']) {
+for (const arquivo of ['/', '/dash.js', '/styles.css', '/config.js', '/vendor/chart.umd.js', '/dev-config.json']) {
   const r = await fetch(`${WEB}${arquivo}`);
   verificar(`GET ${arquivo}`, r.ok, `HTTP ${r.status}`);
 }
@@ -96,19 +96,19 @@ for (const arquivo of ['/', '/app.js', '/styles.css', '/config.js', '/vendor/cha
 // =============================================================================
 console.log('\n== Regra 7: zero innerHTML com dado do banco ==');
 // =============================================================================
-const appJs = readFileSync(join(raiz, 'dashboard', 'app.js'), 'utf8');
+const appJs = readFileSync(join(raiz, 'dashboard', 'dash.js'), 'utf8');
 
-verificar('app.js não usa innerHTML',
+verificar('dash.js não usa innerHTML',
   !/\.innerHTML\s*=/.test(appJs),
   'encontrado ".innerHTML ="');
 
-verificar('app.js não usa outerHTML nem insertAdjacentHTML',
+verificar('dash.js não usa outerHTML nem insertAdjacentHTML',
   !/\.outerHTML\s*=|insertAdjacentHTML/.test(appJs));
 
-verificar('app.js não usa document.write',
+verificar('dash.js não usa document.write',
   !/document\.write/.test(appJs));
 
-verificar('app.js não usa eval nem new Function',
+verificar('dash.js não usa eval nem new Function',
   !/\beval\s*\(|new\s+Function\s*\(/.test(appJs));
 
 // =============================================================================
@@ -239,11 +239,11 @@ verificar('API devolve o payload sem escapar nem sanitizar',
 // `node.textContent` e o código usa `no.textContent`, então reprovava código
 // correto). O que importa é: textContent existe, innerHTML não.
 const usosTextContent = (appJs.match(/\.textContent\s*=/g) || []).length;
-verificar('app.js escreve texto por textContent',
+verificar('dash.js escreve texto por textContent',
   usosTextContent >= 2 && !/\.innerHTML/.test(appJs),
   `${usosTextContent} atribuições a textContent`);
 
-verificar('app.js cria nós por createElement',
+verificar('dash.js cria nós por createElement',
   /document\.createElement\(/.test(appJs));
 
 // Contagem: quanto menos caminhos de escrita, menos lugares para introduzir XSS.
@@ -255,7 +255,7 @@ verificar('todo caminho de escrita é seguro (textContent/setAttribute)',
 // Um <script> injetado via textContent nunca executa, porque textContent não
 // interpreta markup. Se algum dia alguém trocar por innerHTML, a checagem acima
 // reprova antes de chegar em produção.
-verificar('hostname é renderizado pela função txt() ou el(), nunca por HTML cru',
+verificar('hostname é renderizado por el(), nunca por HTML cru',
   /const host = el\('p', 'cartao-host', m\.hostname/.test(appJs));
 
 psql(`update public.machines set hostname = 'BSB001-PDV02' where label = 'PDV 02';`);

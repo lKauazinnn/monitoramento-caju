@@ -105,7 +105,7 @@
 <script>
 'use strict';
 
-var BUILD_DIAG = '2026-08-06.7';
+var BUILD_DIAG = '2026-08-06.8-sem-login';
 var saida = document.getElementById('saida');
 var relatorio = [];
 
@@ -180,22 +180,22 @@ async function testar() {
   // Sem cache-buster de propósito: quero ver o que o navegador ENTREGARIA ao
   // dashboard, cache incluído.
   try {
-    var ra = await fetch('app.js');
+    var ra = await fetch('dash.js');
     var ta = await ra.text();
     var m = /BUILD = '([^']+)'/.exec(ta);
     var buildApp = m ? m[1] : '(não encontrado)';
 
     if (buildApp === BUILD_DIAG) {
-      linha('ok', 'app.js está atualizado', 'build ' + buildApp);
+      linha('ok', 'dash.js está atualizado', 'build ' + buildApp);
     } else {
-      linha('ruim', 'app.js está DESATUALIZADO no navegador',
-        'app.js = ' + buildApp + '   esperado = ' + BUILD_DIAG +
+      linha('ruim', 'dash.js está DESATUALIZADO no navegador',
+        'dash.js = ' + buildApp + '   esperado = ' + BUILD_DIAG +
         '\nÉ o cache do navegador. Use o botão verde acima.');
-      problemas.push('app.js em cache antigo');
+      problemas.push('dash.js em cache antigo');
     }
   } catch (e) {
-    linha('ruim', 'não foi possível ler app.js', String(e));
-    problemas.push('app.js inacessível');
+    linha('ruim', 'não foi possível ler dash.js', String(e));
+    problemas.push('dash.js inacessível');
   }
 
   try {

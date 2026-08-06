@@ -4,41 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Monitoramento de Infraestrutura</title>
-  <!-- O ?v= não é enfeite: ele MUDA A URL do arquivo.
-       Um navegador que já guardou "app.js" tem essa cópia indexada por aquela
-       URL exata; pedir "app.js?v=7" é pedir outro recurso, e a cópia velha não
-       serve. Com o index.html em no-store, um F5 comum já basta — sem depender
-       de o usuário saber fazer recarga forçada.
-       AO ALTERAR app.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=7">
+
+  <!-- NÃO EXISTE TELA DE LOGIN NESTA PÁGINA.
+       Na stack local o dashboard abre direto, com o token que o dev-up.ps1
+       grava em dev-config.json. No modo Supabase o login vive em login.html,
+       que autentica e redireciona para cá — este arquivo nunca desenha
+       formulário de credencial.
+
+       O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=8" é pedir outro
+       recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
+  <link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
 
-<!-- =========================================================================
-     Tela de login
-     ========================================================================= -->
-<div id="tela-login" class="tela-login" hidden>
-  <form id="form-login" class="caixa-login">
-    <h1>Monitoramento</h1>
-    <p class="sub">Acesso restrito à equipe de TI</p>
-
-    <label for="email">E-mail</label>
-    <input type="email" id="email" autocomplete="username" required>
-
-    <label for="senha">Senha</label>
-    <input type="password" id="senha" autocomplete="current-password" required>
-
-    <button type="submit" id="btn-entrar">Entrar</button>
-
-    <p id="erro-login" class="erro" hidden></p>
-    <p id="aviso-dev" class="aviso-dev" hidden></p>
-  </form>
-</div>
-
-<!-- =========================================================================
-     Aplicação
-     ========================================================================= -->
-<div id="app" hidden>
+<div id="app">
 
   <header class="topo">
     <div class="topo-esq">
@@ -49,7 +29,6 @@
     <div class="topo-dir">
       <span id="rotulo-usuario" class="usuario"></span>
       <button id="btn-atualizar" class="btn-secundario" type="button">Atualizar</button>
-      <button id="btn-sair" class="btn-secundario" type="button">Sair</button>
     </div>
   </header>
 
@@ -87,7 +66,7 @@
   </nav>
 
   <main id="conteudo" aria-live="polite">
-    <p id="vazio" class="vazio" hidden>Nenhuma máquina corresponde ao filtro.</p>
+    <p class="vazio">Carregando…</p>
   </main>
 </div>
 
@@ -125,20 +104,19 @@
 
 <div id="brinde" class="brinde" hidden role="status"></div>
 
-<!-- Faixa de erro de JavaScript.
-     Existe porque, sem ela, um erro de script produz exatamente o sintoma mais
-     difícil de diagnosticar: clicar no botão e NADA acontecer. Com ela, o erro
-     aparece na tela em vez de ficar só no console. -->
+<!-- Faixa de erro.
+     Sem ela, um erro de script produz o sintoma mais difícil de diagnosticar: a
+     página não fazer nada, sem mensagem em lugar nenhum. -->
 <div id="falha-js" class="falha-js" hidden role="alert">
-  <strong>Erro de JavaScript</strong>
+  <strong>Erro</strong>
   <pre id="falha-js-msg"></pre>
   <p class="falha-js-dica">
-    Se isto apareceu depois de uma atualização, recarregue com Ctrl+Shift+R.
+    Diagnóstico completo em <a href="diagnostico.html" style="color:#fecaca">diagnostico.html</a>
   </p>
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="config.js?v=8"></script>
+<script src="dash.js?v=8"></script>
 </body>
 </html>

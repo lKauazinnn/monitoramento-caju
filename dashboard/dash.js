@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.7';
+const BUILD = '2026-08-06.8-sem-login';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -138,7 +138,7 @@ async function api(caminho, opcoes = {}) {
 
   if (resp.status === 401 || resp.status === 403) {
     // Token expirado ou revogado: derruba a sessão em vez de mostrar tela vazia.
-    sair('Sessão expirada. Entre novamente.');
+    tokenRecusado(`HTTP ${resp.status} em ${caminho}`);
     throw new Error('não autorizado');
   }
 
@@ -157,167 +157,71 @@ const rpc = (nome, args = {}) =>
   api(`/rpc/${nome}`, { method: 'POST', body: JSON.stringify(args) });
 
 // -----------------------------------------------------------------------------
-// Autenticação
+// Token
 // -----------------------------------------------------------------------------
-// A chave leva VERSÃO. O fluxo anterior guardava um token vindo de arquivo; uma
-// sessão daquele formato sobrevivendo no navegador faria o dashboard tentar usar
-// um token que já não vale, cair para a tela de login e confundir o diagnóstico.
-// Subir a versão descarta sessões antigas de uma vez, sem depender de o usuário
-// limpar o navegador.
-const CHAVE_SESSAO = 'monitor.sessao.v2';
+// NAO EXISTE TELA DE LOGIN NESTE ARQUIVO.
+//
+// O token vem do dev-config.json, gravado pelo dev-up.ps1, e o dashboard abre
+// direto. Nada de formulario, nada de sessionStorage, nada de estado
+// "deslogado" — era justamente a transicao entre esses estados que produzia a
+// tela travada (formulario na frente, painel aberto atras, app pendurado).
+//
+// Para o modo Supabase, onde autenticacao e obrigatoria, existe login.html
+// separado: ele autentica, guarda o token e redireciona para ca. O dashboard em
+// si continua sem saber o que e um formulario de login.
+const CHAVE_TOKEN = 'monitor.token';
 
-function salvarSessao(token, usuario) {
+function guardarToken(token, usuario) {
   Estado.token = token;
   Estado.usuario = usuario;
   try {
-    // sessionStorage e não localStorage: fechar o navegador encerra a sessão.
-    // Num PDV ou estação compartilhada de loja isso importa.
-    sessionStorage.setItem(CHAVE_SESSAO, JSON.stringify({ token, usuario }));
+    sessionStorage.setItem(CHAVE_TOKEN, JSON.stringify({ token, usuario }));
   } catch (_) { /* modo privado bloqueia storage */ }
 }
 
-function carregarSessao() {
+function lerTokenGuardado() {
   try {
-    const bruto = sessionStorage.getItem(CHAVE_SESSAO);
-    if (!bruto) return false;
+    const bruto = sessionStorage.getItem(CHAVE_TOKEN);
+    if (!bruto) return null;
     const s = JSON.parse(bruto);
-    if (!s.token) return false;
-    Estado.token = s.token;
-    Estado.usuario = s.usuario;
-    return true;
+    return s.token ? s : null;
   } catch (_) {
-    return false;
+    return null;
   }
 }
 
+function descartarToken() {
+  Estado.token = null;
+  Estado.usuario = null;
+  try { sessionStorage.removeItem(CHAVE_TOKEN); } catch (_) { /* nada a fazer */ }
+}
+
 /**
- * Leva a interface ao estado "deslogado", SEMPRE por completo.
+ * Token recusado pelo servidor.
  *
- * É a única função autorizada a mostrar a tela de login, e a razão é um bug real:
- * antes, dois caminhos em principal() faziam apenas
- * `$('tela-login').hidden = false` sem tocar no resto. O resultado era uma tela
- * impossível — o formulário de login aparecendo com o painel de detalhe aberto ao
- * lado e o app meio montado por baixo. E, nesse estado, clicar em Entrar parecia
- * não fazer nada, porque a tela já estava lá.
- *
- * Concentrar a transição aqui elimina a classe inteira de estado inconsistente.
+ * Sem tela de login para onde voltar, a unica coisa honesta e dizer o que houve
+ * e como corrigir. No modo Supabase, manda para o login.html.
  */
-function mostrarLogin(mensagem) {
+function tokenRecusado(mensagem) {
+  descartarToken();
+
   if (Estado.timerPoll) { clearInterval(Estado.timerPoll); Estado.timerPoll = null; }
   if (Estado.canalRealtime) {
-    try { Estado.canalRealtime.close(); } catch (_) { /* já fechado */ }
+    try { Estado.canalRealtime.close(); } catch (_) { /* ja fechado */ }
     Estado.canalRealtime = null;
   }
 
-  Estado.maquinaAberta = null;
-
-  // Destrói os gráficos: deixá-los vivos acumula instâncias do Chart.js a cada
-  // entrada e saída, e o consumo de memória cresce sem parar.
-  for (const id of Object.keys(Estado.graficos)) {
-    try { Estado.graficos[id].destroy(); } catch (_) { /* já destruído */ }
-    delete Estado.graficos[id];
+  if (CFG.authMode === 'supabase') {
+    window.location.href = 'login.html';
+    return;
   }
 
-  $('app').hidden = true;
-  $('painel').hidden = true;
-  $('painel-fundo').hidden = true;
-  $('brinde').hidden = true;
-  $('tela-login').hidden = false;
-
-  const e = $('erro-login');
-  if (mensagem) {
-    txt(e, mensagem);
-    e.hidden = false;
-  } else {
-    e.hidden = true;
-  }
-
-  $('senha').value = '';
-  $('btn-entrar').disabled = false;
+  mostrarFalhaGlobal(
+    'A API recusou o token deste dashboard',
+    `${mensagem}\n\nO token é gerado pelo dev-up. Rode:\n  .\\scripts\\dev-up.ps1`,
+  );
 }
 
-function sair(mensagem) {
-  Estado.token = null;
-  Estado.usuario = null;
-  try { sessionStorage.removeItem(CHAVE_SESSAO); } catch (_) { /* nada a fazer */ }
-
-  mostrarLogin(mensagem);
-}
-
-async function entrarSupabase(email, senha) {
-  const base = (CFG.authUrl || '').replace(/\/+$/, '');
-  const resp = await fetch(`${base}/token?grant_type=password`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', apikey: CFG.anonKey },
-    body: JSON.stringify({ email, password: senha }),
-  });
-
-  const dados = await resp.json();
-  if (!resp.ok) throw new Error(dados.error_description || dados.msg || 'credenciais inválidas');
-
-  return { token: dados.access_token, usuario: email };
-}
-
-/**
- * Login local: verifica a senha no banco (bcrypt) e recebe um JWT assinado.
- *
- * O token traz as MESMAS claims que o Supabase Auth emitiria
- * (role=authenticated, sub=<uuid>), então o RLS exercitado aqui é o mesmo de
- * produção. A senha nunca é guardada em lugar nenhum do navegador.
- */
-async function entrarLocal(email, senha) {
-  const base = CFG.restUrl.replace(/\/+$/, '');
-
-  // Timeout explícito. Sem ele, uma API inalcançável (porta errada, container
-  // parado, firewall) deixa o fetch pendurado indefinidamente — e o usuário vê
-  // o botão desabilitado e mais nada, para sempre. Este é o segundo caminho que
-  // produzia "cliquei e não aconteceu nada".
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 15000);
-
-  let resp;
-  try {
-    resp = await fetch(`${base}/rpc/local_sign_in`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ p_email: email, p_password: senha }),
-      signal: ctrl.signal,
-    });
-  } catch (e) {
-    if (e.name === 'AbortError') {
-      throw new Error(`a API em ${base} não respondeu em 15s — o container está no ar?`);
-    }
-    // TypeError aqui é quase sempre rede: porta errada, serviço parado, CORS.
-    throw new Error(`não foi possível falar com a API em ${base} (${e.message})`);
-  } finally {
-    clearTimeout(t);
-  }
-
-  const texto = await resp.text();
-  let dados = {};
-  try { dados = JSON.parse(texto); } catch (_) { /* corpo não-JSON */ }
-
-  if (!resp.ok) {
-    throw new Error(dados.message || dados.error || `HTTP ${resp.status}`);
-  }
-
-  // Credencial inválida vem como 200 com ok:false, e não como erro HTTP: a
-  // função precisa COMMITAR o contador de tentativas, e uma exceção no
-  // PostgreSQL desfaria esse update junto (o bloqueio ficaria decorativo).
-  //
-  // A checagem do token vem PRIMEIRO de propósito: mesmo que alguém mexa no
-  // formato de `ok`, sem access_token não há sessão.
-  if (!dados.access_token || dados.ok !== true) {
-    // A mensagem vem do banco e é deliberadamente idêntica para e-mail
-    // inexistente e senha errada — não revela quais e-mails existem.
-    throw new Error(dados.message || 'e-mail ou senha inválidos');
-  }
-
-  return {
-    token: dados.access_token,
-    usuario: dados.user?.full_name || dados.user?.email || email,
-  };
-}
 
 /**
  * Descobre a URL da API no modo local.
@@ -838,43 +742,7 @@ function conectarRealtime() {
 // Ligação de eventos
 // -----------------------------------------------------------------------------
 function ligarEventos() {
-  $('form-login').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const erro = $('erro-login');
-    erro.hidden = true;
-    $('btn-entrar').disabled = true;
-
-    const email = $('email').value.trim();
-    const senha = $('senha').value;
-    const btn = $('btn-entrar');
-    const rotuloOriginal = btn.textContent;
-
-    // Retorno visual imediato. Um botão que muda de texto prova ao usuário que o
-    // clique foi recebido — sem isso, qualquer lentidão parece "não funcionou".
-    btn.textContent = 'Entrando...';
-
-    try {
-      const s = CFG.authMode === 'supabase'
-        ? await entrarSupabase(email, senha)
-        : await entrarLocal(email, senha);
-
-      // Limpa o campo antes de qualquer await seguinte: senha não fica no DOM.
-      $('senha').value = '';
-
-      salvarSessao(s.token, s.usuario);
-      await iniciar();
-    } catch (e) {
-      txt(erro, e.message);
-      erro.hidden = false;
-      $('senha').value = '';
-      $('senha').focus();
-    } finally {
-      btn.disabled = false;
-      btn.textContent = rotuloOriginal;
-    }
-  });
-
-  $('btn-sair').addEventListener('click', () => sair(null));
+  // Sem handler de formulário de login: ele não existe mais nesta página.
   $('btn-atualizar').addEventListener('click', () => carregar());
   $('btn-fechar-painel').addEventListener('click', fecharPainel);
   $('painel-fundo').addEventListener('click', fecharPainel);
@@ -920,8 +788,11 @@ function ligarEventos() {
 // -----------------------------------------------------------------------------
 // Partida
 // -----------------------------------------------------------------------------
+/**
+ * Sobe o dashboard. Sem estado intermediário: ou ele abre, ou a faixa vermelha
+ * no topo diz por quê.
+ */
 async function iniciar() {
-  $('tela-login').hidden = true;
   $('app').hidden = false;
   txt($('rotulo-usuario'), Estado.usuario || '');
 
@@ -929,95 +800,49 @@ async function iniciar() {
   iniciarAtualizacao();
 }
 
-/**
- * Modo local SEM tela de login.
- *
- * O dev-up.ps1 grava um token pronto no dev-config.json e o dashboard entra
- * direto. Em produção (authMode 'supabase') a tela de login continua existindo e
- * é obrigatória.
- *
- * TRADE-OFF, explícito: quem alcançar 127.0.0.1:8081 nesta máquina entra sem
- * senha. Isso é aceitável porque a stack local só escuta em loopback (nada é
- * exposto na rede) e quem tem acesso à máquina já pode ler o banco por
- * `docker exec`. O login continua disponível — veja `pedirLogin` no
- * dev-config.json — para quem quiser exercitá-lo.
- */
-async function entrarSemLogin(token, usuario) {
-  salvarSessao(token, usuario);
-  await iniciar();
-
-  if ($('app').hidden) {
-    // O token do arquivo não serviu. Cai para o login em vez de deixar a tela
-    // em branco sem explicação.
-    sair('O token da stack local não foi aceito. Rode .\\scripts\\dev-up.ps1');
-    return false;
-  }
-
-  return true;
-}
-
 async function principal() {
   ligarEventos();
 
-  // A URL da API é resolvida antes de qualquer chamada, inclusive antes de tentar
-  // reusar a sessão guardada: o dev-up pode ter subido em outra porta.
-  if (CFG.authMode === 'local') {
+  // -------------------------------------------------------------------- token
+  if (CFG.authMode === 'supabase') {
+    // Em produção a autenticação é obrigatória. O login vive em login.html, que
+    // guarda o token e volta para cá — o dashboard nunca desenha formulário.
+    const guardado = lerTokenGuardado();
+    if (!guardado) {
+      window.location.href = 'login.html';
+      return;
+    }
+    Estado.token = guardado.token;
+    Estado.usuario = guardado.usuario;
+  } else {
+    // Stack local: a URL da API e o token vêm do dev-config.json.
     try {
       await descobrirApiLocal();
     } catch (e) {
-      // Sem saber a URL da API não há login possível. Mostra o motivo na tela e
-      // não deixa o usuário digitar credencial num formulário que não vai a
-      // lugar nenhum.
       mostrarFalhaGlobal('Não foi possível descobrir o endereço da API', e.message);
-      mostrarLogin(null);
-      $('btn-entrar').disabled = true;
       return;
     }
 
-    // Agora sim: a URL efetiva, depois da descoberta.
-    console.info(`[monitor] API efetiva: ${CFG.restUrl}`);
+    console.info(`[monitor] API ${CFG.restUrl}`);
 
-    const aviso = $('aviso-dev');
-    // O build aparece na tela: é como se confirma em um segundo que o navegador
-    // está com o arquivo atual, sem abrir o console.
-    txt(aviso, `Stack local (build ${BUILD}) — API ${CFG.restUrl}. `
-             + 'Entre com o e-mail e a senha criados por criar-usuario.ps1.');
-    aviso.hidden = false;
-
-    // ENTRADA DIRETA: com token no dev-config.json, a stack local não pede
-    // login. É o comportamento padrão agora — a tela de login só aparece se o
-    // token faltar, se ele for recusado, ou se pedirLogin estiver marcado.
-    if (CFG.devToken && !CFG.pedirLogin) {
-      console.info('[monitor] stack local: entrando sem login');
-      // Descarta sessão anterior: o token do arquivo é sempre a verdade mais
-      // recente, e uma sessão velha em sessionStorage já causou tela misturada.
-      try { sessionStorage.removeItem(CHAVE_SESSAO); } catch (_) { /* bloqueado */ }
-
-      if (await entrarSemLogin(CFG.devToken, CFG.devUsuario || 'stack local')) return;
-      return;   // entrarSemLogin já mostrou o motivo
-    }
-  }
-
-  // Sessão guardada de um acesso anterior. Se ela não servir mais (token
-  // expirado, segredo trocado, banco recriado), NÃO basta mostrar o login: é
-  // preciso desfazer o que iniciar() já tinha montado. Sem isso a tela ficava
-  // misturada e o botão Entrar parecia inerte.
-  if (carregarSessao()) {
-    try {
-      await iniciar();
-      if (!$('app').hidden) return;   // entrou de fato
-      // iniciar() terminou mas o app não está visível: algo chamou sair() no
-      // caminho (token recusado). Segue para a tela de login, já limpa.
-    } catch (e) {
-      console.warn('[monitor] sessão guardada não serve mais:', e.message);
-      sair('Sua sessão anterior expirou. Entre novamente.');
-      $('email').focus();
+    if (!CFG.devToken) {
+      mostrarFalhaGlobal(
+        'dev-config.json não traz o token de acesso',
+        'A stack local abre o dashboard sem login, e para isso precisa do token.\n'
+        + 'Rode:  .\\scripts\\dev-up.ps1',
+      );
       return;
     }
+
+    guardarToken(CFG.devToken, CFG.devUsuario || 'stack local');
   }
 
-  mostrarLogin(null);
-  $('email').focus();
+  // -------------------------------------------------------------- dashboard
+  try {
+    await iniciar();
+  } catch (e) {
+    mostrarFalhaGlobal('Falha ao carregar o dashboard', e.message);
+  }
 }
 
 principal();

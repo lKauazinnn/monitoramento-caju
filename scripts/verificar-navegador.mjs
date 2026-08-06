@@ -167,79 +167,35 @@ try {
     erros.join('\n        '));
 
   const build = console_.find((l) => l.includes('[monitor] build'));
-  verificar('app.js executou (build no console)', !!build, console_.join('\n        '));
+  verificar('dash.js executou (build no console)', !!build, console_.join('\n        '));
   if (build) console.log(`        ${build.replace('info: ', '')}`);
 
   const faixaErro = await js("document.getElementById('falha-js')?.hidden");
   verificar('faixa de erro de script está oculta', faixaErro === true, `hidden=${faixaErro}`);
 
   // =========================================================================
-  // A stack local entra DIRETO: o dev-up grava um token em dev-config.json e o
-  // dashboard não pede credencial. A tela de login continua existindo para o modo
-  // Supabase e para `dev-up -ComLogin`, e é exercitada mais abaixo.
-  const devCfg = JSON.parse(readFileSync(join(raiz, 'dashboard', 'dev-config.json'), 'utf8'));
-  const semLogin = !!devCfg.devToken && devCfg.pedirLogin !== true;
-
-  console.log(`\n== ${semLogin ? 'Entrada direta (sem login)' : 'Tela de login'} ==`);
+  console.log('\n== Dashboard sem login ==');
   // =========================================================================
-  if (semLogin) {
-    const appJaVisivel = await js("!document.getElementById('app').hidden");
-    verificar('o app abriu SEM pedir login', appJaVisivel === true, `app visível=${appJaVisivel}`);
+  // A tela de login foi REMOVIDA do dashboard. Estes testes garantem que ela nao
+  // volte por acidente: um formulario de credencial nesta pagina traria de volta
+  // a transicao entre estados que produzia a tela travada.
+  const semFormulario = await js(`
+    ({
+      telaLogin: !!document.getElementById('tela-login'),
+      form:      !!document.getElementById('form-login'),
+      btnEntrar: !!document.getElementById('btn-entrar'),
+      campoSenha:!!document.getElementById('senha'),
+      inputs:    document.querySelectorAll('input[type=password]').length,
+    })
+  `);
 
-    const loginOculto = await js("document.getElementById('tela-login').hidden");
-    verificar('a tela de login não aparece', loginOculto === true);
+  verificar('não existe elemento de tela de login', semFormulario.telaLogin === false, JSON.stringify(semFormulario));
+  verificar('não existe formulário de login', semFormulario.form === false);
+  verificar('não existe botão Entrar', semFormulario.btnEntrar === false);
+  verificar('não existe campo de senha', semFormulario.campoSenha === false && semFormulario.inputs === 0);
 
-    const usuarioTopo = await js("document.getElementById('rotulo-usuario').textContent");
-    verificar('usuário identificado no topo', (usuarioTopo || '').length > 0, `"${usuarioTopo}"`);
-  } else {
-    const loginVisivel = await js("!document.getElementById('tela-login').hidden");
-    verificar('tela de login visível', loginVisivel === true);
-  }
-
-  const aviso = await js("document.getElementById('aviso-dev').textContent");
-  verificar('aviso mostra o build e a API', /build .* API http/.test(aviso || ''), aviso);
-
-  // =========================================================================
-  // O login por formulário continua obrigatório em produção, então continua
-  // sendo testado — mas agora só faz sentido exercitá-lo quando a stack está
-  // configurada para pedi-lo.
-  if (!semLogin) {
-    console.log('\n== Login pela interface (digitando e clicando) ==');
-    erros.length = 0;
-
-    await js(`
-      (() => {
-        const e = document.getElementById('email');
-        const s = document.getElementById('senha');
-        e.value = ${JSON.stringify(email)};
-        s.value = ${JSON.stringify(senha)};
-        e.dispatchEvent(new Event('input', { bubbles: true }));
-        s.dispatchEvent(new Event('input', { bubbles: true }));
-        return true;
-      })()
-    `);
-
-    const rotuloAntes = await js("document.getElementById('btn-entrar').textContent");
-    await js("document.getElementById('btn-entrar').click(); true");
-    await dormir(3500);
-
-    verificar('nenhuma exceção durante o login', erros.length === 0, erros.join('\n        '));
-
-    const erroLogin = await js(`
-      (() => {
-        const e = document.getElementById('erro-login');
-        return e.hidden ? null : e.textContent;
-      })()
-    `);
-    verificar('nenhuma mensagem de erro na tela', erroLogin === null, erroLogin);
-
-    const loginSumiu = await js("document.getElementById('tela-login').hidden");
-    verificar('tela de login desapareceu', loginSumiu === true);
-
-    const rotuloDepois = await js("document.getElementById('btn-entrar').textContent");
-    verificar('botão voltou ao rótulo original', rotuloAntes === rotuloDepois,
-      `antes="${rotuloAntes}" depois="${rotuloDepois}"`);
-  }
+  const usuarioTopo = await js("document.getElementById('rotulo-usuario').textContent");
+  verificar('usuário identificado no topo', (usuarioTopo || '').length > 0, `"${usuarioTopo}"`);
 
   const appVisivel = await js("!document.getElementById('app').hidden");
   verificar('APP VISÍVEL com dados', appVisivel === true, `app.hidden=${!appVisivel}`);
@@ -314,82 +270,45 @@ try {
   verificar('painel listou os dados da máquina', dados > 8, `${dados} campos`);
 
   // =========================================================================
-  console.log('\n== Estado sujo: sessão invalida guardada + painel aberto ==');
+  console.log('\n== Token inválido guardado ==');
   // =========================================================================
-  // Reproduz o que foi observado no navegador do usuário: uma sessão antiga em
-  // sessionStorage e o painel de detalhe aberto. Antes da correção isso deixava a
-  // tela misturada (login visível + painel aberto + app pendurado), e nesse
-  // estado clicar em Entrar parecia não fazer nada.
+  // Sem tela de login para onde voltar, um token recusado tem de produzir uma
+  // MENSAGEM VISÍVEL. O contrário — tela em branco ou aplicação pendurada — foi o
+  // sintoma que mais custou neste projeto.
   erros.length = 0;
   errosRede.length = 0;
 
   await js(`
     (() => {
-      sessionStorage.setItem('monitor.sessao.v2', JSON.stringify({
+      sessionStorage.setItem('monitor.token', JSON.stringify({
         token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJsaXhvIn0.assinatura-invalida',
-        usuario: 'sessao velha',
+        usuario: 'token velho',
       }));
       return true;
     })()
   `);
 
-  await cmd('Page.navigate', { url: `${URL_DASH}/?v=teste-sessao-suja` });
+  await cmd('Page.navigate', { url: `${URL_DASH}/?v=teste-token-invalido` });
   await dormir(4000);
 
-  const st = await js(`
+  // Na stack local o token do dev-config SUBSTITUI o guardado, então o dashboard
+  // abre normalmente: o token velho não tem como travar nada.
+  const aposToken = await js(`
     ({
-      login:  !document.getElementById('tela-login').hidden,
-      app:    !document.getElementById('app').hidden,
-      painel: !document.getElementById('painel').hidden,
-      erro:   document.getElementById('erro-login').hidden
-                ? null : document.getElementById('erro-login').textContent,
-      sessao: sessionStorage.getItem('monitor.sessao.v2'),
-    })
-  `);
-
-  // Com entrada direta, uma sessao invalida em sessionStorage e simplesmente
-  // descartada e o token do dev-config assume: o usuario nem ve a tela de login.
-  if (semLogin) {
-    verificar('sessão inválida é ignorada e o app abre direto', st.app === true, JSON.stringify(st));
-    verificar('a tela de login não aparece', st.login === false, JSON.stringify(st));
-  } else {
-    verificar('com sessão inválida, a tela de login aparece', st.login === true, JSON.stringify(st));
-    verificar('o app NÃO fica pendurado visível', st.app === false, );
-  }
-  verificar('o painel NÃO fica aberto atrás do login', st.painel === false, `painel visível=${st.painel}`);
-  verificar('a sessão inválida foi descartada ou substituída',
-    st.sessao === null || !st.sessao.includes('assinatura-invalida'), `sessao=${st.sessao}`);
-  if (!semLogin) {
-    verificar('o motivo é mostrado ao usuário', (st.erro || '').length > 0, `erro=${st.erro}`);
-  }
-  verificar('nenhuma exceção no caminho da sessão inválida', erros.length === 0, erros.join('\n        '));
-
-  // E, a partir desse estado, o dashboard TEM de ficar utilizável. Com login
-  // exigido é preciso preencher o formulário; com entrada direta ele já deve
-  // estar carregado.
-  if (!semLogin) {
-    await js(`
-      (() => {
-        document.getElementById('email').value = ${JSON.stringify(email)};
-        document.getElementById('senha').value = ${JSON.stringify(senha)};
-        document.getElementById('btn-entrar').click();
-        return true;
-      })()
-    `);
-    await dormir(3500);
-  }
-
-  const depois = await js(`
-    ({
-      login: !document.getElementById('tela-login').hidden,
       app:   !document.getElementById('app').hidden,
       kpi:   document.getElementById('kpi-total').textContent,
+      falha: document.getElementById('falha-js').hidden
+               ? null : document.getElementById('falha-js-msg').textContent,
     })
   `);
 
-  verificar('dashboard utilizável a partir do estado sujo',
-    depois.app === true && depois.login === false, JSON.stringify(depois));
-  verificar('dados carregaram depois disso', depois.kpi === '5', `kpi=${depois.kpi}`);
+  verificar('token velho guardado não impede o dashboard de abrir',
+    aposToken.app === true, JSON.stringify(aposToken));
+  verificar('dados carregaram', aposToken.kpi === '5', `kpi=${aposToken.kpi}`);
+  verificar('nenhuma faixa de erro', aposToken.falha === null, aposToken.falha);
+  verificar('nenhuma exceção de JavaScript no caminho do token velho',
+    erros.length === 0, erros.join('\n        '));
+
 
   // =========================================================================
   console.log('\n== Página de diagnóstico ==');
@@ -429,7 +348,7 @@ try {
   await dormir(3000);
 
   const resLogin = await js("document.getElementById('res-login').textContent");
-  verificar('login pela página de diagnóstico funcionou',
+  verificar('sequência completa pela página de diagnóstico funcionou',
     /1. login/.test(resLogin || ''), resLogin);
 
   ws.close();
