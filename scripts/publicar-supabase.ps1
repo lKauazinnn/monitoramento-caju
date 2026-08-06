@@ -360,6 +360,21 @@ if (-not $SoVerificar) {
     exit 1
   }
   Ok ($r.Saida | Where-Object { $_ -match 'TESTES' } | Select-Object -Last 1)
+
+  # A funcao roda num container Deno igual ao da plataforma ANTES de subir.
+  #
+  # O deploy e a hora errada de descobrir erro de codigo, e a LOJA e a hora ainda
+  # mais errada: foi um BOM no inicio do instalar.ps1 que quebrou a primeira
+  # instalacao real, e naquela epoca nenhuma verificacao pegava porque todas
+  # inspecionavam o texto — o problema era um caractere ANTES dele.
+  Info 'ensaiando a funcao sob Deno (precisa de Docker)'
+  $r = Exec -Arquivo $node.Source -Argumentos @((Join-Path $repoRoot 'scripts\verificar-edge-function.mjs'))
+  if ($r.Codigo -ne 0) {
+    $r.Saida | ForEach-Object { Erro $_ }
+    Erro 'a funcao falhou no ensaio local. Nada foi publicado.'
+    exit 1
+  }
+  Ok ($r.Saida | Where-Object { $_ -match 'VERIFICACOES DA EDGE' } | Select-Object -Last 1)
 }
 
 # ---------------------------------------------------------------------------
@@ -407,13 +422,71 @@ verify_jwt = false
     $SenhaBanco = LerSegredoOculto 'senha do banco:'
   }
 
-  $r = Supa @('db', 'push', '--password', $SenhaBanco) -Mostrar
-  if ($r.Codigo -ne 0) {
-    Erro 'db push falhou.'
+  # POR QUE NAO USAR A CONEXAO PADRAO DA CLI
+  #
+  # `db.<ref>.supabase.co` tem SO registro AAAA — e IPv6-only em projetos novos.
+  # Numa maquina sem IPv6 (o caso aqui, e o caso da maioria das redes
+  # corporativas brasileiras), o `db push` padrao falha com erro de conexao que
+  # nao menciona IPv6 em lugar nenhum, e a pessoa vai procurar senha errada e
+  # firewall.
+  #
+  # O pooler tem IPv4 e atende os dois casos, entao e sempre ele. A regiao vem da
+  # API de gerenciamento; sem ela, tenta as combinacoes conhecidas.
+  $temIPv6 = $false
+  try {
+    $temIPv6 = [bool](Get-NetIPAddress -AddressFamily IPv6 -ErrorAction Stop |
+      Where-Object { $_.PrefixOrigin -ne 'WellKnown' -and $_.IPAddress -notlike 'fe80*' -and $_.IPAddress -ne '::1' })
+  } catch { }
+  Info ("IPv6 nesta maquina: " + $(if ($temIPv6) { 'sim' } else { 'nao — usando o pooler (IPv4)' }))
+
+  $regiao = $null
+  try {
+    $projetos = Invoke-RestMethod -Uri 'https://api.supabase.com/v1/projects' -TimeoutSec 30 `
+                  -Headers @{ Authorization = "Bearer $($env:SUPABASE_ACCESS_TOKEN)" }
+    $regiao = (Lista $projetos | Where-Object { $_.id -eq $ProjetoRef } | Select-Object -First 1).region
+    if ($regiao) { Ok "regiao do projeto: $regiao" }
+  } catch {
+    Info 'nao consegui ler a regiao pela API; vou tentar as conhecidas'
+  }
+
+  # Senha vai na URL: precisa de escape, senao um caractere como @ ou / corta a
+  # string no lugar errado e o erro que aparece e "autenticacao falhou".
+  $senhaUrl = [System.Uri]::EscapeDataString($SenhaBanco)
+
+  $candidatas = @()
+  if ($regiao) { $candidatas += "aws-0-$regiao"; $candidatas += "aws-1-$regiao" }
+  foreach ($reg in @('us-east-2', 'us-east-1', 'sa-east-1', 'us-west-1', 'eu-central-1')) {
+    $candidatas += "aws-0-$reg"; $candidatas += "aws-1-$reg"
+  }
+  $candidatas = $candidatas | Select-Object -Unique
+
+  $aplicou = $false
+  foreach ($host_ in $candidatas) {
+    $urlBanco = "postgresql://postgres.${ProjetoRef}:$senhaUrl@$host_.pooler.supabase.com:5432/postgres"
+
+    $r = Supa @('db', 'push', '--db-url', $urlBanco)
+
+    if ($r.Codigo -eq 0) {
+      Ok "migrations aplicadas via $host_.pooler.supabase.com"
+      $r.Saida | Where-Object { $_ -match 'Applying|migration' } | ForEach-Object { Info $_ }
+      $aplicou = $true
+      break
+    }
+
+    # "Tenant or user not found" = pooler de outra regiao. Qualquer outro erro e
+    # real e nao adianta continuar tentando host.
+    if (($r.Saida -join ' ') -notmatch 'Tenant or user not found|could not translate host|no such host') {
+      $r.Saida | ForEach-Object { Erro $_ }
+      break
+    }
+  }
+
+  if (-not $aplicou) {
+    Erro 'db push falhou em todos os endpoints tentados.'
+    Aviso 'Confira a senha do banco em Settings > Database.'
     Aviso 'Alternativa: cole os arquivos de supabase/migrations no SQL Editor, NA ORDEM do nome.'
     exit 1
   }
-  Ok 'migrations aplicadas'
 
   # -------------------------------------------------------------------------
   Passo 'Definindo o segredo da funcao'
