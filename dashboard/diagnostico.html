@@ -105,7 +105,9 @@
 <script>
 'use strict';
 
-var BUILD_DIAG = '2026-08-06.8-sem-login';
+// Identidade DESTA pagina, apenas para aparecer na tela. NAO e mais usada como
+// referencia de comparacao — ver a checagem do dash.js abaixo.
+var BUILD_DIAG = '2026-08-06.9';
 var saida = document.getElementById('saida');
 var relatorio = [];
 
@@ -179,17 +181,26 @@ async function testar() {
   // ---------------------------------------------------------------------------
   // Sem cache-buster de propósito: quero ver o que o navegador ENTREGARIA ao
   // dashboard, cache incluído.
+  // Compara o que o NAVEGADOR entregaria com o que o SERVIDOR serve AGORA.
+  //
+  // A versão anterior comparava com uma constante escrita aqui, e bastava eu
+  // esquecer de atualizá-la para a página acusar cache antigo onde não havia — um
+  // diagnóstico que dá falso positivo é pior que nenhum, porque ensina a ignorá-lo.
+  //
+  // Buscar duas vezes, uma com cache e outra com cache:'reload', responde a
+  // pergunta certa sem nada para manter em sincronia.
   try {
-    var ra = await fetch('dash.js');
-    var ta = await ra.text();
-    var m = /BUILD = '([^']+)'/.exec(ta);
-    var buildApp = m ? m[1] : '(não encontrado)';
+    var comCache = await (await fetch('dash.js')).text();
+    var doServidor = await (await fetch('dash.js', { cache: 'reload' })).text();
 
-    if (buildApp === BUILD_DIAG) {
-      linha('ok', 'dash.js está atualizado', 'build ' + buildApp);
+    var bNav = (/BUILD = '([^']+)'/.exec(comCache) || [])[1] || '(não encontrado)';
+    var bSrv = (/BUILD = '([^']+)'/.exec(doServidor) || [])[1] || '(não encontrado)';
+
+    if (bNav === bSrv) {
+      linha('ok', 'dash.js está atualizado', 'build ' + bNav);
     } else {
       linha('ruim', 'dash.js está DESATUALIZADO no navegador',
-        'dash.js = ' + buildApp + '   esperado = ' + BUILD_DIAG +
+        'navegador = ' + bNav + '\nservidor  = ' + bSrv +
         '\nÉ o cache do navegador. Use o botão verde acima.');
       problemas.push('dash.js em cache antigo');
     }

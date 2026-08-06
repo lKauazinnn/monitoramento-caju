@@ -21,6 +21,7 @@
 
 import { createServer } from 'node:http';
 import { createHmac } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import {
   extractBearer,
   httpStatusForSqlState,
@@ -182,6 +183,31 @@ const servidor = createServer(async (req, res) => {
         return;
       }
       json(res, 200, { ok: true, service: 'ingest-local', db: r.dados });
+      return;
+    }
+
+    // ------------------------------------------------- arquivos de instalação
+    // Servidos SEM segredo, de propósito: são o script do agente e o instalador,
+    // que estão públicos no repositório do projeto. O que é secreto é o token, e
+    // ele NÃO está aqui — vem no comando que o dashboard monta.
+    //
+    // Servir por este endpoint, e não pelo nginx do dashboard, é o que permite
+    // manter o dashboard restrito a loopback: a única porta na rede continua
+    // sendo esta.
+    if (req.method === 'GET' && (rota === '/agente.ps1' || rota === '/instalar.ps1')) {
+      const arquivo = rota === '/agente.ps1' ? '/app/agente.ps1' : '/app/instalar.ps1';
+      try {
+        const conteudo = await readFile(arquivo);
+        res.writeHead(200, {
+          'content-type': 'text/plain; charset=utf-8',
+          'content-length': conteudo.length,
+          'cache-control': 'no-store',
+        });
+        res.end(conteudo);
+      } catch (e) {
+        console.error(logLine('error', 'arquivo_indisponivel', { rota, erro: String(e) }));
+        json(res, 404, { ok: false, error: `${rota} não disponível neste servidor` });
+      }
       return;
     }
 

@@ -6,19 +6,19 @@
 //
 // Existe uma única função que escreve texto na tela (`txt`) e uma única que cria
 // elemento (`el`). Se um dia alguém introduzir innerHTML aqui, vai ter que
-// escrever fora desse caminho — e o teste de aceite (hostname
+// escrever fora desse caminho � e o teste de aceite (hostname
 // `<script>alert(1)</script>` renderizado como texto literal) vai reprovar.
 // =============================================================================
 
 'use strict';
 
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
-// "o navegador está com o código novo?" — que foi exatamente a dúvida que
+// "o navegador está com o código novo?" � que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.8-sem-login';
+const BUILD = '2026-08-06.9-add-pc';
 
 // -----------------------------------------------------------------------------
-// Captura global de erro — registrada ANTES de qualquer outra coisa
+// Captura global de erro � registrada ANTES de qualquer outra coisa
 // -----------------------------------------------------------------------------
 // Sem isto, um erro de JavaScript em qualquer ponto produz o pior sintoma
 // possível: o botão é clicado e nada acontece, sem mensagem em lugar nenhum.
@@ -69,8 +69,8 @@ if (!CFG) {
   throw new Error('config.js ausente');
 }
 
-// Só o build e o modo aqui. A restUrl NÃO é logada neste ponto porque ela ainda
-// é o valor padrão do config.js — descobrirApiLocal() a substitui depois. Logá-la
+// Só o build e o modo aqui. A restUrl NÒO é logada neste ponto porque ela ainda
+// é o valor padrão do config.js � descobrirApiLocal() a substitui depois. Logá-la
 // aqui produzia uma linha enganosa (mostrava a porta 3000 quando a API estava na
 // 3001), e diagnóstico que mente custa mais tempo que diagnóstico ausente.
 console.info(`[monitor] build ${BUILD} | authMode=${CFG.authMode}`);
@@ -96,16 +96,16 @@ const Estado = {
 // -----------------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 
-/** Escreve texto com segurança. É o ÚNICO caminho de texto do banco para a tela. */
+/** Escreve texto com segurança. �0 o �aNICO caminho de texto do banco para a tela. */
 function txt(no, valor) {
-  no.textContent = valor === null || valor === undefined || valor === '' ? '–' : String(valor);
+  no.textContent = valor === null || valor === undefined || valor === '' ? '�' : String(valor);
 }
 
 /** Cria elemento. Aceita texto, nunca HTML. */
 function el(tag, classe, texto) {
   const n = document.createElement(tag);
   if (classe) n.className = classe;
-  if (texto !== undefined) n.textContent = texto === null || texto === '' ? '–' : String(texto);
+  if (texto !== undefined) n.textContent = texto === null || texto === '' ? '�' : String(texto);
   return n;
 }
 
@@ -163,7 +163,7 @@ const rpc = (nome, args = {}) =>
 //
 // O token vem do dev-config.json, gravado pelo dev-up.ps1, e o dashboard abre
 // direto. Nada de formulario, nada de sessionStorage, nada de estado
-// "deslogado" — era justamente a transicao entre esses estados que produzia a
+// "deslogado" � era justamente a transicao entre esses estados que produzia a
 // tela travada (formulario na frente, painel aberto atras, app pendurado).
 //
 // Para o modo Supabase, onde autenticacao e obrigatoria, existe login.html
@@ -239,7 +239,7 @@ async function descobrirApiLocal() {
     d = await resp.json();
   } catch (e) {
     // FALHA ALTA, não silenciosa. A versão anterior engolia o erro e o dashboard
-    // seguia com a URL padrão do config.js — que podia ser a porta de um serviço
+    // seguia com a URL padrão do config.js � que podia ser a porta de um serviço
     // completamente diferente. Ficar mudo aqui é o que transformava um problema
     // trivial de porta num "login não funciona" indecifrável.
     throw new Error(
@@ -260,6 +260,12 @@ async function descobrirApiLocal() {
   CFG.devToken = d.devToken || null;
   CFG.devUsuario = d.devUsuario || null;
   CFG.pedirLogin = d.pedirLogin === true;
+
+  // Endereco da ingestao NA REDE e o segredo compartilhado: e o que o dashboard
+  // precisa para montar o comando de instalacao de outro PC. O IP e o da LAN, nao
+  // 127.0.0.1 � que, na outra maquina, aponta para ela mesma.
+  CFG.ingestUrlLan = d.ingestUrlLan || null;
+  CFG.ingestSecret = d.ingestSecret || null;
 }
 
 // -----------------------------------------------------------------------------
@@ -323,7 +329,7 @@ function preencherFiltros() {
   preencherSelect($('filtro-loja'), Estado.filtros.loja,
     unicos(Estado.maquinas
       .filter((m) => !Estado.filtros.marca || m.brand_code === Estado.filtros.marca)
-      .map((m) => [m.site_code, `${m.site_code} — ${m.site_name}`])));
+      .map((m) => [m.site_code, `${m.site_code} � ${m.site_name}`])));
 }
 
 function unicos(pares) {
@@ -437,7 +443,7 @@ function cartao(m) {
   const c = el('article', `cartao cartao-${m.status}`);
   c.tabIndex = 0;
   c.setAttribute('role', 'button');
-  // aria-label recebe TEXTO, nunca markup — um hostname com < e > fica literal.
+  // aria-label recebe TEXTO, nunca markup � um hostname com < e > fica literal.
   c.setAttribute('aria-label', `${m.label}, ${rotuloStatus(m.status)}`);
 
   const topo = el('header', 'cartao-topo');
@@ -520,7 +526,7 @@ const round1 = (v) => (v === null || v === undefined ? null : Math.round(Number(
 const pct = (v) => (v === null || v === undefined ? null : `${round1(v)}%`);
 
 function uptime(segundos) {
-  if (segundos === null || segundos === undefined || segundos < 0) return '–';
+  if (segundos === null || segundos === undefined || segundos < 0) return '�';
   const s = Number(segundos);
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
@@ -532,7 +538,7 @@ function uptime(segundos) {
 
 function desdeQuando(segundos, status) {
   if (status === 'never_seen') return 'nunca reportou';
-  if (segundos === null || segundos === undefined) return '–';
+  if (segundos === null || segundos === undefined) return '�';
 
   const s = Number(segundos);
   if (s < 90) return `há ${Math.round(s)}s`;
@@ -548,7 +554,7 @@ async function abrirPainel(m) {
   Estado.maquinaAberta = m;
 
   txt($('painel-titulo'), m.label);
-  txt($('painel-sub'), `${m.site_code} — ${m.site_name} · ${m.brand_name}`);
+  txt($('painel-sub'), `${m.site_code} � ${m.site_name} · ${m.brand_name}`);
 
   const dl = $('painel-dados');
   limpar(dl);
@@ -556,7 +562,7 @@ async function abrirPainel(m) {
   const campos = [
     ['Status', rotuloStatus(m.status)],
     ['Hostname', m.hostname],
-    ['Último contato', desdeQuando(m.seconds_since_seen, m.status)],
+    ['�altimo contato', desdeQuando(m.seconds_since_seen, m.status)],
     ['Perfil', m.role_name || m.role_code],
     ['IP na LAN', m.ip_lan],
     ['Sistema', m.os_caption],
@@ -741,14 +747,216 @@ function conectarRealtime() {
 // -----------------------------------------------------------------------------
 // Ligação de eventos
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Adicionar PC
+// -----------------------------------------------------------------------------
+// O comando gerado é a única coisa que o operador precisa levar para a outra
+// máquina. Ele embute servidor, token e segredo, e o script baixa o agente do
+// próprio endpoint de ingestão � não há pasta para copiar nem arquivo para editar.
+let opcoesCadastro = null;
+
+function urlIngestao() {
+  // A ingestão fica noutra porta, e o outro PC precisa do ENDERE�!O DESTA MÁQUINA
+  // NA REDE, não de 127.0.0.1 � que, lá, aponta para ele mesmo.
+  //
+  // Se o dashboard está sendo aberto por 127.0.0.1, esse endereço não serve para
+  // ninguém de fora, e é por isso que devTokenIngest traz o IP da LAN detectado
+  // pelo dev-up.
+  if (CFG.ingestUrlLan) return CFG.ingestUrlLan;
+  return null;
+}
+
+async function abrirModalAdd() {
+  $('add-erro').hidden = true;
+  $('add-passo1').hidden = false;
+  $('add-passo2').hidden = true;
+  $('modal-fundo').hidden = false;
+  $('modal-add').hidden = false;
+
+  if (!opcoesCadastro) {
+    try {
+      opcoesCadastro = await rpc('opcoes_cadastro');
+    } catch (e) {
+      erroAdd(`não foi possível carregar as opções: ${e.message}`);
+      return;
+    }
+  }
+
+  if (!opcoesCadastro.is_admin) {
+    erroAdd('somente administradores podem cadastrar máquinas.');
+    $('btn-gerar').disabled = true;
+    return;
+  }
+
+  const sel = $('add-loja');
+  limpar(sel);
+  for (const loja of opcoesCadastro.lojas) {
+    const o = el('option', null, `${loja.code} � ${loja.name}`);
+    o.value = loja.code;
+    sel.appendChild(o);
+  }
+  const nova = el('option', null, '+ criar loja nova');
+  nova.value = '__nova__';
+  sel.appendChild(nova);
+
+  const perfis = $('add-perfil');
+  limpar(perfis);
+  for (const p of opcoesCadastro.perfis) {
+    const o = el('option', null, p.name);
+    o.value = p.code;
+    perfis.appendChild(o);
+  }
+  perfis.value = 'pdv';
+  aplicarServicosDoPerfil();
+
+  $('add-nome').focus();
+}
+
+function aplicarServicosDoPerfil() {
+  const perfil = opcoesCadastro?.perfis?.find((p) => p.code === $('add-perfil').value);
+  const svc = perfil?.services;
+  // Sugere os serviços do perfil, mas não impõe: um PDV pode ter o serviço do ERP
+  // que os outros não têm.
+  $('add-servicos').value = Array.isArray(svc) && svc.length
+    ? svc.join(', ')
+    : 'Spooler, Dhcp, Dnscache';
+}
+
+function fecharModalAdd() {
+  $('modal-add').hidden = true;
+  $('modal-fundo').hidden = true;
+}
+
+function erroAdd(msg) {
+  const e = $('add-erro');
+  txt(e, msg);
+  e.hidden = false;
+}
+
+async function gerarComando() {
+  const nome = $('add-nome').value.trim();
+  const loja = $('add-loja').value;
+  const perfil = $('add-perfil').value;
+  const servicos = $('add-servicos').value
+    .split(',').map((s) => s.trim()).filter(Boolean);
+
+  $('add-erro').hidden = true;
+
+  if (!nome) { erroAdd('informe o nome da máquina'); $('add-nome').focus(); return; }
+
+  let codigoLoja = loja;
+  let nomeLoja = null;
+
+  if (loja === '__nova__') {
+    codigoLoja = $('add-loja-codigo').value.trim();
+    nomeLoja = $('add-loja-nome').value.trim();
+    if (!codigoLoja) { erroAdd('informe o código da loja nova'); return; }
+  }
+
+  const alvo = urlIngestao();
+  if (!alvo) {
+    erroAdd('endereço de ingestão desconhecido. Rode .\\scripts\\dev-up.ps1 novamente.');
+    return;
+  }
+
+  const btn = $('btn-gerar');
+  const rotulo = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Gerando...';
+
+  try {
+    const r = await rpc('provisionar_maquina_ui', {
+      p_site_code: codigoLoja,
+      p_label: nome,
+      p_role_code: perfil,
+      p_services: servicos.length ? servicos : null,
+      p_site_name: nomeLoja,
+    });
+
+    if (!r?.token) throw new Error('resposta sem token');
+
+    // scriptblock::Create e não `iex` direto: só assim é possível PASSAR
+    // ARGUMENTOS a um script baixado. Com `iex`, os parâmetros seriam ignorados
+    // em silêncio e o instalador rodaria sem token.
+    const base = `& ([scriptblock]::Create((irm '${alvo}/instalar.ps1'))) `
+      + `-Servidor '${alvo}' -Token '${r.token}' -Segredo '${CFG.ingestSecret}'`;
+
+    const comServicos = servicos.length
+      ? `${base} -Servicos '${servicos.join(',')}'`
+      : base;
+
+    txt($('add-comando'), comServicos);
+    txt($('add-comando-tarefa'), `${comServicos} -ComTarefa`);
+
+    txt($('add-resumo'),
+      `${r.label} cadastrada em ${r.site_code}${r.site_criada ? ' (loja criada agora)' : ''}. `
+      + `Token ${r.token_prefix}⬦`);
+
+    $('add-passo1').hidden = true;
+    $('add-passo2').hidden = false;
+
+    // Atualiza a tela: a máquina nova já aparece como "nunca vista" até o
+    // primeiro envio, o que é a informação correta.
+    carregar();
+  } catch (e) {
+    erroAdd(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = rotulo;
+  }
+}
+
+async function copiar(idOrigem, botao) {
+  const texto = $(idOrigem).textContent;
+  const original = botao.textContent;
+
+  try {
+    await navigator.clipboard.writeText(texto);
+    botao.textContent = 'Copiado!';
+  } catch (_) {
+    // clipboard exige contexto seguro; em http:// pode falhar. Seleciona o texto
+    // para o operador copiar com Ctrl+C em vez de deixá-lo sem saída.
+    const faixa = document.createRange();
+    faixa.selectNodeContents($(idOrigem));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(faixa);
+    botao.textContent = 'selecionado � Ctrl+C';
+  }
+
+  setTimeout(() => { botao.textContent = original; }, 2500);
+}
+
 function ligarEventos() {
   // Sem handler de formulário de login: ele não existe mais nesta página.
   $('btn-atualizar').addEventListener('click', () => carregar());
+
+  $('btn-adicionar').addEventListener('click', abrirModalAdd);
+  $('btn-fechar-modal').addEventListener('click', fecharModalAdd);
+  $('modal-fundo').addEventListener('click', fecharModalAdd);
+  $('btn-gerar').addEventListener('click', gerarComando);
+  $('btn-add-outro').addEventListener('click', abrirModalAdd);
+  $('btn-copiar-cmd').addEventListener('click', (ev) => copiar('add-comando', ev.currentTarget));
+  $('btn-copiar-tarefa').addEventListener('click', (ev) => copiar('add-comando-tarefa', ev.currentTarget));
+
+  $('add-perfil').addEventListener('change', aplicarServicosDoPerfil);
+
+  $('add-loja').addEventListener('change', (ev) => {
+    const nova = ev.target.value === '__nova__';
+    $('add-nova-loja').hidden = !nova;
+    if (nova) $('add-loja-codigo').focus();
+  });
+
+  $('add-nome').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); gerarComando(); }
+  });
   $('btn-fechar-painel').addEventListener('click', fecharPainel);
   $('painel-fundo').addEventListener('click', fecharPainel);
 
   document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && !$('painel').hidden) fecharPainel();
+    if (ev.key !== 'Escape') return;
+    if (!$('modal-add').hidden) { fecharModalAdd(); return; }
+    if (!$('painel').hidden) fecharPainel();
   });
 
   $('filtro-marca').addEventListener('change', (ev) => {
@@ -806,7 +1014,7 @@ async function principal() {
   // -------------------------------------------------------------------- token
   if (CFG.authMode === 'supabase') {
     // Em produção a autenticação é obrigatória. O login vive em login.html, que
-    // guarda o token e volta para cá — o dashboard nunca desenha formulário.
+    // guarda o token e volta para cá � o dashboard nunca desenha formulário.
     const guardado = lerTokenGuardado();
     if (!guardado) {
       window.location.href = 'login.html';
@@ -846,3 +1054,4 @@ async function principal() {
 }
 
 principal();
+

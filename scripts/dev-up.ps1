@@ -543,6 +543,14 @@ $devConfig = [ordered]@{
   restUrl    = $restUrl
   authMode   = 'local'
   pedirLogin = [bool]$ComLogin
+
+  # Endereco da ingestao NA LAN e o segredo compartilhado.
+  #
+  # O dashboard usa os dois para montar o comando de instalacao de outro PC. Tem
+  # de ser o IP da rede, e nao 127.0.0.1: na outra maquina, loopback aponta para
+  # ela mesma, e o agente tentaria falar consigo proprio.
+  ingestUrlLan = $ingestUrlLan
+  ingestSecret = $ingestSecret
 }
 
 if (-not $ComLogin) {

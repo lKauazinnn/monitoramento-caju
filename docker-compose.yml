@@ -87,6 +87,11 @@ services:
       # lib.ts vem do MESMO arquivo que a Edge Function usa. Duplicar a lógica
       # aqui criaria duas versões da mesma regra.
       - ./supabase/functions/ingest/lib.ts:/app/lib.ts:ro
+      # Servidos por GET, sem segredo: sao o agente e o instalador, publicos no
+      # repositorio. Servir daqui e nao do nginx e o que permite manter o
+      # dashboard restrito a loopback — a unica porta na rede continua sendo esta.
+      - ./agent/agente-powershell.ps1:/app/agente.ps1:ro
+      - ./docker/ingest-local/instalar.ps1:/app/instalar.ps1:ro
     working_dir: /app
     # --experimental-strip-types: o servidor importa lib.ts direto, sem build.
     command: ["node", "--experimental-strip-types", "server.mjs"]

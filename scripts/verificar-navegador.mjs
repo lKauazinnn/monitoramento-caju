@@ -295,6 +295,104 @@ try {
   verificar('painel listou os dados da máquina', dados > 8, `${dados} campos`);
 
   // =========================================================================
+  console.log('\n== Adicionar PC pela interface ==');
+  // =========================================================================
+  erros.length = 0;
+
+  await js("document.getElementById('btn-adicionar').click(); true");
+  await dormir(1500);
+
+  const modal = await js(`
+    ({
+      aberto: !document.getElementById('modal-add').hidden,
+      lojas:  document.querySelectorAll('#add-loja option').length,
+      perfis: document.querySelectorAll('#add-perfil option').length,
+      servicos: document.getElementById('add-servicos').value,
+      erro: document.getElementById('add-erro').hidden
+              ? null : document.getElementById('add-erro').textContent,
+    })
+  `);
+
+  verificar('modal abriu', modal.aberto === true, JSON.stringify(modal));
+  verificar('nenhum erro ao abrir', modal.erro === null, modal.erro);
+  verificar('lojas carregadas (+ opção de criar nova)', modal.lojas >= 2, `${modal.lojas} opções`);
+  verificar('perfis carregados', modal.perfis === 3, `${modal.perfis} perfis`);
+  verificar('serviços do perfil sugeridos', (modal.servicos || '').length > 0, modal.servicos);
+
+  // Nome vazio tem de barrar ANTES de emitir token: um cadastro sem nome criaria
+  // máquina inútil e um token pendurado nela.
+  await js("document.getElementById('btn-gerar').click(); true");
+  await dormir(1200);
+  const semNome = await js(`
+    ({ erro: document.getElementById('add-erro').hidden ? null : document.getElementById('add-erro').textContent,
+       passo2: !document.getElementById('add-passo2').hidden })
+  `);
+  verificar('nome vazio é recusado sem emitir token',
+    semNome.erro !== null && semNome.passo2 === false, JSON.stringify(semNome));
+
+  // Cadastro de verdade.
+  const nomeTeste = `PDV-UI-${Date.now().toString().slice(-6)}`;
+  await js(`
+    (() => {
+      document.getElementById('add-nome').value = ${JSON.stringify(nomeTeste)};
+      document.getElementById('add-servicos').value = 'Spooler, Dhcp';
+      document.getElementById('btn-gerar').click();
+      return true;
+    })()
+  `);
+  await dormir(3000);
+
+  const gerado = await js(`
+    ({
+      passo2:  !document.getElementById('add-passo2').hidden,
+      passo1:  !document.getElementById('add-passo1').hidden,
+      resumo:  document.getElementById('add-resumo').textContent,
+      comando: document.getElementById('add-comando').textContent,
+      tarefa:  document.getElementById('add-comando-tarefa').textContent,
+      erro:    document.getElementById('add-erro').hidden
+                 ? null : document.getElementById('add-erro').textContent,
+    })
+  `);
+
+  verificar('comando foi gerado', gerado.passo2 === true && gerado.passo1 === false,
+    gerado.erro || JSON.stringify(gerado).slice(0, 200));
+  verificar('resumo cita a máquina', (gerado.resumo || '').includes(nomeTeste), gerado.resumo);
+
+  // O comando precisa ter TODAS as partes, senão falha na outra máquina.
+  const partes = {
+    'scriptblock (permite passar argumentos)': /scriptblock\]::Create/.test(gerado.comando),
+    'baixa o instalador': /instalar\.ps1/.test(gerado.comando),
+    'traz o token da máquina': /-Token 'mon_[0-9a-f]{64}'/.test(gerado.comando),
+    'traz o segredo compartilhado': /-Segredo '\S+'/.test(gerado.comando),
+    'aponta para o IP da LAN, não 127.0.0.1': /-Servidor 'http:\/\/(?!127\.0\.0\.1)/.test(gerado.comando),
+    'traz os serviços informados': /-Servicos 'Spooler,Dhcp'/.test(gerado.comando),
+  };
+  for (const [nome, ok_] of Object.entries(partes)) {
+    verificar(`comando ${nome}`, ok_ === true, gerado.comando.slice(0, 220));
+  }
+
+  verificar('variante com -ComTarefa oferecida', /-ComTarefa$/.test((gerado.tarefa || '').trim()),
+    gerado.tarefa.slice(-40));
+
+  verificar('nenhuma exceção no fluxo de adicionar', erros.length === 0, erros.join('\n        '));
+
+  // A máquina nova deve aparecer no banco como nunca vista.
+  const noBanco = execFileSync('docker', [
+    'exec', 'monitor-db', 'psql', '-U', 'postgres', '-t', '-A', '-c',
+    `select count(*) from public.machines where label = '${nomeTeste}'`,
+  ], { encoding: 'utf8' }).trim();
+  verificar('máquina foi cadastrada no banco', noBanco === '1', `count=${noBanco}`);
+
+  // Limpa a máquina de teste.
+  execFileSync('docker', ['exec', 'monitor-db', 'psql', '-U', 'postgres', '-q', '-c',
+    `delete from public.machines where label = '${nomeTeste}'`], { encoding: 'utf8' });
+
+  await js("document.getElementById('btn-fechar-modal').click(); true");
+  await dormir(600);
+  const fechou = await js("document.getElementById('modal-add').hidden");
+  verificar('modal fecha', fechou === true);
+
+  // =========================================================================
   console.log('\n== Token inválido guardado ==');
   // =========================================================================
   // Sem tela de login para onde voltar, um token recusado tem de produzir uma

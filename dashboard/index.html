@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Monitoramento de Infraestrutura</title>
 
-  <!-- NÃO EXISTE TELA DE LOGIN NESTA PÁGINA.
+  <!-- NÒO EXISTE TELA DE LOGIN NESTA PÁGINA.
        Na stack local o dashboard abre direto, com o token que o dev-up.ps1
        grava em dev-config.json. No modo Supabase o login vive em login.html,
-       que autentica e redireciona para cá — este arquivo nunca desenha
+       que autentica e redireciona para cá � este arquivo nunca desenha
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=8" é pedir outro
-       recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=8">
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=9" é pedir outro
+       recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE N�aMERO. -->
+  <link rel="stylesheet" href="styles.css?v=9">
 </head>
 <body>
 
@@ -23,23 +23,24 @@
   <header class="topo">
     <div class="topo-esq">
       <h1>Monitoramento</h1>
-      <span id="indicador-conexao" class="pill pill-neutro">conectando…</span>
+      <span id="indicador-conexao" class="pill pill-neutro">conectando⬦</span>
     </div>
 
     <div class="topo-dir">
       <span id="rotulo-usuario" class="usuario"></span>
+      <button id="btn-adicionar" class="btn-primario" type="button">+ Adicionar PC</button>
       <button id="btn-atualizar" class="btn-secundario" type="button">Atualizar</button>
     </div>
   </header>
 
   <section class="tiras" aria-label="Resumo geral">
-    <div class="tira"><span class="tira-num" id="kpi-total">–</span><span class="tira-rot">máquinas</span></div>
-    <div class="tira tira-ok"><span class="tira-num" id="kpi-online">–</span><span class="tira-rot">online</span></div>
-    <div class="tira tira-ruim"><span class="tira-num" id="kpi-offline">–</span><span class="tira-rot">offline</span></div>
-    <div class="tira"><span class="tira-num" id="kpi-nunca">–</span><span class="tira-rot">nunca vistas</span></div>
-    <div class="tira tira-alerta"><span class="tira-num" id="kpi-alertas">–</span><span class="tira-rot">alertas abertos</span></div>
-    <div class="tira tira-alerta"><span class="tira-num" id="kpi-disco">–</span><span class="tira-rot">disco crítico</span></div>
-    <div class="tira tira-alerta"><span class="tira-num" id="kpi-servicos">–</span><span class="tira-rot">serviços parados</span></div>
+    <div class="tira"><span class="tira-num" id="kpi-total">�</span><span class="tira-rot">máquinas</span></div>
+    <div class="tira tira-ok"><span class="tira-num" id="kpi-online">�</span><span class="tira-rot">online</span></div>
+    <div class="tira tira-ruim"><span class="tira-num" id="kpi-offline">�</span><span class="tira-rot">offline</span></div>
+    <div class="tira"><span class="tira-num" id="kpi-nunca">�</span><span class="tira-rot">nunca vistas</span></div>
+    <div class="tira tira-alerta"><span class="tira-num" id="kpi-alertas">�</span><span class="tira-rot">alertas abertos</span></div>
+    <div class="tira tira-alerta"><span class="tira-num" id="kpi-disco">�</span><span class="tira-rot">disco crítico</span></div>
+    <div class="tira tira-alerta"><span class="tira-num" id="kpi-servicos">�</span><span class="tira-rot">serviços parados</span></div>
   </section>
 
   <nav class="barra-filtros" aria-label="Filtros">
@@ -66,7 +67,7 @@
   </nav>
 
   <main id="conteudo" aria-live="polite">
-    <p class="vazio">Carregando…</p>
+    <p class="vazio">Carregando⬦</p>
   </main>
 </div>
 
@@ -81,7 +82,7 @@
       <h2 id="painel-titulo"></h2>
       <p id="painel-sub" class="painel-sub"></p>
     </div>
-    <button id="btn-fechar-painel" class="btn-fechar" type="button" aria-label="Fechar">×</button>
+    <button id="btn-fechar-painel" class="btn-fechar" type="button" aria-label="Fechar">�</button>
   </header>
 
   <div class="painel-corpo">
@@ -102,6 +103,83 @@
   </div>
 </aside>
 
+<!-- =========================================================================
+     Adicionar PC
+     =========================================================================
+     Dois passos e nada mais: preencher o nome e copiar um comando. O trabalho
+     de gerar token, montar config e baixar o agente acontece do outro lado. -->
+<div id="modal-fundo" class="painel-fundo" hidden></div>
+
+<div id="modal-add" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
+  <header class="modal-topo">
+    <h2 id="modal-titulo">Adicionar um PC ao monitoramento</h2>
+    <button id="btn-fechar-modal" class="btn-fechar" type="button" aria-label="Fechar">�</button>
+  </header>
+
+  <!-- Passo 1: formulário -->
+  <div id="add-passo1" class="modal-corpo">
+    <label for="add-nome">Nome da máquina</label>
+    <input type="text" id="add-nome" placeholder="PDV 02" autocomplete="off">
+    <p class="dica">Como ela vai aparecer no dashboard.</p>
+
+    <label for="add-loja">Loja</label>
+    <select id="add-loja"></select>
+
+    <div id="add-nova-loja" hidden>
+      <label for="add-loja-codigo">Código da loja nova</label>
+      <input type="text" id="add-loja-codigo" placeholder="BSB-003" autocomplete="off">
+      <label for="add-loja-nome">Nome da loja</label>
+      <input type="text" id="add-loja-nome" placeholder="Cajupar Sudoeste" autocomplete="off">
+    </div>
+
+    <label for="add-perfil">Perfil</label>
+    <select id="add-perfil"></select>
+
+    <label for="add-servicos">Serviços críticos</label>
+    <input type="text" id="add-servicos" placeholder="Spooler, Dhcp, Dnscache" autocomplete="off">
+    <p class="dica">
+      Nome curto do serviço, separado por vírgula. Não use o nome exibido
+      (<em>Spooler de Impressão</em>) � ele muda com o idioma do Windows.
+    </p>
+
+    <p id="add-erro" class="erro" hidden></p>
+
+    <button id="btn-gerar" class="btn-primario largo" type="button">Gerar comando de instalação</button>
+  </div>
+
+  <!-- Passo 2: comando pronto -->
+  <div id="add-passo2" class="modal-corpo" hidden>
+    <p class="ok-msg" id="add-resumo"></p>
+
+    <h3>No outro PC, abra o PowerShell e cole isto:</h3>
+    <div class="comando-caixa">
+      <pre id="add-comando"></pre>
+      <button id="btn-copiar-cmd" class="btn-primario" type="button">Copiar comando</button>
+    </div>
+
+    <details class="detalhes">
+      <summary>Para o agente voltar sozinho depois de reiniciar o Windows</summary>
+      <p class="dica">
+        Rode o mesmo comando com <code>-ComTarefa</code> no fim, num PowerShell
+        <strong>como administrador</strong>. Ele cria uma tarefa agendada que roda
+        como SYSTEM � e aí temperatura e SMART também passam a ser coletados.
+      </p>
+      <div class="comando-caixa">
+        <pre id="add-comando-tarefa"></pre>
+        <button id="btn-copiar-tarefa" class="btn-secundario" type="button">Copiar</button>
+      </div>
+    </details>
+
+    <p class="aviso-token">
+      Este comando contém o token desta máquina e <strong>não será mostrado de
+      novo</strong>. Se perder, cadastre a máquina outra vez � o token antigo pode
+      ser revogado depois.
+    </p>
+
+    <button id="btn-add-outro" class="btn-secundario largo" type="button">Adicionar outro PC</button>
+  </div>
+</div>
+
 <div id="brinde" class="brinde" hidden role="status"></div>
 
 <!-- Faixa de erro.
@@ -116,7 +194,8 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=8"></script>
-<script src="dash.js?v=8"></script>
+<script src="config.js?v=9"></script>
+<script src="dash.js?v=9"></script>
 </body>
 </html>
+
