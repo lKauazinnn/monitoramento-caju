@@ -92,6 +92,7 @@ try {
   let id = 0;
   const pendentes = new Map();
   const erros = [];
+  const errosRede = [];
   const console_ = [];
   const requisicoes = [];
 
@@ -112,8 +113,16 @@ try {
       const txt = (m.params.args || []).map((a) => a.value ?? a.description ?? '').join(' ');
       console_.push(`${m.params.type}: ${txt}`);
     }
+    // Erro de REDE vai para uma lista separada de exceção de JavaScript.
+    //
+    // A distinção importa: um 401 registrado pelo navegador é frequentemente o
+    // comportamento CORRETO (token inválido sendo recusado), enquanto uma exceção
+    // de JavaScript nunca é. Misturar os dois fazia o teste acusar defeito onde
+    // havia acerto.
     if (m.method === 'Log.entryAdded' && m.params.entry.level === 'error') {
-      erros.push(`${m.params.entry.source}: ${m.params.entry.text}`);
+      const e = m.params.entry;
+      if (e.source === 'network') errosRede.push(e.text);
+      else erros.push(`${e.source}: ${e.text}`);
     }
     if (m.method === 'Network.responseReceived') {
       requisicoes.push({ url: m.params.response.url, status: m.params.response.status });
@@ -299,6 +308,69 @@ try {
 
   const dados = await js("document.querySelectorAll('#painel-dados dd').length");
   verificar('painel listou os dados da máquina', dados > 8, `${dados} campos`);
+
+  // =========================================================================
+  console.log('\n== Estado sujo: sessão invalida guardada + painel aberto ==');
+  // =========================================================================
+  // Reproduz o que foi observado no navegador do usuário: uma sessão antiga em
+  // sessionStorage e o painel de detalhe aberto. Antes da correção isso deixava a
+  // tela misturada (login visível + painel aberto + app pendurado), e nesse
+  // estado clicar em Entrar parecia não fazer nada.
+  erros.length = 0;
+  errosRede.length = 0;
+
+  await js(`
+    (() => {
+      sessionStorage.setItem('monitor.sessao.v2', JSON.stringify({
+        token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJsaXhvIn0.assinatura-invalida',
+        usuario: 'sessao velha',
+      }));
+      return true;
+    })()
+  `);
+
+  await cmd('Page.navigate', { url: `${URL_DASH}/?v=teste-sessao-suja` });
+  await dormir(4000);
+
+  const st = await js(`
+    ({
+      login:  !document.getElementById('tela-login').hidden,
+      app:    !document.getElementById('app').hidden,
+      painel: !document.getElementById('painel').hidden,
+      erro:   document.getElementById('erro-login').hidden
+                ? null : document.getElementById('erro-login').textContent,
+      sessao: sessionStorage.getItem('monitor.sessao.v2'),
+    })
+  `);
+
+  verificar('com sessão inválida, a tela de login aparece', st.login === true, JSON.stringify(st));
+  verificar('o app NÃO fica pendurado visível', st.app === false, `app visível=${st.app}`);
+  verificar('o painel NÃO fica aberto atrás do login', st.painel === false, `painel visível=${st.painel}`);
+  verificar('a sessão inválida foi descartada', st.sessao === null, `sessao=${st.sessao}`);
+  verificar('o motivo é mostrado ao usuário', (st.erro || '').length > 0, `erro=${st.erro}`);
+  verificar('nenhuma exceção no caminho da sessão inválida', erros.length === 0, erros.join('\n        '));
+
+  // E, a partir desse estado, o login TEM de funcionar.
+  await js(`
+    (() => {
+      document.getElementById('email').value = ${JSON.stringify(email)};
+      document.getElementById('senha').value = ${JSON.stringify(senha)};
+      document.getElementById('btn-entrar').click();
+      return true;
+    })()
+  `);
+  await dormir(3500);
+
+  const depois = await js(`
+    ({
+      login: !document.getElementById('tela-login').hidden,
+      app:   !document.getElementById('app').hidden,
+      kpi:   document.getElementById('kpi-total').textContent,
+    })
+  `);
+  verificar('login funciona a partir do estado sujo', depois.app === true && depois.login === false,
+    JSON.stringify(depois));
+  verificar('dados carregaram depois disso', depois.kpi === '5', `kpi=${depois.kpi}`);
 
   // =========================================================================
   console.log('\n== Página de diagnóstico ==');

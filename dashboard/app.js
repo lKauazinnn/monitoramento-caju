@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.4';
+const BUILD = '2026-08-06.5';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -190,24 +190,58 @@ function carregarSessao() {
   }
 }
 
+/**
+ * Leva a interface ao estado "deslogado", SEMPRE por completo.
+ *
+ * É a única função autorizada a mostrar a tela de login, e a razão é um bug real:
+ * antes, dois caminhos em principal() faziam apenas
+ * `$('tela-login').hidden = false` sem tocar no resto. O resultado era uma tela
+ * impossível — o formulário de login aparecendo com o painel de detalhe aberto ao
+ * lado e o app meio montado por baixo. E, nesse estado, clicar em Entrar parecia
+ * não fazer nada, porque a tela já estava lá.
+ *
+ * Concentrar a transição aqui elimina a classe inteira de estado inconsistente.
+ */
+function mostrarLogin(mensagem) {
+  if (Estado.timerPoll) { clearInterval(Estado.timerPoll); Estado.timerPoll = null; }
+  if (Estado.canalRealtime) {
+    try { Estado.canalRealtime.close(); } catch (_) { /* já fechado */ }
+    Estado.canalRealtime = null;
+  }
+
+  Estado.maquinaAberta = null;
+
+  // Destrói os gráficos: deixá-los vivos acumula instâncias do Chart.js a cada
+  // entrada e saída, e o consumo de memória cresce sem parar.
+  for (const id of Object.keys(Estado.graficos)) {
+    try { Estado.graficos[id].destroy(); } catch (_) { /* já destruído */ }
+    delete Estado.graficos[id];
+  }
+
+  $('app').hidden = true;
+  $('painel').hidden = true;
+  $('painel-fundo').hidden = true;
+  $('brinde').hidden = true;
+  $('tela-login').hidden = false;
+
+  const e = $('erro-login');
+  if (mensagem) {
+    txt(e, mensagem);
+    e.hidden = false;
+  } else {
+    e.hidden = true;
+  }
+
+  $('senha').value = '';
+  $('btn-entrar').disabled = false;
+}
+
 function sair(mensagem) {
   Estado.token = null;
   Estado.usuario = null;
   try { sessionStorage.removeItem(CHAVE_SESSAO); } catch (_) { /* nada a fazer */ }
 
-  if (Estado.timerPoll) clearInterval(Estado.timerPoll);
-  if (Estado.canalRealtime) { try { Estado.canalRealtime.close(); } catch (_) { /* já fechado */ } }
-
-  $('app').hidden = true;
-  $('painel').hidden = true;
-  $('painel-fundo').hidden = true;
-  $('tela-login').hidden = false;
-
-  if (mensagem) {
-    const e = $('erro-login');
-    txt(e, mensagem);
-    e.hidden = false;
-  }
+  mostrarLogin(mensagem);
 }
 
 async function entrarSupabase(email, senha) {
@@ -902,7 +936,7 @@ async function principal() {
       // não deixa o usuário digitar credencial num formulário que não vai a
       // lugar nenhum.
       mostrarFalhaGlobal('Não foi possível descobrir o endereço da API', e.message);
-      $('tela-login').hidden = false;
+      mostrarLogin(null);
       $('btn-entrar').disabled = true;
       return;
     }
@@ -918,16 +952,25 @@ async function principal() {
     aviso.hidden = false;
   }
 
+  // Sessão guardada de um acesso anterior. Se ela não servir mais (token
+  // expirado, segredo trocado, banco recriado), NÃO basta mostrar o login: é
+  // preciso desfazer o que iniciar() já tinha montado. Sem isso a tela ficava
+  // misturada e o botão Entrar parecia inerte.
   if (carregarSessao()) {
     try {
       await iniciar();
+      if (!$('app').hidden) return;   // entrou de fato
+      // iniciar() terminou mas o app não está visível: algo chamou sair() no
+      // caminho (token recusado). Segue para a tela de login, já limpa.
+    } catch (e) {
+      console.warn('[monitor] sessão guardada não serve mais:', e.message);
+      sair('Sua sessão anterior expirou. Entre novamente.');
+      $('email').focus();
       return;
-    } catch (_) {
-      // Token guardado não vale mais: cai para a tela de login.
     }
   }
 
-  $('tela-login').hidden = false;
+  mostrarLogin(null);
   $('email').focus();
 }
 
