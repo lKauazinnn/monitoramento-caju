@@ -406,7 +406,7 @@ verify_jwt = false
     Info  'crie o token em https://supabase.com/dashboard/account/tokens'
   }
 
-  $r = Supa @('link', '--project-ref', $ProjetoRef) -Mostrar
+  $r = Supa @('link', '--project-ref', $ProjetoRef, '--yes') -Mostrar
   if ($r.Codigo -ne 0) {
     Erro 'nao foi possivel ligar ao projeto.'
     Aviso 'Se a mensagem fala de autenticacao, rode primeiro:  supabase login'
@@ -464,7 +464,13 @@ verify_jwt = false
   foreach ($host_ in $candidatas) {
     $urlBanco = "postgresql://postgres.${ProjetoRef}:$senhaUrl@$host_.pooler.supabase.com:5432/postgres"
 
-    $r = Supa @('db', 'push', '--db-url', $urlBanco)
+    # --yes: sem TTY, um prompt de confirmacao trava o script para sempre.
+    # --include-all: a tabela de historico do CLI pode estar vazia no projeto
+    #   (migration aplicada por fora, pelo SQL editor ou psql). Sem isto ele
+    #   ignoraria arquivos com carimbo anterior ao ultimo registrado. Todas as
+    #   migrations deste projeto sao idempotentes — reaplicar e seguro, e foi
+    #   verificado rodando cada uma duas vezes.
+    $r = Supa @('db', 'push', '--db-url', $urlBanco, '--include-all', '--yes')
 
     if ($r.Codigo -eq 0) {
       Ok "migrations aplicadas via $host_.pooler.supabase.com"
@@ -505,11 +511,11 @@ verify_jwt = false
   # -------------------------------------------------------------------------
   Passo 'Publicando a Edge Function'
   # -------------------------------------------------------------------------
-  $r = Supa @('functions', 'deploy', 'ingest', '--no-verify-jwt') -Mostrar
+  $r = Supa @('functions', 'deploy', 'ingest', '--no-verify-jwt', '--yes') -Mostrar
   if ($r.Codigo -ne 0) {
     # Versoes novas removeram a flag. Repete sem ela: o config.toml ja cobre.
     Aviso 'deploy com --no-verify-jwt falhou; tentando sem a flag (config.toml cobre)'
-    $r = Supa @('functions', 'deploy', 'ingest') -Mostrar
+    $r = Supa @('functions', 'deploy', 'ingest', '--yes') -Mostrar
   }
   if ($r.Codigo -ne 0) {
     Erro 'deploy da funcao falhou.'
