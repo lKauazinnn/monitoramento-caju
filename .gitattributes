@@ -1,0 +1,6 @@
+# cmd.exe tropeca em LF na continuacao `^` de linha: mantem CRLF sempre.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+# .ps1 carregam BOM UTF-8 de proposito (sem ele o PowerShell 5.1 le como ANSI e
+# um acento quebra a analise sintatica). Nao deixa o git normalizar.
+*.ps1 -text

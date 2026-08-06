@@ -5,32 +5,68 @@ NAT, sem depender de VPN.
 
 ---
 
+## Antes do primeiro comando: a política de execução
+
+O Windows recusa `.ps1` por padrão, com esta mensagem:
+
+> a execução de scripts foi desabilitada neste sistema
+
+Não é defeito do projeto e **não** precisa ser "consertado" na máquina. Chame o
+script pelo PowerShell dizendo a política **daquele processo**:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev-up.ps1
+```
+
+`Bypass` aqui vale só para esse processo e some quando a janela fecha — nenhuma
+configuração da máquina é alterada. Evite `Set-ExecutionPolicy` global: baixar a
+proteção do sistema inteiro para rodar um script é trocar um problema pequeno
+por um permanente.
+
+Para os dois comandos mais usados há atalho de clique duplo, que já faz isso:
+
+| Arquivo | O que faz |
+|---|---|
+| `scripts\dev-up.cmd` | sobe a stack local |
+| `scripts\liberar-firewall.cmd` | libera a porta da ingestão (pede elevação) |
+
+---
+
 ## Rodar agora
 
 Precisa de **Docker Desktop** e **Node 18+**. Nada mais.
 
 ```powershell
-.\scripts\dev-up.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev-up.ps1
 ```
 
-Um comando: sobe Postgres + API + dashboard, aplica as 13 migrations, semeia 3
+Um comando: sobe Postgres + API + dashboard, aplica as migrations, semeia 3
 lojas com 5 máquinas, envia 24 h de métricas pela ingestão real e abre o
 navegador.
 
-No dashboard, clique em **Entrar** — e-mail e senha são ignorados no modo local.
+O dashboard **abre direto**, sem tela de login: a stack local escuta apenas em
+loopback e o token vem do `dev-config.json`. Em produção o login é obrigatório.
 
 ```powershell
-.\scripts\verificar-e2e.mjs   # 36 verificações de ponta a ponta
-docker compose down           # parar
-docker compose down -v        # apagar tudo
+node scripts\verificar-e2e.mjs <email> <senha>   # ponta a ponta
+node scripts\verificar-navegador.mjs <email> <senha>
+node scripts\verificar-remocao.mjs               # remover loja e máquina
+docker compose down                              # parar
+docker compose down -v                           # apagar tudo, inclusive o volume
 ```
 
-Para ver o dashboard atualizando ao vivo:
+O `dev-up` já deixa o simulador rodando ao vivo, uma amostra por minuto. Ele toca
+**apenas nas máquinas da demonstração** (GUID `bbbbbbbb-…`): máquina real nunca
+recebe dado inventado por cima.
 
-```powershell
-.\scripts\simular-agentes.ps1 -Horas 1 -IntervaloSegundos 60 -Continuo `
-    -RestUrl http://127.0.0.1:3001 -ServiceToken <token do dev-up>
-```
+### Para outro PC enviar métricas
+
+Falta liberar a porta no Firewall do Windows **deste** servidor, senão o agente
+do outro PC nem baixa o instalador — e o erro que aparece lá
+("Impossível conectar-se ao servidor remoto") não menciona firewall.
+
+Clique duas vezes em `scripts\liberar-firewall.cmd`. Ele pede a elevação,
+restringe a regra à sua sub-rede e confere se o endpoint responde.
 
 ### O que você vai ver
 

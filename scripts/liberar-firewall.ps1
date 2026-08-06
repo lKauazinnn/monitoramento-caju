@@ -56,11 +56,16 @@ $ehAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $ehAdmin) {
   Erro 'este script precisa de PowerShell COMO ADMINISTRADOR.'
   Write-Host ''
-  Aviso 'Abra o menu Iniciar, digite "PowerShell", clique com o botao direito em'
-  Aviso '"Windows PowerShell" e escolha "Executar como administrador". Depois:'
+  Aviso 'Jeito mais simples: clique duas vezes em'
+  Write-Host "     $repoRoot\scripts\liberar-firewall.cmd" -ForegroundColor White
+  Write-Host '   (ele pede a elevacao e ja contorna a politica de execucao)'
   Write-Host ''
+  Aviso 'Ou, num PowerShell aberto COMO ADMINISTRADOR:'
   Write-Host "     cd '$repoRoot'" -ForegroundColor White
-  Write-Host '     .\scripts\liberar-firewall.ps1' -ForegroundColor White
+  # -ExecutionPolicy Bypass no comando, e nao `.\script.ps1` puro: a politica
+  # padrao do Windows recusa .ps1 com "a execucao de scripts foi desabilitada
+  # neste sistema", e sugerir o comando que falha e pior que nao sugerir nada.
+  Write-Host '     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\liberar-firewall.ps1' -ForegroundColor White
   Write-Host ''
   exit 1
 }
