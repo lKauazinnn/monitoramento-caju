@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=18" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=19" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=18">
+  <link rel="stylesheet" href="styles.css?v=19">
 </head>
 <body>
 
@@ -221,6 +221,9 @@
       </select>
 
       <span class="espaco"></span>
+      <!-- Aparece só quando há filtro: as tiras acima contam a frota inteira, e
+           sem este aviso a pessoa lê os números como se fossem do filtro. -->
+      <span id="escopo-kpi" class="mono atualizacao aviso-escopo" hidden></span>
       <span id="rodape-atualizacao" class="mono atualizacao"></span>
     </nav>
 
@@ -400,7 +403,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=18"></script>
-<script src="dash.js?v=18"></script>
+<script src="config.js?v=19"></script>
+<script src="dash.js?v=19"></script>
 </body>
 </html>

@@ -455,8 +455,19 @@ input::placeholder { color: var(--fg3); }
 /* ---------------------------------------------------------- sparkline --- */
 /* Barras em div, nao canvas: sao poucas dezenas de valores, o navegador desenha
    sem custo, e a barra herda a cor do tema sem precisar redesenhar na troca. */
-.spark { display: flex; align-items: flex-end; gap: 1.5px; height: 26px; margin-top: 2px; }
-.spark span { flex: 1; min-width: 1px; border-radius: 1.5px; background: color-mix(in srgb, var(--info) 55%, transparent); }
+.spark { display: flex; align-items: flex-end; justify-content: flex-start; gap: 1.5px; height: 26px; margin-top: 2px; }
+
+/* max-width e o que impede a barra de MENTIR.
+   Com `flex: 1` puro, uma frota nova — que tem um ou dois baldes de historico —
+   virava um retangulo azul de largura total, que se le como "100% de alguma
+   coisa". Limitada, uma serie curta parece o que e: uma serie curta. */
+.spark span {
+  flex: 1 1 0;
+  min-width: 1px;
+  max-width: 6px;
+  border-radius: 1.5px;
+  background: color-mix(in srgb, var(--info) 55%, transparent);
+}
 .spark span.alta { background: var(--info); }
 .spark-lateral { height: 20px; }
 .spark-lateral span { background: color-mix(in srgb, var(--ok) 55%, transparent); }
@@ -514,6 +525,7 @@ input::placeholder { color: var(--fg3); }
 .barra-filtros select:hover { border-color: var(--bd); }
 .barra-filtros .espaco { flex: 1; }
 .atualizacao { font-size: 10px; color: var(--fg3); }
+.aviso-escopo { color: var(--warn); }
 
 /* ================================================ carga + fila de atencao === */
 .grade-topo {

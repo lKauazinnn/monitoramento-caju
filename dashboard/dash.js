@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.18-loja-nova';
+const BUILD = '2026-08-06.19-frota-nova';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -472,6 +472,15 @@ function desenharResumo() {
   const lojas = new Set(ms.map((m) => m.site_code).filter(Boolean));
   txt($('marca-escopo'), `${lojas.size} loja(s) · ${ms.length} host(s)`);
 
+  // As tiras contam a FROTA INTEIRA, sempre. É a escolha certa — filtrar por
+  // "offline" e ver o contador de offline virar zero seria absurdo —, mas ela
+  // engana quem acabou de filtrar por loja. Então a tela diz.
+  const f = Estado.filtros;
+  const filtrando = !!(f.marca || f.loja || f.status || f.busca.trim());
+  const aviso = $('escopo-kpi');
+  aviso.hidden = !filtrando;
+  if (filtrando) txt(aviso, 'as tiras acima contam a frota inteira');
+
   desenharNavMarcas();
 
   // Título da aba: quem está com a janela em segundo plano vê o problema.
@@ -756,15 +765,23 @@ function desenharFrota(rotulos, cpu, mem) {
     return g;
   };
 
+  // Ponto visível quando a série é curta.
+  //
+  // Uma linha precisa de DOIS pontos para existir. Com `pointRadius: 0` e um
+  // balde só — o caso de uma frota que acabou de começar a reportar — o gráfico
+  // desenhava literalmente nada, e a leitura era "está quebrado" quando o certo
+  // era "ainda não há histórico".
+  const raio = rotulos.length < 4 ? 3 : 0;
+
   Estado.graficos['grafico-frota'] = new Chart(ctx, {
     type: 'line',
     data: {
       labels: rotulos,
       datasets: [
         { label: 'CPU média', data: cpu, borderColor: corCpu, backgroundColor: area(corCpu),
-          borderWidth: 1.8, pointRadius: 0, tension: 0.3, fill: true, spanGaps: false },
+          borderWidth: 1.8, pointRadius: raio, tension: 0.3, fill: true, spanGaps: false },
         { label: 'Memória média', data: mem, borderColor: corMem, backgroundColor: area(corMem),
-          borderWidth: 1.8, pointRadius: 0, tension: 0.3, fill: true, spanGaps: false },
+          borderWidth: 1.8, pointRadius: raio, tension: 0.3, fill: true, spanGaps: false },
       ],
     },
     options: {
