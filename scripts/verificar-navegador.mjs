@@ -422,6 +422,102 @@ try {
   verificar('perfis carregados', modal.perfis === 3, `${modal.perfis} perfis`);
   verificar('serviços do perfil sugeridos', (modal.servicos || '').length > 0, modal.servicos);
 
+  // ---- os campos da loja nova acompanham o select --------------------------
+  //
+  // Regressão real: a visibilidade só era atualizada no evento `change`, e isso
+  // quebrava nos dois sentidos. O caso que apareceu em produção foi o pior: sem
+  // nenhuma loja cadastrada, "+ criar loja nova" é a ÚNICA opção e já vem
+  // selecionada — o operador não muda nada, `change` não dispara, os campos
+  // ficam escondidos, e ao confirmar ele recebe "informe o código da loja nova"
+  // sem ter onde informar.
+  //
+  // A asserção é a INVARIANTE, não o comportamento do clique: campos visíveis se
+  // e somente se `__nova__` estiver selecionado. Assim ela vale em qualquer
+  // caminho que leve o select àquele valor.
+  const visivelNova = () => js(
+    "getComputedStyle(document.getElementById('add-nova-loja')).display !== 'none'");
+
+  await js("document.getElementById('add-loja').value = '__nova__';"
+    + "document.getElementById('add-loja').dispatchEvent(new Event('change'));true");
+  await dormir(400);
+  verificar('escolher "criar loja nova" mostra os campos', (await visivelNova()) === true);
+
+  const primeira = await js(`
+    (() => {
+      const s = document.getElementById('add-loja');
+      const real = [...s.options].find((o) => o.value !== '__nova__');
+      if (!real) return null;
+      s.value = real.value;
+      s.dispatchEvent(new Event('change'));
+      return real.value;
+    })()
+  `);
+  if (primeira) {
+    await dormir(400);
+    verificar('voltar para uma loja real esconde os campos', (await visivelNova()) === false,
+      `loja=${primeira}`);
+  }
+
+  // O CENÁRIO DE PRODUÇÃO: nenhuma loja cadastrada.
+  //
+  // Esvazia o CACHE de opções, não as options do select: reabrir o modal
+  // repovoa o select a partir de `opcoesCadastro`, então remover as options
+  // seria desfeito na hora — foi assim que a primeira versão desta verificação
+  // ficou vazia e passou mesmo com o defeito presente.
+  //
+  // `opcoesCadastro` é um `let` de topo de script clássico: não está em
+  // `window`, mas o nome resolve no escopo global do evaluate.
+  await js(`
+    (() => {
+      document.getElementById('btn-fechar-modal').click();
+      document.getElementById('add-nova-loja').hidden = true;
+      // Guardado para devolver logo abaixo: o resto da suíte cadastra uma
+      // máquina de verdade e precisa das lojas de volta.
+      window.__lojasGuardadas = opcoesCadastro.lojas;
+      opcoesCadastro.lojas = [];
+      return true;
+    })()
+  `);
+  await dormir(300);
+  await js("document.getElementById('btn-adicionar').click(); true");
+  await dormir(1600);
+
+  const soNova = await js(`
+    ({
+      valor: document.getElementById('add-loja').value,
+      opcoes: document.getElementById('add-loja').options.length,
+      visivel: getComputedStyle(document.getElementById('add-nova-loja')).display !== 'none',
+    })
+  `);
+
+  // Sem cláusula de escape: com o cache vazio, `__nova__` É a única opção, e a
+  // asserção tem de valer sempre. Foi o `|| valor !== '__nova__'` da primeira
+  // versão que a tornou verdadeira por construção.
+  verificar('sem nenhuma loja, "criar loja nova" já vem selecionada E os campos aparecem',
+    soNova.opcoes === 1 && soNova.valor === '__nova__' && soNova.visivel === true,
+    JSON.stringify(soNova));
+
+  // Devolve o estado e reabre o modal: daqui para baixo a suíte cadastra uma
+  // máquina de verdade, e precisa de uma loja para escolher. Verificação que
+  // deixa o ambiente sujo derruba as seguintes, e o relatório passa a acusar
+  // defeito onde só houve efeito colateral de teste.
+  await js(`
+    (() => {
+      document.getElementById('btn-fechar-modal').click();
+      opcoesCadastro.lojas = window.__lojasGuardadas || [];
+      delete window.__lojasGuardadas;
+      return opcoesCadastro.lojas.length;
+    })()
+  `);
+  await dormir(300);
+  await js("document.getElementById('btn-adicionar').click(); true");
+  await dormir(1600);
+
+  const restaurado = await js(
+    "document.getElementById('add-loja').options.length");
+  verificar('as lojas voltaram para o restante da suíte', restaurado >= 2,
+    `${restaurado} opções`);
+
   // Nome vazio tem de barrar ANTES de emitir token: um cadastro sem nome criaria
   // máquina inútil e um token pendurado nela.
   await js("document.getElementById('btn-gerar').click(); true");

@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.17-vercel';
+const BUILD = '2026-08-06.18-loja-nova';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1628,6 +1628,20 @@ async function abrirModalAdd() {
   nova.value = '__nova__';
   sel.appendChild(nova);
 
+  // Sincroniza os campos da loja nova com o que ESTÁ selecionado agora.
+  //
+  // Sem esta linha, a visibilidade só era atualizada no evento `change` — e isso
+  // quebrava nos dois sentidos:
+  //
+  //   1. Sem nenhuma loja cadastrada (produção recém-publicada), "+ criar loja
+  //      nova" é a ÚNICA opção e já vem selecionada. O operador não muda nada,
+  //      `change` não dispara, os campos ficam escondidos, e ao confirmar ele
+  //      recebe "informe o código da loja nova" sem ter onde informar.
+  //
+  //   2. Escolher "criar loja nova", fechar e reabrir: o select volta para a
+  //      primeira loja real, mas os campos continuavam visíveis.
+  sincronizarLojaNova();
+
   const perfis = $('add-perfil');
   limpar(perfis);
   for (const p of opcoesCadastro.perfis) {
@@ -1639,6 +1653,18 @@ async function abrirModalAdd() {
   aplicarServicosDoPerfil();
 
   $('add-nome').focus();
+}
+
+/**
+ * Os campos "código" e "nome" da loja nova aparecem se, e somente se,
+ * "+ criar loja nova" estiver selecionado.
+ *
+ * É um espelho do estado, não um alternador: chamada em qualquer momento, ela
+ * deixa a tela coerente com o select. Foi o que faltava — a versão anterior só
+ * reagia ao evento `change`, e evento que não dispara deixa a tela mentindo.
+ */
+function sincronizarLojaNova() {
+  $('add-nova-loja').hidden = $('add-loja').value !== '__nova__';
 }
 
 function aplicarServicosDoPerfil() {
@@ -1782,10 +1808,9 @@ function ligarEventos() {
 
   $('add-perfil').addEventListener('change', aplicarServicosDoPerfil);
 
-  $('add-loja').addEventListener('change', (ev) => {
-    const nova = ev.target.value === '__nova__';
-    $('add-nova-loja').hidden = !nova;
-    if (nova) $('add-loja-codigo').focus();
+  $('add-loja').addEventListener('change', () => {
+    sincronizarLojaNova();
+    if ($('add-loja').value === '__nova__') $('add-loja-codigo').focus();
   });
 
   $('add-nome').addEventListener('keydown', (ev) => {
