@@ -1,0 +1,18 @@
+# =============================================================================
+# O que NUNCA pode ser publicado
+# =============================================================================
+
+# dev-config.json carrega o devToken — um JWT `authenticated` valido da stack
+# local. Publicado, qualquer um que abrisse a URL leria o banco de
+# desenvolvimento sem senha. E o arquivo mais perigoso desta pasta.
+dev-config.json
+dev-token.json
+
+# Ferramenta de bancada: nao tem login, mostra o endereco da API, o estado da
+# sessao e roda um teste de credencial. Util no seu terminal, superficie
+# desnecessaria na internet.
+diagnostico.html
+
+# Gerado por publicar-supabase.ps1. O deploy usa o config.js, que voce copia por
+# cima antes de publicar — mandar os dois so cria a duvida de qual esta valendo.
+config.producao.js
