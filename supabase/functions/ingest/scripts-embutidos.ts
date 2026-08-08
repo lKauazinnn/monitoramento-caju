@@ -2,7 +2,7 @@
 // GERADO — não edite à mão
 // =============================================================================
 // Origem:
-//   agent/agente-powershell.ps1  (44292 bytes, sha256:2f19314061d7ff20)
+//   agent/agente-powershell.ps1  (48256 bytes, sha256:47a12fd6f01cec13)
 //   docker/ingest-local/instalar.ps1  (12532 bytes, sha256:2dbff83b3f196c6c)
 //   scripts/atualizar-agente.ps1  (8832 bytes, sha256:8676568c50530e89)
 //
@@ -63,7 +63,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.4.0'
+$VERSAO = 'ps-1.4.1'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -861,6 +861,79 @@ function ExecutarSleepMachine {
   }
 }
 
+
+function ExecutarUpdateAgent {
+  param([bool] $Simulacao)
+
+  # O agente se substituindo. E a operacao mais perigosa que ele faz: se gravar
+  # um arquivo quebrado por cima de si mesmo, a maquina fica MUDA — e muda numa
+  # loja a 900 km e uma visita.
+  #
+  # Por isso a ordem aqui e: baixar -> CONFERIR -> so entao gravar. E o relato
+  # sai antes do reinicio, como no restart_machine.
+  #
+  # O endereco vem do config.json desta maquina, NUNCA do comando. Aceitar uma
+  # URL vinda do painel daria a quem controlasse o banco o poder de mandar cada
+  # PC baixar e executar um script arbitrario.
+  $url = $cfg.ingestUrl.TrimEnd('/') + '/agente.ps1'
+
+  try {
+    $novo = Invoke-RestMethod -Uri $url -TimeoutSec 30
+  } catch {
+    return @{ ok = $false; texto = "nao consegui baixar de $($url): $($_.Exception.Message)" }
+  }
+
+  # Um proxy devolvendo pagina de login responde HTTP 200 com corpo curto.
+  # Gravar isso por cima do agente derrubaria o monitoramento em vez de
+  # atualiza-lo.
+  if ([string]::IsNullOrWhiteSpace($novo) -or $novo.Length -lt 20000) {
+    return @{ ok = $false; texto = "o que voltou nao parece o agente ($($novo.Length) bytes)" }
+  }
+
+  if ($novo -notmatch '\\$VERSAO\\s*=\\s*''(ps-[0-9.]+)''') {
+    return @{ ok = $false; texto = 'o que voltou nao tem linha de versao; nada foi alterado' }
+  }
+  $versaoNova = $Matches[1]
+
+  if ($versaoNova -eq $VERSAO) {
+    return @{ ok = $true; texto = "ja esta na $VERSAO; nada a fazer" }
+  }
+
+  # Onde EU estou. PSCommandPath e o caminho real deste arquivo — nao um nome
+  # chutado, que ja me custou uma correcao quando o instalador usava outro.
+  $alvo = $PSCommandPath
+  if ([string]::IsNullOrWhiteSpace($alvo)) {
+    $alvo = Join-Path $dirDados 'agente-powershell.ps1'
+  }
+
+  if ($Simulacao) {
+    return @{ ok = $true
+              texto = "SIMULACAO: trocaria $VERSAO por $versaoNova em $alvo"
+              payload = @{ de = $VERSAO; para = $versaoNova } }
+  }
+
+  # Copia de seguranca ANTES de sobrescrever: se o novo nao subir, quem for ate
+  # a maquina tem para onde voltar sem baixar nada.
+  try { Copy-Item $alvo "$alvo.anterior" -Force -ErrorAction Stop } catch { }
+
+  try {
+    # BOM obrigatorio: o PowerShell 5.1 le .ps1 SEM BOM como ANSI, e um acento
+    # vira caractere que quebra a analise sintatica.
+    [IO.File]::WriteAllText($alvo, $novo, [Text.UTF8Encoding]::new($true))
+  } catch {
+    return @{ ok = $false; texto = "nao consegui gravar em $($alvo): $($_.Exception.Message)" }
+  }
+
+  $script:reiniciarAgenteDepois = $alvo
+
+  return @{
+    ok    = $true
+    texto = "atualizado de $VERSAO para $versaoNova; reiniciando o agente"
+    payload = @{ de = $VERSAO; para = $versaoNova; arquivo = $alvo }
+    reiniciarAgente = $true
+  }
+}
+
 function ExecutarComando {
   param($Comando)
 
@@ -877,6 +950,7 @@ function ExecutarComando {
     'run_test_collection' { return (ExecutarRunTestCollection -Simulacao $sim) }
     'wake_machine'        { return (ExecutarWakeMachine -Mac ([string]$p.mac) -Alvo ([string]$p.alvo) -Simulacao $sim) }
     'sleep_machine'       { return (ExecutarSleepMachine -Modo ([string]$p.modo) -Simulacao $sim) }
+    'update_agent'        { return (ExecutarUpdateAgent -Simulacao $sim) }
     'restart_machine' {
       # O relato precisa dizer o que REALMENTE aconteceu. "reinicio agendado"
       # numa simulacao ensina a nao confiar no dry-run, que so serve enquanto
@@ -936,6 +1010,33 @@ function ProcessarComandos {
       # /t 15 da tempo de o log ser gravado em disco antes do desligamento.
       & shutdown.exe /r /t 15 /c 'Reinicio solicitado pelo Sentinela' | Out-Null
       return
+    }
+
+    # ATUALIZAR-SE, na mesma ordem: o relato sai antes de o processo morrer.
+    #
+    # Sem isto o comando ficaria "sent" ate expirar, e o painel diria "expirou
+    # sem ser executado" sobre uma maquina que atualizou certinho — e alguem
+    # mandaria de novo.
+    if ($r.reiniciarAgente -and -not $c.dry_run) {
+      try {
+        Enviar -Amostras @(NovaAmostra) -Maquina $Maquina | Out-Null
+        ResultadosLimpar
+        Registrar 'INF' "atualizacao relatada; trocando de versao agora"
+      } catch {
+        Registrar 'AVI' "nao consegui relatar antes de atualizar: $($_.Exception.Message)"
+      }
+
+      # Sobe o agente NOVO num processo separado e sai. A tarefa agendada
+      # tambem o traria de volta no proximo boot, mas esperar o proximo boot
+      # para uma correcao de coletor seria esperar semanas.
+      try {
+        Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
+          '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+          ("\`"" + $script:reiniciarAgenteDepois + "\`"")) | Out-Null
+      } catch {
+        Registrar 'ERR' "nao consegui subir o agente novo: $($_.Exception.Message)"
+      }
+      exit 0
     }
 
     # SUSPENDER, pela mesma razao e na mesma ordem: o relato sai primeiro.
