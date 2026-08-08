@@ -75,8 +75,9 @@ try {
     insert into public.sites (brand_id, code, name)
       select id, '${COD}', 'loja ui comandos' from public.brands where code='${COD}';
     insert into public.machines (site_id, role_code, label, critical_services_override,
-                                 last_seen_at, agent_version)
-      select id, 'pdv', 'PC-UI-NOVO', array['Spooler','Dhcp'], now(), 'ps-1.2.0'
+                                 last_seen_at, agent_version, mac_address)
+      select id, 'pdv', 'PC-UI-NOVO', array['Spooler','Dhcp'], now(), 'ps-1.3.1',
+             'aa:bb:cc:dd:ee:01'
       from public.sites where code='${COD}';
     insert into public.machines (site_id, role_code, label, critical_services_override,
                                  last_seen_at, agent_version)
@@ -155,6 +156,14 @@ try {
     "[...document.getElementById('acao-servico').options].map(o=>o.textContent).join(',')");
   verificar('a lista traz os servicos criticos DESTA maquina',
     opcoes === 'Spooler,Dhcp', opcoes);
+
+  // -------------------------------------- 1a. o MAC aparece na ficha
+  // Sem esta linha na tela nao havia como responder "o agente ja reportou o
+  // MAC?" — e essa e a pergunta logo depois de atualizar um agente. O dado
+  // chegava ao banco e ficava invisivel.
+  const ficha = await js("document.getElementById('painel-dados').textContent");
+  verificar('a ficha mostra o MAC reportado',
+    /aa:bb:cc:dd:ee:01/i.test(ficha), ficha.slice(0, 400));
 
   // ------------------------- 1b. o modo aparece NO BOTAO, nao so na caixa
   // Alguem clicou tres vezes achando que estava agindo, e mandou tres

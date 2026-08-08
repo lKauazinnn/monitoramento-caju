@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.27-mac-wifi';
+const BUILD = '2026-08-08.28-mac-visivel';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -2043,6 +2043,12 @@ async function abrirPainel(m) {
     ['\u00daltimo contato', desdeQuando(m.seconds_since_seen, m.status)],
     ['Perfil', m.role_name || m.role_code],
     ['IP na LAN', m.ip_lan],
+    // Sem MAC não há Wake-on-LAN, e sem esta linha não havia como responder
+    // "o agente já reportou?" olhando a tela — que é a pergunta que se faz
+    // logo depois de atualizar um agente.
+    ['MAC da placa', m.mac_address
+      ? m.mac_address + (m.mac_is_wifi ? ' (Wi-Fi — não acorda pela rede)' : '')
+      : 'não reportado — agente anterior ao ps-1.3.1'],
     ['Sistema', m.os_caption],
     ['CPU', m.cpu_model],
     ['Núcleos', m.cpu_cores],
