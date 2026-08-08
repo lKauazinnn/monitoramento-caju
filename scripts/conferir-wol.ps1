@@ -164,12 +164,116 @@ if ($Corrigir -and $fastLigada) {
 }
 
 # ------------------------------------------------------------- 4. o BIOS
+# Aqui a resposta MUDA por fabricante, e a diferenca e grande: em maquina
+# corporativa Dell/HP/Lenovo da para mexer no BIOS pelo Windows. Em placa avulsa
+# (ASUS, Gigabyte, ASRock de varejo) nao existe essa interface — e nao adianta
+# procurar, porque a configuracao so existe no firmware.
 Write-Host ''
-Write-Host '  ??   Wake-on-LAN no BIOS/UEFI' -ForegroundColor Yellow
-Write-Host '       NAO da para conferir isto por software de forma confiavel, e nao' -ForegroundColor DarkGray
-Write-Host '       da para corrigir daqui. Se estiver desligado la, nada do resto' -ForegroundColor DarkGray
-Write-Host '       importa. Procure por "Wake on LAN", "Power On by PCI-E" ou' -ForegroundColor DarkGray
-Write-Host '       "Resume by LAN" na secao de energia.' -ForegroundColor DarkGray
+$cs = Get-CimInstance Win32_ComputerSystem
+$fab = "$($cs.Manufacturer)".Trim()
+$modelo = "$($cs.Model)".Trim()
+
+Write-Host "       $fab / $modelo" -ForegroundColor DarkGray
+
+$mexeuNoBios = $false
+
+# ---- Lenovo: interface WMI nativa, sem instalar nada -----------------------
+$lenovo = $null
+try {
+  $lenovo = Get-CimInstance -Namespace root\wmi -ClassName Lenovo_SetBiosSetting -ErrorAction Stop
+} catch { }
+
+if ($lenovo) {
+  Write-Host '  ok   BIOS controlavel por aqui (Lenovo, WMI nativa)' -ForegroundColor Green
+  $atual = try {
+    (Get-CimInstance -Namespace root\wmi -ClassName Lenovo_BiosSetting -ErrorAction Stop |
+      Where-Object { $_.CurrentSetting -like 'WakeOnLAN,*' }).CurrentSetting
+  } catch { $null }
+  Write-Host "       $atual" -ForegroundColor DarkGray
+
+  if ($Corrigir) {
+    try {
+      Invoke-CimMethod -InputObject $lenovo -MethodName SetBiosSetting `
+        -Arguments @{ parameter = 'WakeOnLAN,Primary' } -ErrorAction Stop | Out-Null
+      Invoke-CimMethod -Namespace root\wmi -ClassName Lenovo_SaveBiosSettings `
+        -MethodName SaveBiosSettings -Arguments @{ parameter = 'Save' } -ErrorAction Stop | Out-Null
+      Write-Host '       WakeOnLAN ligado no BIOS' -ForegroundColor Green
+      $mexeuNoBios = $true
+    } catch {
+      Write-Host "       nao consegui: $($_.Exception.Message)" -ForegroundColor Red
+    }
+  }
+}
+
+# ---- Dell: precisa do Dell Command | Configure -----------------------------
+elseif ($fab -match 'Dell') {
+  $cctk = Get-Command cctk.exe -ErrorAction SilentlyContinue
+  if (-not $cctk) {
+    $p = 'C:\Program Files (x86)\Dell\Command Configure\X86_64\cctk.exe'
+    if (Test-Path $p) { $cctk = $p }
+  } else { $cctk = $cctk.Source }
+
+  if ($cctk) {
+    Write-Host '  ok   BIOS controlavel por aqui (Dell Command | Configure)' -ForegroundColor Green
+    if ($Corrigir) {
+      try {
+        & $cctk --wakeonlan=lanwlan | Out-Null
+        Write-Host '       WakeOnLAN ligado no BIOS' -ForegroundColor Green
+        $mexeuNoBios = $true
+      } catch {
+        Write-Host "       nao consegui: $($_.Exception.Message)" -ForegroundColor Red
+      }
+    }
+  } else {
+    Write-Host '  ??   BIOS: da para automatizar, mas falta a ferramenta' -ForegroundColor Yellow
+    Write-Host '       Instale o "Dell Command | Configure" e rode este script de novo.' -ForegroundColor DarkGray
+  }
+}
+
+# ---- HP: WMI proprio, presente nas linhas corporativas ---------------------
+elseif ($fab -match 'HP|Hewlett') {
+  $hp = $null
+  try {
+    $hp = Get-CimInstance -Namespace root\hp\instrumentedBIOS -ClassName HP_BIOSSettingInterface -ErrorAction Stop
+  } catch { }
+
+  if ($hp) {
+    Write-Host '  ok   BIOS controlavel por aqui (HP, WMI)' -ForegroundColor Green
+    if ($Corrigir) {
+      try {
+        # Senha vazia: so funciona se o BIOS nao tiver senha de setup definida.
+        Invoke-CimMethod -InputObject $hp -MethodName SetBIOSSetting -Arguments @{
+          Name = 'S5 Wake on LAN'; Value = 'Boot to Network'; Password = ''
+        } -ErrorAction Stop | Out-Null
+        Write-Host '       S5 Wake on LAN ligado no BIOS' -ForegroundColor Green
+        $mexeuNoBios = $true
+      } catch {
+        Write-Host "       nao consegui (BIOS com senha?): $($_.Exception.Message)" -ForegroundColor Red
+      }
+    }
+  } else {
+    Write-Host '  ??   BIOS: instale o "HP BIOS Configuration Utility" para automatizar.' -ForegroundColor Yellow
+  }
+}
+
+# ---- Placa avulsa: nao existe caminho por software -------------------------
+else {
+  Write-Host '  ??   Wake-on-LAN no BIOS/UEFI: SO NA MAO nesta maquina' -ForegroundColor Yellow
+  Write-Host '       Placa de varejo nao expoe as opcoes de firmware ao Windows — nao' -ForegroundColor DarkGray
+  Write-Host '       ha PowerShell nem CMD que resolva. Reinicie no setup e procure:' -ForegroundColor DarkGray
+  Write-Host '         - "Power On By PCI-E/PCI"  ->  Enabled' -ForegroundColor DarkGray
+  Write-Host '         - "ErP Ready" / "Deep Sleep"  ->  DISABLED' -ForegroundColor DarkGray
+  Write-Host '       O ErP e o que mais engana: ele corta a energia de reserva da placa' -ForegroundColor DarkGray
+  Write-Host '       com o PC desligado, e ai nada escuta o pacote.' -ForegroundColor DarkGray
+  Write-Host ''
+  Write-Host '       ANTES DE IR AO SETUP: teste. Muita maquina acorda sem mexer em' -ForegroundColor DarkGray
+  Write-Host '       nada no BIOS, e ai voce economiza a viagem ate a loja.' -ForegroundColor DarkGray
+  $avisos += 'Wake-on-LAN no BIOS (so na mao)'
+}
+
+if ($mexeuNoBios) {
+  Write-Host '       (vale a partir do proximo desligamento)' -ForegroundColor DarkGray
+}
 
 # ------------------------------------------------------------------ resumo
 Write-Host ''
