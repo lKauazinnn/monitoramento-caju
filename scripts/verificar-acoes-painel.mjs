@@ -156,6 +156,41 @@ try {
   verificar('a lista traz os servicos criticos DESTA maquina',
     opcoes === 'Spooler,Dhcp', opcoes);
 
+  // ------------------------- 1b. o modo aparece NO BOTAO, nao so na caixa
+  // Alguem clicou tres vezes achando que estava agindo, e mandou tres
+  // simulacoes. A caixa acima dos botoes nao competia com o botao que a pessoa
+  // estava olhando na hora de clicar.
+  const rotSim = await js("document.getElementById('btn-restart-machine').textContent");
+  verificar('com a simulacao ligada, o botao DIZ que vai simular',
+    /Simular/i.test(rotSim), rotSim);
+
+  verificar('e a secao inteira fica marcada como simulacao',
+    (await js("document.getElementById('acoes').classList.contains('modo-simulacao')")) === true);
+
+  await js(`
+    (() => {
+      const c = document.getElementById('acao-simular');
+      c.checked = false; c.dispatchEvent(new Event('change'));
+    })(); true
+  `);
+  await dormir(400);
+
+  const rotReal = await js("document.getElementById('btn-restart-machine').textContent");
+  verificar('desmarcando, o rotulo volta a dizer o que faz de verdade',
+    rotReal === 'Reiniciar o PC', rotReal);
+
+  verificar('e a marca de simulacao sai',
+    (await js("document.getElementById('acoes').classList.contains('modo-simulacao')")) === false);
+
+  // Volta ao padrao para as verificacoes seguintes.
+  await js(`
+    (() => {
+      const c = document.getElementById('acao-simular');
+      c.checked = true; c.dispatchEvent(new Event('change'));
+    })(); true
+  `);
+  await dormir(400);
+
   // ------------------------------------------- 2. um comando sai da tela
   console.log('\n== 2. clicar enfileira de verdade ==');
   await js("document.getElementById('btn-test-collection').click(); true");
@@ -181,8 +216,11 @@ try {
   // -------------------------------- 3. desmarcar simulacao age de verdade
   console.log('\n== 3. desmarcar a simulacao muda o pedido ==');
   await js(`
-    document.getElementById('acao-simular').checked = false;
-    document.getElementById('btn-clear-temp').click(); true
+    (() => {
+      const c = document.getElementById('acao-simular');
+      c.checked = false; c.dispatchEvent(new Event('change'));
+      document.getElementById('btn-clear-temp').click();
+    })(); true
   `);
   await dormir(2500);
 
@@ -192,6 +230,16 @@ try {
 
   // ------------------------------------ 4. reiniciar exige DOIS cliques
   console.log('\n== 4. reiniciar o PC pede confirmacao ==');
+  // Religa a simulacao: o passo anterior a desligou, e um reinicio de verdade
+  // enfileirado por um teste e o tipo de coisa que um dia acha uma maquina real.
+  await js(`
+    (() => {
+      const s = document.getElementById('acao-simular');
+      s.checked = true; s.dispatchEvent(new Event('change'));
+    })(); true
+  `);
+  await dormir(400);
+
   await js("document.getElementById('btn-restart-machine').click(); true");
   await dormir(1500);
 
@@ -208,6 +256,14 @@ try {
   verificar('o segundo clique enfileira',
     sql(`select count(*) from public.agent_commands
          where machine_id='${maqNova}' and kind='restart_machine'`) === '1');
+
+  // `armarPerigo` guardava o rotulo original ao ser LIGADO, uma vez so. Com o
+  // texto mudando em tempo de uso, o desarme restauraria um rotulo que nao
+  // descreve mais o que o clique faz.
+  await dormir(1500);
+  const rotDepois = await js("document.getElementById('btn-restart-machine').textContent");
+  verificar('depois de confirmar, o rotulo volta correto para o modo atual',
+    /Simular/i.test(rotDepois), rotDepois);
 
   // -------------------------------- 5. cancelar tira o comando da fila
   console.log('\n== 5. cancelar ==');

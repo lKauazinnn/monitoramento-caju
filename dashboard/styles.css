@@ -998,6 +998,18 @@ input::placeholder { color: var(--fg3); }
 }
 .simular input { accent-color: var(--ok); width: 15px; height: 15px; cursor: pointer; }
 
+/* Em simulacao a secao inteira muda de cor. O rotulo do botao ja diz, mas a
+   cor chega antes da leitura — e o objetivo e nao existir clique sem a pessoa
+   saber em qual modo esta. */
+.modo-simulacao {
+  border-left: 2px solid var(--info);
+  padding-left: 12px;
+  margin-left: -14px;
+}
+.modo-simulacao .btn-acao,
+.modo-simulacao .btn-perigo { border-style: dashed; }
+.modo-simulacao .btn-perigo { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, transparent); background: none; }
+
 .acao-linha { display: flex; gap: 8px; margin-bottom: 8px; }
 
 .acao-campo {

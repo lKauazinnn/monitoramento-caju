@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.22-acoes';
+const BUILD = '2026-08-08.23-modo-visivel';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1587,7 +1587,11 @@ const ESPERA_CONFIRMA_MS = 5000;
  * A ação só roda no segundo clique, e o rótulo diz exatamente o que vai sumir.
  */
 function armarPerigo(botao, rotuloConfirma, acao) {
-  const original = botao.textContent;
+  // Capturado ao ARMAR, não ao ligar o botão. O rótulo de alguns botões muda em
+  // tempo de uso (o de ação remota vira "Simular: ..."), e guardar o texto de
+  // uma vez só faria o desarme restaurar um rótulo que não descreve mais o que
+  // o clique vai fazer.
+  let original = botao.textContent;
   let temporizador = null;
 
   const desarmar = () => {
@@ -1599,6 +1603,7 @@ function armarPerigo(botao, rotuloConfirma, acao) {
 
   botao.addEventListener('click', async () => {
     if (!temporizador) {
+      original = botao.textContent;
       botao.classList.add('armado');
       txt(botao, rotuloConfirma);
       temporizador = setTimeout(desarmar, ESPERA_CONFIRMA_MS);
@@ -1706,7 +1711,41 @@ async function desenharAcoes(m) {
     $('btn-restart-service').disabled = servicos.length === 0;
   }
 
+  // Depois de habilitar: os rótulos precisam refletir o modo já na abertura, e
+  // não só quando alguém mexe na caixa.
+  refletirModoSimulacao();
+
   await carregarComandos(m.machine_id);
+}
+
+/**
+ * Escreve o modo NO BOTÃO.
+ *
+ * Uma caixa de seleção acima dos botões não compete com o botão que a pessoa
+ * está olhando na hora de clicar: ela clica em "Reiniciar o PC", lê "Reiniciar
+ * o PC", e descobre que simulou só depois. O rótulo é o último lugar onde o
+ * aviso ainda chega a tempo.
+ */
+function refletirModoSimulacao() {
+  const simular = $('acao-simular').checked;
+
+  const rotulos = {
+    'btn-restart-service': 'Reiniciar serviço',
+    'btn-clear-temp': 'Limpar temporários',
+    'btn-test-collection': 'Testar coleta',
+    'btn-restart-machine': 'Reiniciar o PC',
+  };
+
+  for (const [id, base] of Object.entries(rotulos)) {
+    const b = $(id);
+    // `armarPerigo` guarda o rótulo original no primeiro clique para restaurar
+    // depois. Mexer no texto enquanto o botão está armado desfaria a
+    // confirmação pela metade, então desarma antes.
+    if (b.classList.contains('armado')) continue;
+    txt(b, simular ? `Simular: ${base.toLowerCase()}` : base);
+  }
+
+  $('acoes').classList.toggle('modo-simulacao', simular);
 }
 
 function horaCurta(iso) {
@@ -2497,6 +2536,8 @@ function ligarEventos() {
   // remover. E o servidor exige a confirmação de novo, por conta dele.
   armarPerigo($('btn-restart-machine'), 'Confirmar: reiniciar o PC', () =>
     pedirAcao('restart_machine', {}, true));
+
+  $('acao-simular').addEventListener('change', refletirModoSimulacao);
 
   // "/" foca a busca, como em toda ferramenta de operação. Não sequestra a tecla
   // quando o foco já está num campo — senão seria impossível digitar uma barra.
