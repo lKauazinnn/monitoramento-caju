@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.32-heatmap';
+const BUILD = '2026-08-08.33-atualizar';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -2295,6 +2295,104 @@ async function pedirAcao(kind, params, confirmado) {
   await desenharAcoes(m);
 }
 
+
+// ---------------------------------------------------------------------------
+// Atualizar os agentes
+// ---------------------------------------------------------------------------
+// A versão alvo é uma constante deste arquivo, e não um número que o painel
+// descobre sozinho. É deliberado: agente e painel viajam no mesmo repositório e
+// no mesmo deploy, então esta linha SEMPRE conhece a versão que a Edge Function
+// está servindo. Descobrir isso em tempo de execução seria uma chamada a mais
+// para responder algo que já se sabe.
+//
+// AO PUBLICAR UM AGENTE NOVO, SUBA ESTA LINHA JUNTO.
+const VERSAO_ALVO_AGENTE = 'ps-1.4.1';
+
+async function atualizarAgentes() {
+  const r = await rpc('atualizar_frota', { p_versao_alvo: VERSAO_ALVO_AGENTE });
+
+  const pulos = Array.isArray(r.pulos) ? r.pulos : [];
+  const n = r.enfileiradas || 0;
+
+  txt($('atualizar-resumo'),
+    n === 0 && pulos.length === 0
+      ? 'Toda a frota já está na ' + VERSAO_ALVO_AGENTE + '. Nada a fazer.'
+      : n + ' máquina(s) vão se atualizar para ' + VERSAO_ALVO_AGENTE + ' no próximo '
+        + 'ciclo do agente (até 1 min). Nenhuma reinicia; só o agente troca de versão.');
+
+  const lista = $('atualizar-lista');
+  limpar(lista);
+
+  if (pulos.length > 0) {
+    // Esta lista É o conteúdo que importa: são as máquinas que continuam
+    // exigindo alguém abrindo o PC. Escondê-la num rodapé seria esconder o
+    // trabalho que sobrou.
+    lista.appendChild(el('div', 'at-titulo', pulos.length + ' precisam de atenção manual'));
+
+    for (const p of pulos) {
+      const linha = el('div', 'at-linha');
+      const esq = el('div');
+      esq.appendChild(el('div', 'at-nome', p.maquina));
+      esq.appendChild(el('div', 'at-motivo', p.motivo));
+      linha.appendChild(esq);
+      linha.appendChild(el('span', 'at-versao', p.versao));
+      lista.appendChild(linha);
+    }
+
+    const dica = el('p', 'dica');
+    dica.style.marginTop = '14px';
+    txt(dica, 'Nessas, rode o comando abaixo uma última vez — como Administrador, '
+      + 'por RDP ou AnyDesk. A partir da ' + VERSAO_ALVO_AGENTE + ' a atualização é remota.');
+    lista.appendChild(dica);
+
+    const caixa = el('div', 'comando-caixa');
+    // textContent, não innerHTML: o endereço vem do banco.
+    caixa.appendChild(el('pre', null,
+      "& ([scriptblock]::Create((irm '"
+      + String(CFG.ingestUrl || '').replace(/\/+$/, '') + "/atualizar.ps1')))"));
+    lista.appendChild(caixa);
+  }
+
+  $('modal-atualizar-fundo').hidden = false;
+  $('modal-atualizar').hidden = false;
+
+  if (n > 0) brinde(n + ' agente(s) vão se atualizar.');
+}
+
+// Confirmação em dois cliques, mas escrita à mão em vez de armarPerigo: aquela
+// troca o textContent do BOTÃO, e este botão tem um ícone dentro. Usá-la aqui
+// apagaria o SVG no primeiro clique e ele não voltaria no desarme.
+function ligarBotaoAtualizar() {
+  const botao = $('btn-atualizar-agentes');
+  const rot = $('btn-atualizar-rot');
+  let temporizador = null;
+
+  const desarmar = () => {
+    clearTimeout(temporizador);
+    temporizador = null;
+    botao.classList.remove('armado');
+    txt(rot, 'Atualizar agentes');
+  };
+
+  botao.addEventListener('click', async () => {
+    if (!temporizador) {
+      botao.classList.add('armado');
+      txt(rot, 'Confirmar');
+      temporizador = setTimeout(desarmar, ESPERA_CONFIRMA_MS);
+      return;
+    }
+    desarmar();
+    botao.disabled = true;
+    try {
+      await atualizarAgentes();
+    } catch (e) {
+      brinde(e.message, true);
+    } finally {
+      botao.disabled = false;
+    }
+  });
+}
+
 async function removerMaquinaAberta() {
   const m = Estado.maquinaAberta;
   if (!m) return;
@@ -2974,6 +3072,17 @@ function ligarEventos() {
   // Remoção: dois cliques, e o rótulo do segundo diz o que vai sumir.
   armarPerigo($('btn-remover-demo'), 'Confirmar remoção', removerDemo);
   armarPerigo($('btn-remover-maquina'), 'Confirmar: apagar tudo', removerMaquinaAberta);
+
+  ligarBotaoAtualizar();
+
+  $('btn-fechar-atualizar').addEventListener('click', () => {
+    $('modal-atualizar').hidden = true;
+    $('modal-atualizar-fundo').hidden = true;
+  });
+  $('modal-atualizar-fundo').addEventListener('click', () => {
+    $('modal-atualizar').hidden = true;
+    $('modal-atualizar-fundo').hidden = true;
+  });
 
   ligarPaleta();
 

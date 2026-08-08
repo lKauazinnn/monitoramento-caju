@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=32" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=33" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=32">
+  <link rel="stylesheet" href="styles.css?v=33">
 </head>
 <body>
 
@@ -116,6 +116,10 @@
 
       <!-- Som DESLIGADO por padrão. Numa tela de parede ele salva o turno; numa
            mesa compartilhada é motivo para desligar o monitoramento inteiro. -->
+      <button id="btn-atualizar-agentes" class="btn-lateral" type="button">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg>
+        <span id="btn-atualizar-rot">Atualizar agentes</span>
+      </button>
       <button id="btn-som" class="btn-lateral" type="button" aria-pressed="false">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>
         <span id="btn-som-rot">Som: desligado</span>
@@ -343,6 +347,20 @@
     <span>↵ abrir</span>
     <span>Ctrl K alternar</span>
     <span id="paleta-conta" class="mono"></span>
+  </div>
+</div>
+
+<div id="modal-atualizar-fundo" class="cortina" hidden></div>
+
+<div id="modal-atualizar" class="modal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="atualizar-titulo">
+  <header class="modal-topo">
+    <h2 id="atualizar-titulo">Atualizar os agentes</h2>
+    <button id="btn-fechar-atualizar" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
+  </header>
+  <div class="modal-corpo">
+    <p id="atualizar-resumo" class="dica"></p>
+    <div id="atualizar-lista"></div>
   </div>
 </div>
 
@@ -576,7 +594,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=32"></script>
-<script src="dash.js?v=32"></script>
+<script src="config.js?v=33"></script>
+<script src="dash.js?v=33"></script>
 </body>
 </html>

@@ -92,6 +92,12 @@ const CONTROLES = [
   ['paleta', 'a paleta de comandos (Ctrl K)'],
   ['paleta-busca', 'o campo de busca da paleta'],
   ['paleta-lista', 'os resultados da paleta'],
+
+  // ------------------------------------------------------ atualizar a frota
+  ['btn-atualizar-agentes', 'atualizar os agentes de toda a frota'],
+  ['modal-atualizar', 'o resultado da atualização de frota'],
+  ['atualizar-resumo', 'quantas máquinas vão se atualizar'],
+  ['atualizar-lista', 'quais máquinas ainda precisam de visita'],
 ];
 
 /**

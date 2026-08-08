@@ -1673,3 +1673,28 @@ input::placeholder { color: var(--fg3); }
 .hm-legenda span { display: flex; align-items: center; gap: 5px; }
 .hm-legenda i { width: 10px; height: 10px; border-radius: 3px; }
 .hm-vazio { font-size: 11px; color: var(--fg3); }
+
+/* ------------------------------------------------------ atualizar agentes --- */
+.at-linha {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--bd2);
+  font-size: 11.5px;
+}
+
+.at-nome { font-weight: 600; }
+.at-motivo { font-size: 10.5px; color: var(--fg2); margin-top: 2px; }
+.at-versao { font-family: var(--mono); font-size: 10px; color: var(--fg3); white-space: nowrap; }
+
+/* A lista de PULADAS e o conteudo principal deste modal, nao um rodape:
+   e ela que diz quais maquinas ainda exigem uma visita. */
+.at-titulo {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--fg3);
+  margin: 16px 0 6px;
+}
