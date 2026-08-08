@@ -4,7 +4,7 @@
 // Origem:
 //   agent/agente-powershell.ps1  (40206 bytes, sha256:6fe5310122a3affa)
 //   docker/ingest-local/instalar.ps1  (12532 bytes, sha256:2dbff83b3f196c6c)
-//   scripts/atualizar-agente.ps1  (8263 bytes, sha256:274f4f933c00243d)
+//   scripts/atualizar-agente.ps1  (8832 bytes, sha256:8676568c50530e89)
 //
 // Regerar:  node scripts/gerar-scripts-embutidos.mjs
 //
@@ -1367,8 +1367,18 @@ function Invoke-AtualizacaoDoAgente {
   # O endereco da ingestao ja aponta para quem serve o agente: em producao a
   # propria Edge Function, na LAN o shim local. \`/ingest\` no fim vira \`/agente.ps1\`
   # no mesmo prefixo.
-  $base = ($cfg.ingestUrl -replace '/ingest/?$', '')
-  $url = "$base/agente.ps1"
+  # SEM remover nada do endereco. Os scripts sao servidos POR DENTRO da funcao
+  # de ingestao — o instalador sempre fez "$Servidor/agente.ps1" — entao o certo
+  # e acrescentar ao endereco inteiro:
+  #
+  #   producao: https://xxx.supabase.co/functions/v1/ingest  + /agente.ps1
+  #   LAN:      http://192.168.0.10:3010                     + /agente.ps1
+  #
+  # A primeira versao tirava o "/ingest" do fim, e ai producao virava
+  # .../functions/v1/agente.ps1 -> 404. Passou no teste local porque o endereco
+  # da LAN nao tem esse sufixo: o caso quebrado era justamente o que nao era
+  # testado.
+  $url = $cfg.ingestUrl.TrimEnd('/') + '/agente.ps1'
 
   Write-Host ''
   Write-Host "Baixando de $url" -ForegroundColor Cyan

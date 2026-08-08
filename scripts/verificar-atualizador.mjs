@@ -99,6 +99,38 @@ try {
   verificar('e a falha e dita, nao engolida',
     /falhou|nao encontrei|Red/i.test(s3) || s3.includes('falhou'), s3.slice(-300));
 
+  console.log('\n== 3b. monta a URL certa nas DUAS formas de endereco ==');
+  // O defeito que chegou ate producao: o script tirava o "/ingest" do fim do
+  // endereco, e producao virava .../functions/v1/agente.ps1 -> 404.
+  //
+  // Passou despercebido porque o teste so exercitava o endereco da LAN, que NAO
+  // tem esse sufixo. O caso quebrado era exatamente o que nao era testado — e e
+  // o unico que roda nas lojas.
+  const urlDe = (ingestUrl) => {
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      ingestUrl, token: 'mon_' + 'a'.repeat(64),
+    }, null, 2));
+    const s = rodar();
+    return (/Baixando de (\S+)/.exec(s) ?? [])[1] ?? '(nao imprimiu a URL)';
+  };
+
+  const uProd = urlDe('https://exemplo.test/functions/v1/ingest');
+  verificar('endereco de PRODUCAO mantem o /ingest',
+    uProd === 'https://exemplo.test/functions/v1/ingest/agente.ps1', uProd);
+
+  const uLan = urlDe('http://192.168.0.10:3010');
+  verificar('endereco de LAN funciona igual',
+    uLan === 'http://192.168.0.10:3010/agente.ps1', uLan);
+
+  const uBarra = urlDe('https://exemplo.test/functions/v1/ingest/');
+  verificar('barra sobrando no fim nao vira barra dupla',
+    uBarra === 'https://exemplo.test/functions/v1/ingest/agente.ps1', uBarra);
+
+  // Volta ao endereco que responde, para os passos seguintes.
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({
+    ingestUrl: `http://127.0.0.1:${portaIngest}`, token: 'mon_' + 'a'.repeat(64),
+  }, null, 2));
+
   console.log('\n== 4. a JANELA nao fecha ==');
   // O defeito que fez o terminal sumir: `exit` dentro de um scriptblock
   // invocado com & nao encerra o script, encerra a SESSAO do PowerShell. A
