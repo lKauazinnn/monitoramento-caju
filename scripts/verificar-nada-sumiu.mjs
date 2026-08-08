@@ -87,6 +87,11 @@ const CONTROLES = [
   ['faixa-demo', 'a faixa de dados de demonstração'],
   ['btn-remover-demo', 'remover os dados de demonstração'],
   ['brinde', 'os avisos passageiros'],
+
+  // ------------------------------------------------------- paleta de comandos
+  ['paleta', 'a paleta de comandos (Ctrl K)'],
+  ['paleta-busca', 'o campo de busca da paleta'],
+  ['paleta-lista', 'os resultados da paleta'],
 ];
 
 /**
@@ -105,6 +110,7 @@ const COMPORTAMENTOS = [
   ['remover_maquina_ui', 'a remoção da máquina'],
   ['acoes_da_maquina', 'o servidor dizendo o que pode ser oferecido'],
   ['refletirModoSimulacao', 'o rótulo do botão dizer que vai simular'],
+  ['ligarPaleta', 'Ctrl K abre a paleta'],
 ];
 
 let passou = 0; const falhas = [];

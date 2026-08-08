@@ -1484,3 +1484,97 @@ input::placeholder { color: var(--fg3); }
   .evento { grid-template-columns: 1fr; gap: 3px; }
   .cl-celulas { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* -------------------------------------------------------------------------
+   Paleta de comandos
+   ------------------------------------------------------------------------- */
+.paleta {
+  position: fixed;
+  left: 50%;
+  top: 12vh;
+  transform: translateX(-50%);
+  z-index: 81;
+  width: 620px;
+  max-width: 92vw;
+  max-height: 66vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--pnl);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--bd);
+  border-radius: var(--r-g);
+  box-shadow: var(--sh-alta);
+  overflow: hidden;
+  animation: paletaIn .16s ease;
+}
+
+@keyframes paletaIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px) scale(.98); }
+  to   { opacity: 1; transform: translateX(-50%); }
+}
+
+.paleta-campo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--bd2);
+  color: var(--fg3);
+}
+
+.paleta-campo input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--fg);
+  font: 14px var(--fonte);
+}
+
+.paleta-lista { overflow-y: auto; padding: 6px; }
+
+.pal-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: var(--r-m);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* O primeiro fica sempre destacado: Enter age nele, e um Enter que age em
+   algo invisivel e uma armadilha. */
+.pal-item:hover, .pal-item.alvo { background: var(--hov); }
+
+.pal-ico {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.pal-ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.pal-texto { min-width: 0; flex: 1; }
+.pal-titulo { display: block; font-size: 12.5px; font-weight: 600; }
+.pal-sub { display: block; font-size: 10px; color: var(--fg3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-cat { font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--bd); color: var(--fg3); flex: 0 0 auto; }
+.pal-vazio { padding: 26px 14px; font-size: 12px; color: var(--fg3); text-align: center; }
+
+.paleta-pe {
+  display: flex;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--bd2);
+  font-size: 10px;
+  color: var(--fg3);
+}
+
+.paleta-pe span:last-child { margin-left: auto; }

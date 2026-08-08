@@ -97,6 +97,15 @@ try {
 
   await foto('01-dashboard', { paginaInteira: true });
 
+  // A paleta: o item mais visivel que o handoff pedia e nao existia.
+  await cmd('Input.dispatchKeyEvent', { type: 'keyDown', key: 'k', code: 'KeyK',
+    windowsVirtualKeyCode: 75, modifiers: 2 });
+  await dormir(900);
+  await foto('06-paleta');
+  await cmd('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape',
+    windowsVirtualKeyCode: 27 });
+  await dormir(400);
+
   // Painel de detalhe. `.host-quad` e o alvo na vista inicial (a grade por
   // loja); `.cartao` so existe quando um filtro esta ativo.
   await js("(document.querySelector('.host-quad') || document.querySelector('.cartao'))?.click(); true");

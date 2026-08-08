@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.29-tiras';
+const BUILD = '2026-08-08.30-paleta';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1586,6 +1586,168 @@ const ESPERA_CONFIRMA_MS = 5000;
  * Transforma um botão em botão de duas etapas.
  * A ação só roda no segundo clique, e o rótulo diz exatamente o que vai sumir.
  */
+
+// ---------------------------------------------------------------------------
+// Paleta de comandos (Ctrl K)
+// ---------------------------------------------------------------------------
+// Busca máquinas e destinos ao mesmo tempo. Num parque de duzentas máquinas,
+// achar "PDV 07 da Asa Norte" por navegação custa quatro cliques e a memória de
+// onde ela está; por busca custa três letras.
+//
+// Nada aqui usa innerHTML (regra 7): hostname e nome de loja vêm do banco, e um
+// nome com < e > tem que aparecer literal, não virar marcação.
+
+const ICO_PAL = {
+  host:  '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  vista: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  acao:  '<path d="M3 12h4l3 8 4-16 3 8h4"/>',
+};
+
+function itensDaPaleta() {
+  const itens = [];
+
+  // Destinos: os mesmos filtros da barra lateral, para quem prefere digitar.
+  for (const b of document.querySelectorAll('.vistas .vista')) {
+    const rot = b.querySelector('.vista-rot');
+    if (!rot) continue;
+    const texto = rot.textContent;
+    itens.push({
+      titulo: texto,
+      sub: 'filtro da barra lateral',
+      cat: 'vista',
+      ico: 'vista',
+      cor: 'var(--info)',
+      chaves: texto.toLowerCase(),
+      agir: () => b.click(),
+    });
+  }
+
+  // Ações que existem no rodapé da lateral.
+  const acoes = [
+    ['btn-tema', 'Alternar tema', 'claro e escuro'],
+    ['btn-som', 'Alternar som do alerta', 'liga e desliga o aviso sonoro'],
+    ['btn-relatorio', 'Relatório mensal', 'abrir o relatório'],
+    ['btn-adicionar', 'Adicionar PC', 'cadastrar uma máquina nova'],
+  ];
+  for (const [id, titulo, sub] of acoes) {
+    const alvo = document.getElementById(id);
+    if (!alvo) continue;
+    itens.push({
+      titulo, sub, cat: 'ação', ico: 'acao', cor: 'var(--vio)',
+      chaves: (titulo + ' ' + sub).toLowerCase(),
+      agir: () => alvo.click(),
+    });
+  }
+
+  // As máquinas.
+  for (const m of Estado.maquinas) {
+    const e = estadoDe(m);
+    itens.push({
+      titulo: m.label,
+      sub: [m.site_code, m.ip_lan, e].filter(Boolean).join(' · '),
+      cat: 'host',
+      ico: 'host',
+      cor: e === 'offline' ? 'var(--crit)' : e === 'degradado' ? 'var(--warn)' : 'var(--ok)',
+      peso: e === 'offline' ? 3 : e === 'degradado' ? 2 : 1,
+      chaves: [m.label, m.hostname, m.ip_lan, m.site_code, m.site_name, m.mac_address]
+        .filter(Boolean).join(' ').toLowerCase(),
+      agir: () => { fecharPaleta(); abrirPainel(m); },
+    });
+  }
+
+  return itens;
+}
+
+function desenharPaleta() {
+  const lista = $('paleta-lista');
+  const termo = ($('paleta-busca').value || '').trim().toLowerCase();
+  limpar(lista);
+
+  let r = itensDaPaleta();
+
+  if (termo) {
+    r = r.filter((i) => i.chaves.includes(termo)).slice(0, 30);
+  } else {
+    // Busca vazia: os destinos, e as máquinas que mais pedem atenção — por
+    // gravidade, não em ordem alfabética. Uma lista alfabética às 3 da manhã
+    // não ajuda ninguém.
+    const hosts = r.filter((i) => i.cat === 'host')
+      .sort((a, b) => (b.peso || 0) - (a.peso || 0)).slice(0, 5);
+    r = r.filter((i) => i.cat !== 'host').concat(hosts);
+  }
+
+  txt($('paleta-conta'), r.length + ' resultado(s)');
+
+  if (r.length === 0) {
+    const vazio = el('div', 'pal-vazio', 'Nada encontrado para \u00ab' + termo + '\u00bb');
+    lista.appendChild(vazio);
+    return;
+  }
+
+  r.forEach((i, n) => {
+    const b = el('button', 'pal-item' + (n === 0 ? ' alvo' : ''));
+    b.type = 'button';
+
+    const ico = el('span', 'pal-ico');
+    ico.style.color = i.cor;
+    // innerHTML SÓ com marcação nossa, constante — nunca com dado do banco.
+    ico.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + ICO_PAL[i.ico] + '</svg>';
+    b.appendChild(ico);
+
+    const texto = el('span', 'pal-texto');
+    texto.appendChild(el('span', 'pal-titulo', i.titulo));
+    const sub = el('span', 'pal-sub mono', i.sub);
+    texto.appendChild(sub);
+    b.appendChild(texto);
+
+    b.appendChild(el('span', 'pal-cat mono', i.cat));
+    b.addEventListener('click', i.agir);
+    lista.appendChild(b);
+  });
+}
+
+function abrirPaleta() {
+  $('paleta-fundo').hidden = false;
+  $('paleta').hidden = false;
+  $('paleta-busca').value = '';
+  desenharPaleta();
+  // ~20ms: o campo só existe depois de o navegador pintar o diálogo, e focar
+  // antes disso não faz nada — a paleta abriria sem cursor.
+  setTimeout(() => $('paleta-busca').focus(), 20);
+}
+
+function fecharPaleta() {
+  $('paleta').hidden = true;
+  $('paleta-fundo').hidden = true;
+}
+
+function ligarPaleta() {
+  $('paleta-fundo').addEventListener('click', fecharPaleta);
+  $('paleta-busca').addEventListener('input', desenharPaleta);
+
+  $('paleta-busca').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const primeiro = $('paleta-lista').querySelector('.pal-item');
+      if (primeiro) primeiro.click();
+    }
+  });
+
+  // O campo de busca do cabeçalho passa a abrir a paleta: são a mesma pergunta.
+  const busca = $('busca');
+  if (busca) {
+    busca.addEventListener('focus', (e) => { e.target.blur(); abrirPaleta(); });
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      if ($('paleta').hidden) abrirPaleta(); else fecharPaleta();
+      return;
+    }
+    if (e.key === 'Escape' && !$('paleta').hidden) fecharPaleta();
+  });
+}
+
 function armarPerigo(botao, rotuloConfirma, acao) {
   // Capturado ao ARMAR, não ao ligar o botão. O rótulo de alguns botões muda em
   // tempo de uso (o de ação remota vira "Simular: ..."), e guardar o texto de
@@ -2584,6 +2746,8 @@ function ligarEventos() {
   // Remoção: dois cliques, e o rótulo do segundo diz o que vai sumir.
   armarPerigo($('btn-remover-demo'), 'Confirmar remoção', removerDemo);
   armarPerigo($('btn-remover-maquina'), 'Confirmar: apagar tudo', removerMaquinaAberta);
+
+  ligarPaleta();
 
   // Ações não destrutivas: um clique. Fazer alguém confirmar duas vezes para
   // testar a coleta ensina a clicar duas vezes em tudo, e aí a confirmação do

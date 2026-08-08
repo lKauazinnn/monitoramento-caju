@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=29" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=30" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=29">
+  <link rel="stylesheet" href="styles.css?v=30">
 </head>
 <body>
 
@@ -144,7 +144,7 @@
       <div class="busca-caixa">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input type="search" id="busca" placeholder="máquina, host, loja, IP" autocomplete="off">
-        <span class="mono tecla" aria-hidden="true">/</span>
+        <span class="mono tecla" aria-hidden="true">Ctrl K</span>
       </div>
 
       <div class="topo-estado">
@@ -319,6 +319,29 @@
       </div>
     </section>
   </main>
+</div>
+
+<!-- =========================================================================
+     Paleta de comandos
+     =========================================================================
+     Num parque de duzentas maquinas, achar "PDV 07 da Asa Norte" por
+     navegacao custa quatro cliques e a memoria de onde ela esta. Por busca
+     custa tres letras. -->
+<div id="paleta-fundo" class="cortina" hidden></div>
+
+<div id="paleta" class="paleta" hidden role="dialog" aria-modal="true"
+     aria-label="Paleta de comandos">
+  <div class="paleta-campo">
+    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input type="search" id="paleta-busca" autocomplete="off"
+           placeholder="máquina, loja, IP, ou um destino">
+  </div>
+  <div id="paleta-lista" class="paleta-lista"></div>
+  <div class="paleta-pe">
+    <span>↵ abrir</span>
+    <span>Ctrl K alternar</span>
+    <span id="paleta-conta" class="mono"></span>
+  </div>
 </div>
 
 <!-- =========================================================================
@@ -551,7 +574,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=29"></script>
-<script src="dash.js?v=29"></script>
+<script src="config.js?v=30"></script>
+<script src="dash.js?v=30"></script>
 </body>
 </html>

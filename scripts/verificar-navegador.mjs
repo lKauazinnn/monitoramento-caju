@@ -827,6 +827,44 @@ try {
   verificar('sequência completa pela página de diagnóstico funcionou',
     /1. login/.test(resLogin || ''), resLogin);
 
+  // ------------------------------------------------------- paleta (Ctrl K)
+  console.log('\n== paleta de comandos ==');
+  // O teste chega aqui na pagina de diagnostico; a paleta vive no painel.
+  await cmd('Page.navigate', { url: URL_DASH + '/?v=' + Date.now() });
+  await dormir(4000);
+  await cmd('Input.dispatchKeyEvent', {
+    type: 'keyDown', key: 'k', code: 'KeyK', windowsVirtualKeyCode: 75, modifiers: 2,
+  });
+  await dormir(700);
+
+  const palAberta = await js(
+    "getComputedStyle(document.getElementById('paleta')).display !== 'none'");
+  verificar('Ctrl K abre a paleta', palAberta === true, String(palAberta));
+
+  if (palAberta === true) {
+    const n = await js("document.querySelectorAll('#paleta-lista .pal-item').length");
+    verificar('a paleta lista destinos e maquinas', n >= 4, n + ' item(ns)');
+
+    // O primeiro fica destacado porque Enter age nele. Um Enter que age em
+    // algo invisivel e uma armadilha.
+    const temAlvo = await js("!!document.querySelector('#paleta-lista .pal-item.alvo')");
+    verificar('o primeiro resultado fica destacado', temAlvo === true);
+
+    await js("(() => { const c = document.getElementById('paleta-busca');"
+      + " c.value = 'zzzznaoexiste'; c.dispatchEvent(new Event('input')); })(); true");
+    await dormir(400);
+    const vazio = await js("!!document.querySelector('#paleta-lista .pal-vazio')");
+    verificar('busca sem resultado diz que nao achou', vazio === true);
+
+    await cmd('Input.dispatchKeyEvent', {
+      type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+    });
+    await dormir(500);
+    const fechou = await js(
+      "getComputedStyle(document.getElementById('paleta')).display === 'none'");
+    verificar('Esc fecha a paleta', fechou === true);
+  }
+
   ws.close();
 } catch (e) {
   console.error(`\nERRO NO TESTE: ${e.message}`);
