@@ -77,3 +77,21 @@ Marcado com **[servidor]** o que depende de dado que ainda não é coletado.
 - [x] Telemetria com cadência configurável e pausável
 - [ ] **`sweep`** — animação da barra indeterminada
 - [ ] Gaveta abre por resultado da busca (hoje abre, mas a paleta fecha antes)
+
+## Publicação
+
+- `app/vercel.json` — o CSP do painel novo. **`style-src` precisou de
+  `'unsafe-inline'`**: eu tinha raciocinado que os estilos do React passariam
+  por CSSOM e não seriam bloqueados, e a verificação em produção provou o
+  contrário. `script-src 'self'` continua estrito, que é o que protege de
+  execução de código.
+  Para voltar ao CSP fechado seria preciso trocar todo `style={{…}}` por classe
+  em folha de estilo — um trabalho grande, e anotado aqui como opção.
+- `scripts/verificar-noc-producao.mjs` confere o painel no ar: login real,
+  dado de produção, zero violação de CSP.
+- `scripts/verificar-dashboard-publicado.mjs` testa a estrutura do painel
+  ANTIGO (`#app`, `#pulso-min`). **Está obsoleto** — precisa ser reescrito ou
+  removido.
+- O deploy criou por engano um projeto Vercel chamado `publicar` (nome da
+  pasta). O painel certo está em `monitoramento-cajupar`; o projeto `publicar`
+  pode ser apagado no painel da Vercel.
