@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.31-tabela';
+const BUILD = '2026-08-08.32-heatmap';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1227,7 +1227,8 @@ function desenharMaquinas() {
 
   txt($('frota-titulo'),
     Estado.modo === 'lojas' ? 'Lojas'
-      : Estado.modo === 'tabela' ? 'Frota' : 'Máquinas');
+      : Estado.modo === 'tabela' ? 'Frota'
+      : Estado.modo === 'heatmap' ? 'Parque inteiro' : 'Máquinas');
 
   // Zero máquinas NÃO significa zero a mostrar.
   //
@@ -1255,6 +1256,11 @@ function desenharMaquinas() {
   txt($('frota-sub'),
     `${lojasVisiveis.size} loja(s) · ${lista.length} host(s)`
     + (ruins ? ` · ${ruins} pedindo atenção` : ''));
+
+  if (Estado.modo === 'heatmap') {
+    desenharHeatmap(conteudo, lista);
+    return;
+  }
 
   if (Estado.modo === 'tabela') {
     desenharTabelaDensa(conteudo, lista);
@@ -1419,6 +1425,108 @@ const TD_COLUNAS = [
 ];
 
 const TD_PESO = { offline: 0, degradado: 1, never: 2, online: 3, manutencao: 4, disabled: 5 };
+
+
+// ---------------------------------------------------------------------------
+// Heatmap
+// ---------------------------------------------------------------------------
+// Uma faixa por loja. É a vista que responde "onde está o problema" com o
+// parque inteiro na tela — duzentos hosts cabem sem rolar, e um vermelho no
+// meio de verdes salta aos olhos sem lista e sem procura.
+//
+// As cores são TINGIDAS (26% de fundo, 44% de borda), não sólidas. Um mosaico
+// de cores saturadas cansa em minutos numa tela que fica aberta o turno inteiro.
+
+const HM_TONS = {
+  online: 'ok', degradado: 'warn', offline: 'crit',
+  never: 'fg3', manutencao: 'fg3', disabled: 'fg3',
+};
+
+function desenharHeatmap(conteudo, lista) {
+  // Legenda primeiro: sem ela o mosaico é bonito e ilegível.
+  const leg = el('div', 'hm-legenda');
+  for (const [estado, rot] of [['online', 'ok'], ['degradado', 'degradado'],
+                               ['offline', 'offline'], ['manutencao', 'manutenção']]) {
+    const s = el('span');
+    const i = el('i');
+    const t = HM_TONS[estado];
+    i.style.background = 'color-mix(in srgb, var(--' + t + ') 26%, transparent)';
+    i.style.border = '1px solid color-mix(in srgb, var(--' + t + ') 44%, transparent)';
+    s.appendChild(i);
+    s.appendChild(el('span', null, rot));
+    leg.appendChild(s);
+  }
+  conteudo.appendChild(leg);
+
+  // Agrupa por loja, mantendo a ordem por código.
+  const porLoja = new Map();
+  for (const m of lista) {
+    const cod = m.site_code || '(sem loja)';
+    if (!porLoja.has(cod)) porLoja.set(cod, { nome: m.site_name || cod, hosts: [] });
+    porLoja.get(cod).hosts.push(m);
+  }
+
+  const ordenadas = [...porLoja.entries()].sort((a, b) => {
+    // Loja com problema primeiro: é o que se quer ver ao abrir.
+    const ruimA = a[1].hosts.filter((m) => ['offline', 'degradado'].includes(estadoDe(m))).length;
+    const ruimB = b[1].hosts.filter((m) => ['offline', 'degradado'].includes(estadoDe(m))).length;
+    if (ruimA !== ruimB) return ruimB - ruimA;
+    return a[0].localeCompare(b[0], 'pt-BR');
+  });
+
+  for (const [cod, loja] of ordenadas) {
+    const linha = el('div', 'hm-linha');
+
+    const ident = el('div', 'hm-loja');
+    ident.appendChild(el('div', 'hm-nome', loja.nome));
+    ident.appendChild(el('div', 'hm-meta', cod));
+    linha.appendChild(ident);
+
+    const hosts = el('div', 'hm-hosts');
+    for (const m of loja.hosts) {
+      const e = estadoDe(m);
+      const t = HM_TONS[e];
+      const q = el('button', 'hm-quad');
+      q.type = 'button';
+      q.style.background = 'color-mix(in srgb, var(--' + t + ') 26%, transparent)';
+      q.style.border = '1px solid color-mix(in srgb, var(--' + t + ') 44%, transparent)';
+      // title e aria-label recebem TEXTO: um hostname com < e > fica literal.
+      const resumo = m.label + ' · ' + rotuloStatus(e)
+        + (m.cpu_pct !== null && m.cpu_pct !== undefined ? ' · cpu ' + Math.round(m.cpu_pct) + '%' : '');
+      q.title = resumo;
+      q.setAttribute('aria-label', resumo);
+      q.addEventListener('click', () => abrirPainel(m));
+      hosts.appendChild(q);
+    }
+    if (loja.hosts.length === 0) {
+      hosts.appendChild(el('span', 'hm-vazio', 'sem máquinas'));
+    }
+    linha.appendChild(hosts);
+
+    const online = loja.hosts.filter((m) => estadoDe(m) === 'online').length;
+    const num = el('div', 'hm-num');
+    const cont = el('span', 'mono', online + '/' + loja.hosts.length);
+    if (online < loja.hosts.length) cont.style.color = 'var(--crit)';
+    num.appendChild(cont);
+
+    // CPU média das que reportam. Máquina sem CPU não entra na média — ela não
+    // puxa o número para baixo fingindo zero.
+    const comCpu = loja.hosts.filter((m) => m.cpu_pct !== null && m.cpu_pct !== undefined);
+    if (comCpu.length > 0) {
+      const media = comCpu.reduce((s, m) => s + m.cpu_pct, 0) / comCpu.length;
+      const barra = el('div', 'hm-barra');
+      const fill = el('i');
+      fill.style.width = Math.max(0, Math.min(100, media)) + '%';
+      if (media >= 85) fill.style.background = 'var(--crit)';
+      else if (media >= 70) fill.style.background = 'var(--warn)';
+      barra.appendChild(fill);
+      num.appendChild(barra);
+    }
+    linha.appendChild(num);
+
+    conteudo.appendChild(linha);
+  }
+}
 
 function desenharTabelaDensa(conteudo, lista) {
   const grade = TD_COLUNAS.map((c) => c[1]).join(' ');
