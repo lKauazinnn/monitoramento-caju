@@ -32,6 +32,7 @@ const destino = join(raiz, 'supabase/functions/ingest/scripts-embutidos.ts');
 const FONTES = [
   ['AGENTE_PS1', 'agent/agente-powershell.ps1'],
   ['INSTALAR_PS1', 'docker/ingest-local/instalar.ps1'],
+  ['ATUALIZAR_PS1', 'scripts/atualizar-agente.ps1'],
 ];
 
 const soVerificar = process.argv.includes('--verificar');

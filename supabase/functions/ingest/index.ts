@@ -33,7 +33,7 @@ import {
   validateEnvelopeShape,
 } from "./lib.ts";
 
-import { AGENTE_PS1, INSTALAR_PS1 } from "./scripts-embutidos.ts";
+import { AGENTE_PS1, ATUALIZAR_PS1, INSTALAR_PS1 } from "./scripts-embutidos.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -178,8 +178,10 @@ async function handleHealthz(req: Request): Promise<Response> {
 // charset=utf-8 do header já diz como decodificar. E o agente que o instalador
 // grava recebe BOM lá, no WriteAllText com UTF8Encoding($true), que é o lugar
 // onde ele faz falta.
-function servirScript(nome: "agente" | "instalar"): Response {
-  const corpo = nome === "agente" ? AGENTE_PS1 : INSTALAR_PS1;
+function servirScript(nome: "agente" | "instalar" | "atualizar"): Response {
+  const corpo = nome === "agente" ? AGENTE_PS1
+    : nome === "atualizar" ? ATUALIZAR_PS1
+    : INSTALAR_PS1;
 
   return new Response(corpo, {
     status: 200,
@@ -337,6 +339,10 @@ Deno.serve(async (req: Request) => {
 
     if (req.method === "GET" && rota === "/agente.ps1") return servirScript("agente");
     if (req.method === "GET" && rota === "/instalar.ps1") return servirScript("instalar");
+    // Atualizar e uma operacao de FROTA: enquanto a auto-atualizacao nao existe,
+    // ela precisa ser um comando de uma linha como a instalacao, senao ninguem
+    // atualiza vinte lojas.
+    if (req.method === "GET" && rota === "/atualizar.ps1") return servirScript("atualizar");
 
     if (req.method === "POST" && (rota === "/" || rota === "")) {
       if (CONFIG_ERROR) {
