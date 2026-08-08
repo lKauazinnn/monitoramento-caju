@@ -878,6 +878,57 @@ input::placeholder { color: var(--fg3); }
   word-break: break-word;
 }
 
+/* ==================================================== faixa de incidente === */
+/* O elemento mais gritante da tela, e o unico com direito a isso.
+   Se qualquer outra coisa piscar em vermelho, esta faixa deixa de significar
+   alguma coisa — e o dia em que ela importar, ninguem vai olhar. */
+@keyframes pulsoIncidente {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--crit) 55%, transparent); }
+  70%      { box-shadow: 0 0 0 10px color-mix(in srgb, var(--crit) 0%, transparent); }
+}
+
+@keyframes brilhoFaixa {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
+.faixa-incidente {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 22px 0;
+  padding: 13px 17px;
+  border-radius: var(--r-m);
+  border: 1px solid var(--crit);
+  color: var(--fg);
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--crit) 26%, transparent),
+    color-mix(in srgb, var(--crit) 12%, transparent),
+    color-mix(in srgb, var(--crit) 26%, transparent));
+  background-size: 220% 100%;
+  animation: brilhoFaixa 5s ease-in-out infinite;
+}
+
+.fi-sinal {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--crit);
+  flex: 0 0 auto;
+  animation: pulsoIncidente 1.8s ease-out infinite;
+}
+
+.fi-texto { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.fi-texto strong { font-size: 13.5px; color: var(--crit); letter-spacing: -.01em; }
+.fi-detalhe { font-size: 12px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.faixa-incidente .btn-secundario, .faixa-incidente .btn-perigo { flex: 0 0 auto; }
+
+/* Movimento e um recurso de atencao, nao um enfeite: quem pediu menos movimento
+   continua vendo a faixa, so que parada. A cor e a borda ja bastam. */
+@media (prefers-reduced-motion: reduce) {
+  .faixa-incidente, .fi-sinal { animation: none; }
+}
+
 /* =========================================================== destrutivo === */
 /* Vermelho contornado, nao preenchido: preenchido competiria com o "+ Adicionar
    PC" e um botao que apaga historico nao pode disputar atencao com um de uso

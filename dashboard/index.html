@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=19" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=20" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=19">
+  <link rel="stylesheet" href="styles.css?v=20">
 </head>
 <body>
 
@@ -105,6 +105,13 @@
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
         <span id="btn-tema-rot">Tema claro</span>
       </button>
+
+      <!-- Som DESLIGADO por padrão. Numa tela de parede ele salva o turno; numa
+           mesa compartilhada é motivo para desligar o monitoramento inteiro. -->
+      <button id="btn-som" class="btn-lateral" type="button" aria-pressed="false">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>
+        <span id="btn-som-rot">Som: desligado</span>
+      </button>
       <div class="usuario-chip">
         <span id="usuario-iniciais" class="avatar mono" aria-hidden="true">··</span>
         <div class="usuario-texto">
@@ -143,6 +150,24 @@
         </button>
       </div>
     </header>
+
+    <!-- =====================================================================
+         Faixa de incidente
+         =====================================================================
+         Só acende com alerta CRÍTICO em aberto e não reconhecido. Se acendesse
+         para qualquer coisa viraria papel de parede em dois dias, e aí deixaria
+         de funcionar justamente no dia em que importa. -->
+    <div id="faixa-incidente" class="faixa-incidente" hidden role="alert" aria-live="assertive">
+      <span class="fi-sinal" aria-hidden="true"></span>
+
+      <div class="fi-texto">
+        <strong id="fi-titulo">—</strong>
+        <span id="fi-detalhe" class="fi-detalhe">—</span>
+      </div>
+
+      <button id="fi-abrir" class="btn-secundario" type="button">Abrir a máquina</button>
+      <button id="fi-reconhecer" class="btn-perigo" type="button">Reconhecer</button>
+    </div>
 
     <!-- Faixa de dados de demonstração.
          Só aparece quando eles existem. Sem isso, as lojas do seed convivem com
@@ -403,7 +428,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=19"></script>
-<script src="dash.js?v=19"></script>
+<script src="config.js?v=20"></script>
+<script src="dash.js?v=20"></script>
 </body>
 </html>

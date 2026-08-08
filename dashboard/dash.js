@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.19-frota-nova';
+const BUILD = '2026-08-06.20-incidente';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -87,6 +87,13 @@ const Estado = {
   filtros: { marca: '', loja: '', status: '', busca: '' },
   maquinaAberta: null,
   ehAdmin: false,
+  incidentes: null,
+  incidenteNaFaixa: null,
+  incidentesVistos: new Set(),
+  primeiraCargaIncidentes: true,
+  som: false,
+  audio: null,
+  faviconAtual: null,
   faixa: '24h',        // faixa do painel de detalhe
   faixaFrota: '24h',   // faixa do gráfico de carga da frota
   modo: 'lojas',       // 'lojas' (cartão por loja) ou 'maquinas' (cartão por PC)
@@ -298,6 +305,11 @@ async function carregar() {
     preencherFiltros();
     desenharMaquinas();
     verificarDadosDemo();
+
+    // Depois de desenhar: a faixa e informacao de topo, mas a lista de maquinas
+    // e o que a equipe precisa ver mesmo se esta consulta falhar.
+    await carregarIncidentes();
+    Estado.primeiraCargaIncidentes = false;
 
     txt($('rodape-atualizacao'), `atualizado ${new Date().toLocaleTimeString('pt-BR')}`);
   } catch (e) {
@@ -536,6 +548,187 @@ function desenharNavMarcas() {
       aplicarFiltros();
     });
     nav.appendChild(bt);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Faixa de incidente
+// -----------------------------------------------------------------------------
+// A fila de atenção (abaixo) é derivada do estado ATUAL e é imediata. Esta faixa
+// é outra coisa: mostra o alerta FORMAL, o que passou pela histerese do
+// avaliador e portanto se sustentou. É a diferença entre "um pico agora" e
+// "isto está acontecendo há dez minutos".
+//
+// Só acende para CRÍTICO e NÃO RECONHECIDO. Reconhecer não fecha o alerta — ele
+// continua aberto no histórico até a condição realmente se desfazer —, só cala a
+// faixa. Sem esse escape, um problema que leva dois dias para ser resolvido
+// deixaria a tela vermelha por dois dias, e no terceiro ninguém mais a veria.
+async function carregarIncidentes() {
+  let inc;
+  try {
+    inc = await rpc('incidentes_abertos');
+  } catch (e) {
+    // Nunca esconde a frota por causa disto. Mas também não finge que está tudo
+    // bem: se a consulta falhou, a faixa some e o console registra.
+    console.warn('[monitor] incidentes indisponíveis:', e.message);
+    $('faixa-incidente').hidden = true;
+    return;
+  }
+
+  Estado.incidentes = inc;
+
+  const naFaixa = (inc.lista || []).filter((a) => a.severity === 'critical' && !a.reconhecido);
+  const faixa = $('faixa-incidente');
+
+  atualizarFavicon(naFaixa.length > 0, (inc.avisos || 0) > 0);
+  tocarSeNovo(naFaixa);
+
+  if (naFaixa.length === 0) {
+    faixa.hidden = true;
+    Estado.incidenteNaFaixa = null;
+    return;
+  }
+
+  const primeiro = naFaixa[0];
+  Estado.incidenteNaFaixa = primeiro;
+
+  txt($('fi-titulo'), naFaixa.length === 1
+    ? '1 incidente crítico'
+    : `${naFaixa.length} incidentes críticos`);
+
+  txt($('fi-detalhe'),
+    `${primeiro.site_code || 'sem loja'} · ${primeiro.message}`
+    + (naFaixa.length > 1 ? `  (+${naFaixa.length - 1} outro(s))` : ''));
+
+  txt($('fi-reconhecer'), naFaixa.length > 1 ? 'Reconhecer este' : 'Reconhecer');
+  faixa.hidden = false;
+}
+
+async function reconhecerIncidente() {
+  const a = Estado.incidenteNaFaixa;
+  if (!a) return;
+
+  await rpc('reconhecer_alerta', { p_event_id: a.event_id });
+  brinde(`${a.label}: alerta reconhecido. Continua aberto até normalizar.`);
+  await carregarIncidentes();
+}
+
+function abrirMaquinaDoIncidente() {
+  const a = Estado.incidenteNaFaixa;
+  if (!a) return;
+
+  const m = Estado.maquinas.find((x) => x.machine_id === a.machine_id);
+  if (m) abrirPainel(m);
+  else brinde('A máquina deste alerta não está na lista visível.', true);
+}
+
+// -----------------------------------------------------------------------------
+// Aviso sonoro
+// -----------------------------------------------------------------------------
+// Desligado por padrão, e toca UMA vez por incidente novo — nunca em laço.
+//
+// Som repetido em painel de operação é desligado no primeiro dia, e com ele vai
+// embora o recurso inteiro. Um toque curto quando algo NOVO aparece é o que
+// funciona numa tela de parede que ninguém está encarando.
+function tocarSeNovo(criticos) {
+  const idsAgora = new Set(criticos.map((a) => a.event_id));
+
+  const novos = [...idsAgora].filter((id) => !Estado.incidentesVistos.has(id));
+  Estado.incidentesVistos = idsAgora;
+
+  if (novos.length === 0 || !Estado.som) return;
+
+  // Primeira carga da página não toca: a tela abrindo com três incidentes
+  // antigos não é novidade nenhuma, é o estado do mundo.
+  if (Estado.primeiraCargaIncidentes) return;
+
+  apitar();
+}
+
+/**
+ * Dois tons curtos, gerados na hora.
+ *
+ * Sem arquivo de áudio de propósito: um .mp3 seria mais um recurso para servir,
+ * mais uma coisa para faltar, e a CSP teria de liberar media-src.
+ */
+function apitar() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+
+    const ctx = Estado.audio || (Estado.audio = new Ctx());
+    if (ctx.state === 'suspended') ctx.resume();
+
+    for (const [quando, hz] of [[0, 880], [0.18, 660]]) {
+      const osc = ctx.createOscillator();
+      const vol = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = hz;
+
+      // Envelope: um tom que corta seco estala no alto-falante.
+      const t = ctx.currentTime + quando;
+      vol.gain.setValueAtTime(0, t);
+      vol.gain.linearRampToValueAtTime(0.13, t + 0.02);
+      vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+
+      osc.connect(vol).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.16);
+    }
+  } catch (_) {
+    // Navegador sem permissão de áudio: a faixa vermelha continua valendo.
+  }
+}
+
+function alternarSom() {
+  Estado.som = !Estado.som;
+  try { localStorage.setItem('monitor.som', Estado.som ? '1' : '0'); } catch (_) { /* privado */ }
+
+  txt($('btn-som-rot'), Estado.som ? 'Som: ligado' : 'Som: desligado');
+  $('btn-som').setAttribute('aria-pressed', String(Estado.som));
+
+  // Toca na hora de ligar: confirma que funciona, e o navegador exige um gesto
+  // do usuário para liberar áudio — este clique é esse gesto.
+  if (Estado.som) apitar();
+}
+
+// -----------------------------------------------------------------------------
+// Favicon
+// -----------------------------------------------------------------------------
+// Quem deixa o painel numa aba de fundo não vê faixa nenhuma. O favicon é o
+// único pixel que sobra, então ele carrega o estado.
+function atualizarFavicon(critico, aviso) {
+  const chave = `${critico}|${aviso}`;
+  if (Estado.faviconAtual === chave) return;   // redesenhar a cada 20s é desperdício
+  Estado.faviconAtual = chave;
+
+  try {
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 64;
+    const g = c.getContext('2d');
+
+    const cor = critico ? '#ff5c6c' : aviso ? '#f5b544' : '#35d6a4';
+
+    g.fillStyle = '#0c0e13';
+    g.beginPath();
+    g.roundRect(0, 0, 64, 64, 14);
+    g.fill();
+
+    g.fillStyle = cor;
+    g.beginPath();
+    g.arc(32, 32, critico ? 20 : 15, 0, Math.PI * 2);
+    g.fill();
+
+    let link = document.querySelector('link[rel="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.href = c.toDataURL('image/png');
+  } catch (_) {
+    // roundRect não existe em navegador antigo: sem favicon, e tudo bem.
   }
 }
 
@@ -1907,6 +2100,10 @@ function ligarEventos() {
   }
 
   $('btn-tema').addEventListener('click', () => trocarTema());
+  $('btn-som').addEventListener('click', alternarSom);
+  $('fi-abrir').addEventListener('click', abrirMaquinaDoIncidente);
+
+  armarPerigo($('fi-reconhecer'), 'Confirmar', reconhecerIncidente);
 
   // Remoção: dois cliques, e o rótulo do segundo diz o que vai sumir.
   armarPerigo($('btn-remover-demo'), 'Confirmar remoção', removerDemo);
@@ -1952,7 +2149,11 @@ function restaurarPreferencias() {
   try {
     tema = localStorage.getItem('monitor.tema') || 'dark';
     modo = localStorage.getItem('monitor.modo') || 'lojas';
+    Estado.som = localStorage.getItem('monitor.som') === '1';
   } catch (_) { /* modo privado bloqueia storage */ }
+
+  txt($('btn-som-rot'), Estado.som ? 'Som: ligado' : 'Som: desligado');
+  $('btn-som').setAttribute('aria-pressed', String(Estado.som));
 
   document.documentElement.setAttribute('data-tema', tema);
   txt($('btn-tema-rot'), tema === 'light' ? 'Tema escuro' : 'Tema claro');
