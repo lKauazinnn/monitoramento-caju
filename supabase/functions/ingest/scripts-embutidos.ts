@@ -2,7 +2,7 @@
 // GERADO — não edite à mão
 // =============================================================================
 // Origem:
-//   agent/agente-powershell.ps1  (36996 bytes, sha256:3913ae2cbb8d9755)
+//   agent/agente-powershell.ps1  (40206 bytes, sha256:6fe5310122a3affa)
 //   docker/ingest-local/instalar.ps1  (11721 bytes, sha256:e6f50567e363068b)
 //
 // Regerar:  node scripts/gerar-scripts-embutidos.mjs
@@ -714,6 +714,61 @@ function ExecutarWakeMachine {
   }
 }
 
+function ExecutarSleepMachine {
+  param([string] $Modo, [bool] $Simulacao)
+
+  # Confere ANTES de suspender que da para acordar. Suspender uma maquina que
+  # nao acorda e transformar um PC funcionando num PC apagado a 900 km — e a
+  # unica hora em que da para descobrir isso e enquanto ela ainda responde.
+  $armados = @()
+  try { $armados = @(& powercfg.exe -devicequery wake_armed 2>$null) } catch { }
+
+  $placa = Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+             Where-Object { $_.Status -eq 'Up' -and $_.MediaType -ne 'Native 802.11' } |
+             Select-Object -First 1
+
+  $placaArmada = $false
+  if ($placa) {
+    $placaArmada = @($armados | Where-Object { $_ -like "*$($placa.InterfaceDescription)*" }).Count -gt 0
+  }
+
+  if (-not $placaArmada) {
+    return @{
+      ok = $false
+      texto = 'RECUSADO: a placa de rede nao esta armada para acordar esta maquina. ' +
+              'Suspender agora deixaria o PC inacessivel. Rode conferir-wol.ps1 -Corrigir primeiro.'
+      payload = @{ wake_armed = $armados }
+    }
+  }
+
+  # O estado precisa EXISTIR neste sistema. Hibernacao desligada e comum, e
+  # \`shutdown /h\` numa maquina sem hibernacao nao faz nada e nao reclama.
+  $estados = ''
+  try { $estados = (& powercfg.exe /a 2>$null) -join ' ' } catch { }
+
+  if ($Modo -eq 'hibernar' -and $estados -notmatch 'Hibernar|Hibernate') {
+    return @{ ok = $false; texto = 'hibernacao nao esta disponivel nesta maquina' }
+  }
+
+  if ($Simulacao) {
+    return @{ ok = $true
+              texto = "SIMULACAO: $Modo esta maquina. A placa ESTA armada " +
+                      "($($placa.InterfaceDescription)), entao daria para acorda-la depois."
+              payload = @{ modo = $Modo; placa_armada = $true } }
+  }
+
+  # O relato tem que SAIR antes de a maquina cair. Vai no envelope do proximo
+  # envio, que o chamador dispara logo em seguida — mesma logica do reinicio.
+  $script:suspenderDepois = $Modo
+
+  return @{
+    ok    = $true
+    texto = "$Modo agendado. A placa esta armada; use 'Ligar o PC' pelo painel para acordar."
+    payload = @{ modo = $Modo; placa = $placa.InterfaceDescription }
+    suspender = $true
+  }
+}
+
 function ExecutarComando {
   param($Comando)
 
@@ -729,6 +784,7 @@ function ExecutarComando {
     'clear_temp'          { return (ExecutarClearTemp -DiasMinimos ([int]$p.dias_minimos) -Simulacao $sim) }
     'run_test_collection' { return (ExecutarRunTestCollection -Simulacao $sim) }
     'wake_machine'        { return (ExecutarWakeMachine -Mac ([string]$p.mac) -Alvo ([string]$p.alvo) -Simulacao $sim) }
+    'sleep_machine'       { return (ExecutarSleepMachine -Modo ([string]$p.modo) -Simulacao $sim) }
     'restart_machine' {
       # O relato precisa dizer o que REALMENTE aconteceu. "reinicio agendado"
       # numa simulacao ensina a nao confiar no dry-run, que so serve enquanto
@@ -787,6 +843,28 @@ function ProcessarComandos {
       }
       # /t 15 da tempo de o log ser gravado em disco antes do desligamento.
       & shutdown.exe /r /t 15 /c 'Reinicio solicitado pelo Sentinela' | Out-Null
+      return
+    }
+
+    # SUSPENDER, pela mesma razao e na mesma ordem: o relato sai primeiro.
+    if ($r.suspender -and -not $c.dry_run) {
+      try {
+        Enviar -Amostras @(NovaAmostra) -Maquina $Maquina | Out-Null
+        ResultadosLimpar
+        Registrar 'INF' "resultado enviado; $($script:suspenderDepois) em 10s"
+      } catch {
+        Registrar 'AVI' "nao consegui relatar antes de suspender: $($_.Exception.Message)"
+      }
+
+      Start-Sleep -Seconds 10
+
+      # SetSuspendState(hibernar, forcar, desabilitarEventosDeWake).
+      # O terceiro parametro e FALSE de proposito: passar true desarmaria os
+      # dispositivos de wake, e a maquina nunca mais acordaria pela rede — o
+      # oposto exato do que este comando existe para permitir.
+      $hibernar = ($script:suspenderDepois -eq 'hibernar')
+      Add-Type -AssemblyName System.Windows.Forms
+      [void][System.Windows.Forms.Application]::SetSuspendState($hibernar, $true, $false)
       return
     }
   }

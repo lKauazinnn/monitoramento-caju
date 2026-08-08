@@ -169,6 +169,46 @@ begin
     raise exception 'FALHA 9: a resposta nao diz corretamente quem acorda quem: %', v_r;
   end if;
 
+  -- ------------------- 10. suspender só quando existe caminho de volta
+  -- Suspender uma máquina que não se sabe acordar é transformar um PC
+  -- funcionando num PC apagado a 900 km. O painel só pode oferecer isso quando
+  -- as duas pontas existem: MAC conhecido E vizinho capaz na loja.
+  declare
+    v_a jsonb;
+  begin
+    -- O vizinho está online; o alvo está offline. Para o VIZINHO, suspender
+    -- deveria ser possível: ele tem MAC e tem quem o acorde? Não — o único
+    -- outro capaz seria o alvo, que está desligado.
+    v_a := public.acoes_da_maquina(v_viz);
+
+    if (v_a -> 'suspender' ->> 'aplicavel')::boolean is not true then
+      raise exception 'FALHA 10: suspender nao foi oferecido para maquina online';
+    end if;
+
+    if (v_a -> 'suspender' ->> 'tem_vizinho')::boolean is not false then
+      raise exception 'FALHA 10: ofereceu suspender sem NINGUEM para acordar depois';
+    end if;
+
+    -- Agora sobe o alvo: passa a existir caminho de volta para o vizinho.
+    update public.machines set last_seen_at = now(), mac_address = 'de:ad:be:ef:00:02'
+     where id = v_alvo;
+
+    v_a := public.acoes_da_maquina(v_viz);
+
+    if (v_a -> 'suspender' ->> 'tem_vizinho')::boolean is not true then
+      raise exception 'FALHA 10: com vizinho online, suspender continuou bloqueado';
+    end if;
+
+    -- E para maquina OFFLINE nao se oferece suspender: ela ja esta apagada.
+    v_a := public.acoes_da_maquina(v_viz);
+    update public.machines set last_seen_at = now() - interval '3 hours' where id = v_viz;
+    v_a := public.acoes_da_maquina(v_viz);
+
+    if (v_a -> 'suspender' ->> 'aplicavel')::boolean is not false then
+      raise exception 'FALHA 10: ofereceu suspender para maquina que ja esta offline';
+    end if;
+  end;
+
   -- ------------------------------------------------------------------ limpa
   delete from public.events where site_id in (v_site, v_outra);
   delete from public.machines where id in (v_alvo, v_viz, v_velho, v_longe);

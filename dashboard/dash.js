@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.24-ligar';
+const BUILD = '2026-08-08.25-suspender';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1637,6 +1637,7 @@ const NOME_DA_ACAO = {
   clear_temp: 'Limpar temporários',
   restart_machine: 'Reiniciar o PC',
   wake_machine: 'Ligar o PC',
+  sleep_machine: 'Suspender o PC',
   run_test_collection: 'Testar coleta',
 };
 
@@ -1717,6 +1718,27 @@ async function desenharAcoes(m) {
     }
   }
 
+  // Suspender. É a alternativa a desligar quando não se pode ir ao BIOS da
+  // loja: acordar de suspensão depende do Windows, não do firmware.
+  const sus = a.suspender || {};
+  const podeVoltar = sus.tem_mac === true && sus.tem_vizinho === true;
+  $('linha-suspender').hidden = sus.aplicavel !== true;
+
+  if (sus.aplicavel) {
+    $('btn-sleep').disabled = !podeVoltar;
+
+    if (!sus.tem_mac) {
+      motivos.push('Suspender está bloqueado: sem o MAC desta máquina não haveria '
+        + 'como acordá-la depois.');
+    } else if (!sus.tem_vizinho) {
+      motivos.push('Suspender está bloqueado: nenhuma outra máquina online nesta loja '
+        + 'para mandar o pacote de volta. Ela ficaria inacessível.');
+    } else if (!sus.ja_acordou) {
+      motivos.push('Esta máquina nunca foi acordada pela rede ainda. '
+        + 'Suspender é reversível em teoria, mas só o primeiro teste prova.');
+    }
+  }
+
   txt(aviso, motivos.join(' '));
   aviso.hidden = motivos.length === 0;
 
@@ -1757,6 +1779,7 @@ function refletirModoSimulacao() {
     'btn-test-collection': 'Testar coleta',
     'btn-restart-machine': 'Reiniciar o PC',
     'btn-wake': 'Ligar o PC',
+    'btn-sleep': 'Suspender o PC',
   };
 
   for (const [id, base] of Object.entries(rotulos)) {
@@ -2561,6 +2584,11 @@ function ligarEventos() {
     pedirAcao('restart_machine', {}, true));
 
   $('acao-simular').addEventListener('change', refletirModoSimulacao);
+
+  // Suspender derruba a loja ate alguem acordar a maquina: dois cliques, como
+  // reiniciar.
+  armarPerigo($('btn-sleep'), 'Confirmar: suspender', () =>
+    pedirAcao('sleep_machine', { modo: 'suspender' }, true));
 
   // Ligar o PC vai por caminho próprio: quem escolhe o vizinho que manda o
   // pacote é o servidor, não a tela. A tela só sabe o alvo.
