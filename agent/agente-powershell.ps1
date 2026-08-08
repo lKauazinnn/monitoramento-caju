@@ -49,7 +49,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.3.1'
+$VERSAO = 'ps-1.4.0'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -121,6 +121,23 @@ function Registrar {
 $script:cpuBrutoAnterior = $null
 $script:cpuTsAnterior = $null
 
+function Cim {
+  param([string] $Classe, [string] $Filtro, [int] $Prazo = 8)
+
+  # PRAZO OBRIGATORIO, e a razao veio de uma instalacao real:
+  #
+  # Num servidor com os contadores de performance do WMI corrompidos, cada
+  # `Get-CimInstance Win32_PerfFormattedData_*` levou NOVENTA SEGUNDOS para
+  # falhar com "Classe invalida". Dois coletores nessa situacao fizeram um
+  # ciclo de 60s levar 4m38s — o agente passou a reportar menos de uma vez a
+  # cada cinco minutos, e o painel mostrava a maquina quase offline.
+  #
+  # `-OperationTimeoutSec` corta isso: a consulta falha em 8s e o ciclo segue.
+  # Um coletor quebrado custa 8 segundos, nao um minuto e meio.
+  $p = @{ ClassName = $Classe; OperationTimeoutSec = $Prazo; ErrorAction = "Stop" }
+  if ($Filtro) { $p.Filter = $Filtro }
+  Get-CimInstance @p
+}
 function Coletar {
   param([string] $Nome, [scriptblock] $Bloco, [hashtable] $Amostra)
   try {
@@ -143,20 +160,45 @@ function NovaAmostra {
 
   # ---- CPU ---------------------------------------------------------------
   Coletar 'cpu' {
-    $f = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop
-    $formatado = [double]$f.PercentProcessorTime
+    # Win32_PerfFormattedData_* depende dos contadores de performance do WMI,
+    # que EM ALGUNS SERVIDORES estao corrompidos ou nao registrados — o erro
+    # que aparece e "Classe invalida", que nao sugere nada disso.
+    #
+    # Win32_Processor.LoadPercentage nao depende deles: e uma propriedade do
+    # proprio objeto de hardware. E menos precisa (amostra instantanea, nao
+    # media de intervalo), mas um numero aproximado e infinitamente melhor que
+    # nenhum — sem ele a maquina aparece no painel sem CPU, e ninguem sabe se
+    # ela esta ociosa ou fervendo.
+    $formatado = $null
+    try {
+      $f = Cim Win32_PerfFormattedData_PerfOS_Processor "Name='_Total'"
+      $formatado = [double]$f.PercentProcessorTime
+    } catch {
+      $lp = (Cim Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
+      if ($null -ne $lp) {
+        $formatado = [double]$lp
+        $amostra.flags += 'cpu_win32_processor'
+      } else {
+        throw
+      }
+    }
 
     # Contador bruto para o fallback: PercentProcessorTime bruto acumula tempo
     # OCIOSO (PERF_100NSEC_TIMER_INV), entao ocupado = 100 * (1 - dCont/dTempo).
-    $b = Get-CimInstance Win32_PerfRawData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop
+    # O contador bruto e so o desempate do caso "formatado devolve 0 sempre".
+    # Se ele tambem nao existir, seguimos com o que temos.
+    $b = $null
+    try { $b = Cim Win32_PerfRawData_PerfOS_Processor "Name='_Total'" } catch { }
     $bruto = $null
-    if ($null -ne $script:cpuBrutoAnterior) {
+    if ($null -ne $b -and $null -ne $script:cpuBrutoAnterior) {
       $dc = [double]$b.PercentProcessorTime - $script:cpuBrutoAnterior
       $dt = [double]$b.Timestamp_Sys100NS   - $script:cpuTsAnterior
       if ($dt -gt 0 -and $dc -ge 0) { $bruto = 100.0 * (1.0 - ($dc / $dt)) }
     }
-    $script:cpuBrutoAnterior = [double]$b.PercentProcessorTime
-    $script:cpuTsAnterior = [double]$b.Timestamp_Sys100NS
+    if ($null -ne $b) {
+      $script:cpuBrutoAnterior = [double]$b.PercentProcessorTime
+      $script:cpuTsAnterior = [double]$b.Timestamp_Sys100NS
+    }
 
     # Cache de contadores corrompido devolve 0 de forma persistente; se o bruto
     # discorda, o formatado e que esta mentindo.
@@ -171,11 +213,26 @@ function NovaAmostra {
   # ---- fila, processos, threads, uptime ----------------------------------
   # ATENCAO: estes NAO estao na classe _Processor. Vem de _System.
   Coletar 'sistema' {
-    $s = Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction Stop
-    $amostra.cpu_queue_length = [double]$s.ProcessorQueueLength
-    $amostra.proc_count       = [int]$s.Processes
-    $amostra.thread_count     = [int]$s.Threads
-    $amostra.uptime_seconds   = [long]$s.SystemUpTime
+    # Mesmo problema, mesma saida. Uptime vem de LastBootUpTime, que e
+    # propriedade do sistema operacional e nao depende de contador nenhum; a
+    # contagem de processos vem de Get-Process.
+    #
+    # O que se perde no caminho alternativo: fila do processador e contagem de
+    # threads. Sao os dois numeros menos usados do painel, e perde-los e melhor
+    # que perder o uptime — que e o que diz ha quantos dias a maquina nao
+    # reinicia, e alimenta o alerta de manutencao devida.
+    try {
+      $sy = Cim Win32_PerfFormattedData_PerfOS_System
+      $amostra.cpu_queue_length = [double]$sy.ProcessorQueueLength
+      $amostra.proc_count       = [int]$sy.Processes
+      $amostra.thread_count     = [int]$sy.Threads
+      $amostra.uptime_seconds   = [long]$sy.SystemUpTime
+    } catch {
+      $os = Cim Win32_OperatingSystem
+      $amostra.uptime_seconds = [long]((Get-Date) - $os.LastBootUpTime).TotalSeconds
+      $amostra.proc_count     = @(Get-Process -ErrorAction SilentlyContinue).Count
+      $amostra.flags += 'sistema_sem_contadores'
+    }
   } $amostra
 
   # ---- memoria (Win32_OperatingSystem reporta em KILOBYTES) --------------
