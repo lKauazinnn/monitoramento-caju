@@ -615,7 +615,13 @@ function ExecutarComando {
     'restart_service'     { return (ExecutarRestartService -Servico ([string]$p.servico) -Simulacao $sim) }
     'clear_temp'          { return (ExecutarClearTemp -DiasMinimos ([int]$p.dias_minimos) -Simulacao $sim) }
     'run_test_collection' { return (ExecutarRunTestCollection -Simulacao $sim) }
-    'restart_machine'     { return @{ ok = $true; texto = 'reinicio agendado'; reiniciar = $true } }
+    'restart_machine' {
+      # O relato precisa dizer o que REALMENTE aconteceu. "reinicio agendado"
+      # numa simulacao ensina a nao confiar no dry-run, que so serve enquanto
+      # for confiavel.
+      if ($sim) { return @{ ok = $true; texto = 'SIMULACAO: reiniciaria esta maquina em 15s' } }
+      return @{ ok = $true; texto = 'reinicio agendado para daqui a 15s'; reiniciar = $true }
+    }
     default {
       return @{ ok = $false; texto = "tipo de comando desconhecido nesta versao do agente ($VERSAO): $tipo" }
     }

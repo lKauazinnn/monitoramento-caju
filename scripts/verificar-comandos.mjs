@@ -157,6 +157,43 @@ try {
   umCiclo();
   verificar('a simulacao fecha como sucesso', estado(id2) === 'succeeded', estado(id2));
 
+  // ------------------------------------------ 2b. o caminho do REINICIO
+  console.log('\n== 2b. reiniciar a maquina (simulado) ==');
+  // Este e o unico comando que NAO da para provar por inteiro: a ultima linha
+  // dele desliga o PC de quem roda o teste. Entao prova-se tudo ate ali —
+  // enfileiramento, confirmacao obrigatoria, entrega, execucao, relato — e o
+  // dry-run garante que o `shutdown.exe` nao e chamado.
+  //
+  // O que fica sem cobertura automatica e uma linha: `& shutdown.exe /r /t 15`.
+  let recusou = false;
+  try {
+    comoAdmin(`select public.enfileirar_comando('${maq}', 'restart_machine')`);
+  } catch (_) { recusou = true; }
+  verificar('sem confirmacao, o servidor recusa o reinicio', recusou);
+
+  const id2b = JSON.parse(comoAdmin(
+    `select public.enfileirar_comando('${maq}', 'restart_machine', '{}'::jsonb, true, true)`
+  )).command_id;
+
+  const saidaR = umCiclo();
+  verificar('o agente recebeu o comando de reinicio',
+    /comando restart_machine recebido/.test(saidaR), saidaR.slice(-400));
+  verificar('e o relato diz "reiniciaria", nao "reiniciou"',
+    /SIMULACAO: reiniciaria/.test(saidaR), saidaR.slice(-400));
+
+  umCiclo();
+  verificar('a simulacao de reinicio fecha como sucesso', estado(id2b) === 'succeeded',
+    estado(id2b));
+
+  // O cooldown conta a partir do reinicio REAL. Simulacao nao pode gastar a
+  // cota, senao um operador cauteloso que simula antes de agir ficaria 30 min
+  // impedido de fazer o que a simulacao acabou de dizer que era seguro.
+  let bloqueou = false;
+  try {
+    comoAdmin(`select public.enfileirar_comando('${maq}', 'restart_machine', '{}'::jsonb, true, true)`);
+  } catch (_) { bloqueou = true; }
+  verificar('simular nao gasta a cota de reinicio do cooldown', !bloqueou);
+
   // ------------------------------------- 3. tipo desconhecido nao vira acao
   console.log('\n== 3. tipo desconhecido falha explicitamente ==');
   // Um servidor mais novo que o agente. O agente NAO pode adivinhar: tem que
