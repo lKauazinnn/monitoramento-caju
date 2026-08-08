@@ -99,6 +99,46 @@ try {
   verificar('e a falha e dita, nao engolida',
     /falhou|nao encontrei|Red/i.test(s3) || s3.includes('falhou'), s3.slice(-300));
 
+  console.log('\n== 4. a JANELA nao fecha ==');
+  // O defeito que fez o terminal sumir: `exit` dentro de um scriptblock
+  // invocado com & nao encerra o script, encerra a SESSAO do PowerShell. A
+  // janela fecha antes de a pessoa ler o resultado — inclusive no caso de
+  // sucesso. Como o comando de uma linha e EXATAMENTE essa forma, este e o
+  // modo em que o script tem que ser testado.
+  //
+  // A marca no fim so aparece se a sessao sobreviveu ao script.
+  const comoScriptblock = (cfg) => {
+    const ps1 = join(raiz, 'scripts', 'atualizar-agente.ps1').replace(/'/g, "''");
+    try {
+      return execFileSync('powershell', ['-NoProfile', '-Command',
+        `& ([scriptblock]::Create((Get-Content -Raw '${ps1}'))) -Config '${cfg}'; ` +
+        `Write-Host 'SESSAO-VIVA'`,
+      ], { encoding: 'utf8', timeout: 120000 });
+    } catch (e) {
+      return String(e.stdout ?? '') + String(e.stderr ?? '');
+    }
+  };
+
+  // Caminho de ERRO: config inexistente. Era aqui que a janela fechava.
+  const sErro = comoScriptblock(join(dir, 'nao-existe.json'));
+  verificar('erro nao encerra a sessao de quem colou o comando',
+    /SESSAO-VIVA/.test(sErro), sErro.slice(-300));
+  verificar('e o motivo do erro fica visivel antes disso',
+    /config\.json nao encontrado/.test(sErro), sErro.slice(-300));
+
+  // Caminho de SUCESSO tambem terminava em `exit 0`, e fechava igual.
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({
+    ingestUrl: `http://127.0.0.1:${portaIngest}`,
+    token: 'mon_' + 'a'.repeat(64),
+  }, null, 2));
+  writeFileSync(antigo, "$VERSAO = 'ps-0.9.0'\n", 'utf8');
+
+  const sOk = comoScriptblock(join(dir, 'config.json'));
+  verificar('sucesso tambem nao encerra a sessao',
+    /SESSAO-VIVA/.test(sOk), sOk.slice(-400));
+  verificar('e o script realmente atualizou nesse modo',
+    /\$VERSAO\s*=\s*'ps-1\.[3-9]/.test(readFileSync(antigo, 'utf8')));
+
 } catch (e) {
   falhas.push('excecao');
   console.log(`\nEXCECAO: ${e.message}`);

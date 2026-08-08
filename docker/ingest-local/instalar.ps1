@@ -53,7 +53,24 @@ $configPath = Join-Path $dirDados 'config.json'
 
 function Passo { param([string]$T) Write-Host ''; Write-Host "== $T ==" -ForegroundColor Cyan }
 function Ok    { param([string]$T) Write-Host "   $T" -ForegroundColor Green }
+
 function Info  { param([string]$T) Write-Host "   $T" -ForegroundColor DarkGray }
+
+# ---------------------------------------------------------------------------
+# NAO USE "exit" NESTE ARQUIVO. Use "return", sem valor.
+# ---------------------------------------------------------------------------
+# Ele e executado de uma linha so, assim:
+#
+#   & ([scriptblock]::Create((irm 'https://.../instalar.ps1'))) -Servidor ...
+#
+# Nessa forma, "exit" nao encerra o script: encerra a SESSAO do PowerShell. A
+# janela fecha antes de a pessoa ler o que aconteceu — e num caminho de ERRO e
+# justamente a mensagem de erro que se perde, deixando quem instalou sem nenhuma
+# pista do que houve.
+#
+# "return" sem valor sai do scriptblock e deixa a janela viva. COM valor ele
+# imprimiria o numero na saida, no meio das mensagens.
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 if ($Parar) {
@@ -63,7 +80,7 @@ if ($Parar) {
     Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
   } else { Info 'nenhum agente registrado' }
   try { Unregister-ScheduledTask -TaskName 'MonitorAgent' -Confirm:$false -ErrorAction Stop; Ok 'tarefa agendada removida' } catch { }
-  exit 0
+  return
 }
 
 Write-Host ''
@@ -112,7 +129,7 @@ try {
   }
 
   Write-Host ''
-  exit 1
+  return
 }
 
 # ---------------------------------------------------------------------------
@@ -124,7 +141,7 @@ try {
   $script = Invoke-RestMethod -Uri "$Servidor/agente.ps1" -TimeoutSec 30
 } catch {
   Write-Host "   nao foi possivel baixar o agente: $($_.Exception.Message)" -ForegroundColor Red
-  exit 1
+  return
 }
 
 # BOM UTF-8 de proposito: o PowerShell 5.1 le .ps1 como ANSI quando nao ha BOM, e
@@ -177,7 +194,7 @@ Passo 'Coleta de teste'
 if ($LASTEXITCODE -ne 0) {
   Write-Host ''
   Write-Host '   a coleta de teste falhou — veja a mensagem acima' -ForegroundColor Red
-  exit 1
+  return
 }
 
 # ---------------------------------------------------------------------------
@@ -229,7 +246,7 @@ if ($ComTarefa -and $ehAdmin) {
     Write-Host '   o agente morreu ao iniciar:' -ForegroundColor Red
     Get-Content (Join-Path $dirDados 'agente.err.log') -Tail 10 -ErrorAction SilentlyContinue |
       ForEach-Object { Write-Host "     $_" -ForegroundColor Red }
-    exit 1
+    return
   }
 }
 
