@@ -47,7 +47,39 @@ if (-not (Test-Path $Config)) {
 
 $cfg = Get-Content $Config -Raw | ConvertFrom-Json
 $dir = Split-Path -Parent $Config
-$alvo = Join-Path $dir 'agente.ps1'
+
+# QUAL arquivo o agente roda de verdade.
+#
+# Isto foi um defeito na primeira versao: eu chutei 'agente.ps1', mas o
+# instalador grava 'agente-powershell.ps1'. O script baixava, gravava, dizia
+# "atualizado para ps-1.3.0" — e criava um arquivo que NADA executa. O agente
+# real continuava na versao antiga, e a unica pista era o painel insistindo na
+# versao velha.
+#
+# A correcao nao e trocar um nome chutado por outro: e PERGUNTAR a tarefa
+# agendada qual caminho ela executa. Se um dia o instalador mudar o nome de
+# novo, isto continua certo.
+$alvo = $null
+try {
+  $acao = (Get-ScheduledTask -TaskName 'MonitorAgent' -ErrorAction Stop).Actions |
+            Select-Object -First 1
+  if ($acao.Arguments -match '-File\s+"?([^"]+\.ps1)"?') {
+    $alvo = $Matches[1]
+  }
+} catch { }
+
+if (-not $alvo) {
+  # Sem tarefa agendada (instalacao em primeiro plano): o instalador tambem usa
+  # este nome. Nao inventa um terceiro.
+  $alvo = Join-Path $dir 'agente-powershell.ps1'
+}
+
+if (-not (Test-Path $alvo)) {
+  Write-Host "nao encontrei o agente em $alvo" -ForegroundColor Red
+  Write-Host 'Arquivos .ps1 nesta pasta:' -ForegroundColor Yellow
+  Get-ChildItem $dir -Filter *.ps1 | ForEach-Object { Write-Host "  $($_.Name)" }
+  exit 1
+}
 
 # O endereco da ingestao ja aponta para quem serve o agente: em producao a
 # propria Edge Function, na LAN o shim local. `/ingest` no fim vira `/agente.ps1`
@@ -100,14 +132,41 @@ Write-Host "gravado em $alvo" -ForegroundColor Green
 # Reinicia a tarefa. Sem isto, o processo antigo continua rodando com o codigo
 # antigo em memoria ate a maquina reiniciar, e a atualizacao parece nao ter
 # funcionado.
+# Duas formas de instalacao, e as duas precisam ser tratadas: tarefa agendada
+# (o padrao) e processo em primeiro plano com um .pid (o caminho sem permissao
+# de administrador). Reiniciar so uma delas deixaria o processo velho vivo com o
+# codigo velho em memoria, e a atualizacao pareceria nao ter funcionado.
+$reiniciou = $false
+
 try {
+  Get-ScheduledTask -TaskName 'MonitorAgent' -ErrorAction Stop | Out-Null
   Stop-ScheduledTask -TaskName 'MonitorAgent' -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
   Start-ScheduledTask -TaskName 'MonitorAgent' -ErrorAction Stop
   Write-Host 'tarefa MonitorAgent reiniciada' -ForegroundColor Green
-} catch {
-  Write-Host "nao consegui reiniciar a tarefa: $($_.Exception.Message)" -ForegroundColor Yellow
-  Write-Host 'Reinicie a maquina, ou rode: Start-ScheduledTask -TaskName MonitorAgent' -ForegroundColor Yellow
+  $reiniciou = $true
+} catch { }
+
+$pidFile = Join-Path $dir 'agente.pid'
+if (-not $reiniciou -and (Test-Path $pidFile)) {
+  try {
+    $velho = [int](Get-Content $pidFile -Raw).Trim()
+    Stop-Process -Id $velho -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
+    $proc = Start-Process powershell.exe -PassThru -WindowStyle Hidden `
+              -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$alvo`"")
+    $proc.Id | Out-File -FilePath $pidFile -Encoding ascii
+    Write-Host "agente reiniciado (pid $($proc.Id))" -ForegroundColor Green
+    $reiniciou = $true
+  } catch {
+    Write-Host "nao consegui reiniciar o processo: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+}
+
+if (-not $reiniciou) {
+  Write-Host 'o arquivo foi trocado, mas o processo antigo continua rodando.' -ForegroundColor Yellow
+  Write-Host 'Reinicie a maquina para a versao nova entrar em uso.' -ForegroundColor Yellow
 }
 
 Write-Host ''
