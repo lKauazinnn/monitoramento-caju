@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=30" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=31" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=30">
+  <link rel="stylesheet" href="styles.css?v=31">
 </head>
 <body>
 
@@ -249,10 +249,11 @@
 
     <!-- --------------------------------------------------- barra de filtro -->
     <nav class="barra-filtros" aria-label="Filtros">
-      <span class="mono rot-filtro">Agrupar por</span>
+      <span class="mono rot-filtro">Layout da visão</span>
       <div class="segmentado" role="tablist" aria-label="Modo de exibição">
         <button class="seg ativa" type="button" data-modo="lojas" role="tab">Lojas</button>
         <button class="seg" type="button" data-modo="maquinas" role="tab">Máquinas</button>
+        <button class="seg" type="button" data-modo="tabela" role="tab">Tabela densa</button>
       </div>
 
       <label class="rotulo-campo" for="filtro-marca">Marca</label>
@@ -574,7 +575,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=30"></script>
-<script src="dash.js?v=30"></script>
+<script src="config.js?v=31"></script>
+<script src="dash.js?v=31"></script>
 </body>
 </html>

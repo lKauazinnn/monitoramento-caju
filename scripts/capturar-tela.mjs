@@ -106,6 +106,13 @@ try {
     windowsVirtualKeyCode: 27 });
   await dormir(400);
 
+  // A tabela densa: a terceira forma de olhar a mesma frota.
+  await js("document.querySelector('[data-modo=tabela]')?.click(); true");
+  await dormir(1500);
+  await foto('07-tabela');
+  await js("document.querySelector('[data-modo=lojas]')?.click(); true");
+  await dormir(1200);
+
   // Painel de detalhe. `.host-quad` e o alvo na vista inicial (a grade por
   // loja); `.cartao` so existe quando um filtro esta ativo.
   await js("(document.querySelector('.host-quad') || document.querySelector('.cartao'))?.click(); true");

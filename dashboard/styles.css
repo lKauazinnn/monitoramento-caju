@@ -1578,3 +1578,55 @@ input::placeholder { color: var(--fg3); }
 }
 
 .paleta-pe span:last-child { margin-left: auto; }
+
+/* -------------------------------------------------------------------------
+   Tabela densa
+   -------------------------------------------------------------------------
+   30px por linha, mono nos numeros. Densidade e o ponto: quem opera precisa
+   ver sessenta maquinas sem rolar. Linha alta e confortavel para ler cinco
+   itens e inutil para varrer duzentos. */
+.td-caixa { overflow-x: auto; }
+.td-grade { min-width: 760px; }
+
+.td-cab {
+  display: grid;
+  background: var(--pnl2);
+  border-radius: var(--r-p);
+  padding: 6px 14px;
+  margin-bottom: 2px;
+}
+
+.td-cab span {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--fg3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.td-linha {
+  display: grid;
+  align-items: center;
+  padding: 7px 14px;
+  min-height: 30px;
+  border-bottom: 1px solid var(--bd2);
+  cursor: pointer;
+  transition: background .13s ease;
+  text-align: left;
+  width: 100%;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  background: none;
+  color: var(--fg);
+}
+
+.td-linha:hover { background: var(--hov); }
+.td-linha > * { min-width: 0; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.td-dir { text-align: right; }
+.td-host { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.td-ponto { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+.td-fraco { color: var(--fg3); font-size: 11px; }

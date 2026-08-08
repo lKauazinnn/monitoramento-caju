@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.30-paleta';
+const BUILD = '2026-08-08.31-tabela';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1225,7 +1225,9 @@ function desenharMaquinas() {
 
   const lista = filtrar();
 
-  txt($('frota-titulo'), Estado.modo === 'lojas' ? 'Lojas' : 'Máquinas');
+  txt($('frota-titulo'),
+    Estado.modo === 'lojas' ? 'Lojas'
+      : Estado.modo === 'tabela' ? 'Frota' : 'Máquinas');
 
   // Zero máquinas NÃO significa zero a mostrar.
   //
@@ -1253,6 +1255,11 @@ function desenharMaquinas() {
   txt($('frota-sub'),
     `${lojasVisiveis.size} loja(s) · ${lista.length} host(s)`
     + (ruins ? ` · ${ruins} pedindo atenção` : ''));
+
+  if (Estado.modo === 'tabela') {
+    desenharTabelaDensa(conteudo, lista);
+    return;
+  }
 
   if (Estado.modo === 'lojas') {
     desenharCartoesDeLoja(conteudo, lista);
@@ -1388,6 +1395,119 @@ function metrica(rotulo, valor, elBarra) {
 // -----------------------------------------------------------------------------
 // É o que faz a tela caber em dezenas de lojas sem virar rolagem infinita. Cada
 // quadrado é uma máquina e abre o painel dela — a densidade não custa o acesso.
+
+// ---------------------------------------------------------------------------
+// Tabela densa
+// ---------------------------------------------------------------------------
+// A terceira forma de olhar a mesma frota. Cartão por loja responde "qual loja
+// está ruim"; a tabela responde "quais máquinas, e quão ruins" — e é a única
+// que cabe sessenta linhas numa tela.
+//
+// ORDENADA POR GRAVIDADE, não por nome: o que precisa de alguém vem primeiro.
+// Dentro do mesmo estado, maior CPU primeiro.
+
+const TD_COLUNAS = [
+  ['Host', '1.5fr', false],
+  ['Loja', '.85fr', false],
+  ['Tipo', '.6fr', false],
+  ['Estado', '.75fr', false],
+  ['CPU', '.6fr', true],
+  ['Mem', '.6fr', true],
+  ['Disco livre', '.7fr', true],
+  ['Temp', '.55fr', true],
+  ['HB', '.7fr', true],
+];
+
+const TD_PESO = { offline: 0, degradado: 1, never: 2, online: 3, manutencao: 4, disabled: 5 };
+
+function desenharTabelaDensa(conteudo, lista) {
+  const grade = TD_COLUNAS.map((c) => c[1]).join(' ');
+
+  const caixa = el('div', 'td-caixa');
+  const wrap = el('div', 'td-grade');
+
+  const cab = el('div', 'td-cab');
+  cab.style.gridTemplateColumns = grade;
+  for (const [rot, , dir] of TD_COLUNAS) {
+    const s = el('span', dir ? 'td-dir' : null, rot);
+    cab.appendChild(s);
+  }
+  wrap.appendChild(cab);
+
+  const ordenada = [...lista].sort((a, b) => {
+    const d = TD_PESO[estadoDe(a)] - TD_PESO[estadoDe(b)];
+    if (d !== 0) return d;
+    return (b.cpu_pct ?? -1) - (a.cpu_pct ?? -1);
+  });
+
+  for (const m of ordenada) {
+    const e = estadoDe(m);
+    const linha = el('button', 'td-linha');
+    linha.type = 'button';
+    linha.style.gridTemplateColumns = grade;
+    linha.setAttribute('aria-label', m.label + ', ' + rotuloStatus(e));
+
+    // Host, com a bolinha do estado.
+    const host = el('span', 'td-host');
+    const ponto = el('i', 'td-ponto');
+    ponto.style.background = e === 'offline' ? 'var(--crit)'
+      : e === 'degradado' ? 'var(--warn)'
+      : e === 'online' ? 'var(--ok)' : 'var(--fg3)';
+    host.appendChild(ponto);
+    host.appendChild(el('span', null, m.label));
+    linha.appendChild(host);
+
+    linha.appendChild(el('span', 'td-fraco', m.site_code || '—'));
+    linha.appendChild(el('span', 'td-fraco', m.role_code || '—'));
+
+    const et = el('span', 'etiqueta etiqueta-' + e, rotuloStatus(e));
+    const cel = el('span');
+    cel.appendChild(et);
+    linha.appendChild(cel);
+
+    linha.appendChild(tdNum(m.cpu_pct, '%', 0, tomPct(m.cpu_pct, 85, 95)));
+    linha.appendChild(tdNum(m.mem_pct, '%', 0, tomPct(m.mem_pct, 85, 95)));
+    linha.appendChild(tdNum(m.disk_min_free_pct, '%', 0, tomDisco(m.disk_min_free_pct)));
+    linha.appendChild(tdNum(m.cpu_temp_c, '\u00b0', 0, tomPct(m.cpu_temp_c, 75, 85)));
+
+    const hb = el('span', 'td-dir mono td-fraco', desdeQuando(m.seconds_since_seen, e));
+    linha.appendChild(hb);
+
+    linha.addEventListener('click', () => abrirPainel(m));
+    wrap.appendChild(linha);
+  }
+
+  caixa.appendChild(wrap);
+  conteudo.appendChild(caixa);
+}
+
+/** Uma célula numérica — ou um travessão, que distingue "zero" de "não medido". */
+function tdNum(v, sufixo, casas, cor) {
+  const s = el('span', 'td-dir mono');
+  if (v === null || v === undefined || Number.isNaN(v)) {
+    s.textContent = '\u2014';
+    s.style.color = 'var(--fg3)';
+    return s;
+  }
+  s.textContent = Number(v).toFixed(casas) + sufixo;
+  if (cor) s.style.color = cor;
+  return s;
+}
+
+function tomPct(v, alerta, critico) {
+  if (v === null || v === undefined) return null;
+  if (v >= critico) return 'var(--crit)';
+  if (v >= alerta) return 'var(--warn)';
+  return null;
+}
+
+function tomDisco(livre) {
+  if (livre === null || livre === undefined) return null;
+  if (livre <= 5) return 'var(--crit)';
+  if (livre <= 15) return 'var(--warn)';
+  return null;
+}
+
 function desenharCartoesDeLoja(conteudo, lista) {
   const porLoja = new Map();
   for (const m of lista) {
