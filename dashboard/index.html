@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=28" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=29" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=28">
+  <link rel="stylesheet" href="styles.css?v=29">
 </head>
 <body>
 
@@ -191,38 +191,56 @@
     <!-- ------------------------------------------------------------- KPIs -->
     <section class="tiras" aria-label="Resumo da frota">
       <article class="tira">
-        <header><span class="mono tira-rot">Hosts online</span></header>
+        <header>
+          <svg class="tira-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+          <span class="mono tira-rot">Hosts online</span>
+        </header>
         <div class="tira-valor"><strong id="kpi-total" class="mono">—</strong><span id="kpi-online-de" class="tira-unid">—</span></div>
         <p id="kpi-online-nota" class="tira-nota">—</p>
         <div id="spark-online" class="spark" aria-hidden="true"></div>
       </article>
 
       <article class="tira tira-alerta">
-        <header><span class="mono tira-rot">Degradados</span></header>
+        <header>
+          <svg class="tira-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          <span class="mono tira-rot">Degradados</span>
+        </header>
         <div class="tira-valor"><strong id="kpi-degradado" class="mono">—</strong><span class="tira-unid">online, com problema</span></div>
         <p id="kpi-degradado-nota" class="tira-nota">—</p>
       </article>
 
       <article class="tira tira-ruim">
-        <header><span class="mono tira-rot">Offline</span></header>
+        <header>
+          <svg class="tira-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 2 22 22"/><path d="M8.5 16.4a5 5 0 0 1 7 0"/><path d="M5 12.9a10 10 0 0 1 4-2.4"/><path d="M15 10.5a10 10 0 0 1 4 2.4"/><path d="M12 20h.01"/></svg>
+          <span class="mono tira-rot">Offline</span>
+        </header>
         <div class="tira-valor"><strong id="kpi-offline" class="mono">—</strong><span class="tira-unid">sem contato</span></div>
         <p id="kpi-offline-nota" class="tira-nota">—</p>
       </article>
 
       <article class="tira tira-ruim">
-        <header><span class="mono tira-rot">Serviços parados</span></header>
+        <header>
+          <svg class="tira-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9.5 9.5h5v5h-5z"/></svg>
+          <span class="mono tira-rot">Serviços parados</span>
+        </header>
         <div class="tira-valor"><strong id="kpi-servicos" class="mono">—</strong><span class="tira-unid">máquinas afetadas</span></div>
         <p id="kpi-servicos-nota" class="tira-nota">—</p>
       </article>
 
       <article class="tira tira-alerta">
-        <header><span class="mono tira-rot">Disco crítico</span></header>
+        <header>
+          <svg class="tira-ico" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+          <span class="mono tira-rot">Disco crítico</span>
+        </header>
         <div class="tira-valor"><strong id="kpi-disco" class="mono">—</strong><span class="tira-unid">abaixo do piso</span></div>
         <p id="kpi-disco-nota" class="tira-nota">—</p>
       </article>
 
       <article class="tira">
-        <header><span class="mono tira-rot">Ingestão</span></header>
+        <header>
+          <svg class="tira-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></svg>
+          <span class="mono tira-rot">Ingestão</span>
+        </header>
         <div class="tira-valor"><strong id="kpi-ingest" class="mono">—</strong><span class="tira-unid">amostras/min</span></div>
         <p id="kpi-ingest-nota" class="tira-nota">—</p>
         <div id="spark-ingest" class="spark" aria-hidden="true"></div>
@@ -533,7 +551,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=28"></script>
-<script src="dash.js?v=28"></script>
+<script src="config.js?v=29"></script>
+<script src="dash.js?v=29"></script>
 </body>
 </html>

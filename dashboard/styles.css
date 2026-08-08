@@ -439,10 +439,29 @@ input::placeholder { color: var(--fg3); }
   animation: riseIn .3s ease both;
 }
 
-.tira header { display: flex; align-items: center; justify-content: space-between; }
-.tira-rot { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--fg3); }
+.tira header { display: flex; align-items: center; gap: 6px; }
+/* O icone da tira: 13px, na cor do estado dela.
+   Fica ANTES do rotulo e nao depois do numero, porque a leitura de uma tira e
+   "o que e isto" -> "quanto e" — e o icone pertence a primeira pergunta.
+   currentColor faz a cor vir da propria tira: uma tira que muda de estado
+   leva o icone junto, sem regra extra. */
+.tira-ico {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--fg3);
+}
+.tira-ruim:not(.zero)   .tira-ico { color: var(--crit); }
+.tira-alerta:not(.zero) .tira-ico { color: var(--warn); }
+
+.tira-rot { font-size: 8.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--fg3); }
 .tira-valor { display: flex; align-items: baseline; gap: 7px; }
-.tira-valor strong { font-size: 30px; font-weight: 700; line-height: 1.08; letter-spacing: -.03em; }
+.tira-valor strong { font-size: 26px; font-weight: 600; line-height: 1; letter-spacing: -.03em; }
 .tira-unid { font-size: 10.5px; color: var(--fg3); }
 .tira-nota { margin: 0; font-size: 10.5px; color: var(--fg2); min-height: 15px; }
 
