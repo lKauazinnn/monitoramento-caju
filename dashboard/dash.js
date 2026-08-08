@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.25-suspender';
+const BUILD = '2026-08-08.26-uptime';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1739,6 +1739,18 @@ async function desenharAcoes(m) {
     }
   }
 
+  // Dias sem reiniciar, PRIMEIRO na lista de avisos: é a informação que decide
+  // qual botão a pessoa vai apertar. Suspender não zera isso — o sistema volta
+  // do mesmo lugar, com a mesma memória suja.
+  const up = a.uptime || {};
+  if (up.dias !== null && up.dias !== undefined) {
+    const d = Math.round(Number(up.dias));
+    const texto = d < 1 ? 'reiniciada hoje' : `${d} dia(s) sem reiniciar`;
+    motivos.unshift(up.passou
+      ? `${texto} — passou do limite de ${up.limiar}. Vale agendar um reinício.`
+      : texto + '.');
+  }
+
   txt(aviso, motivos.join(' '));
   aviso.hidden = motivos.length === 0;
 
@@ -1780,6 +1792,7 @@ function refletirModoSimulacao() {
     'btn-restart-machine': 'Reiniciar o PC',
     'btn-wake': 'Ligar o PC',
     'btn-sleep': 'Suspender o PC',
+    'btn-agendar-reinicio': 'Agendar reinício para as 4h',
   };
 
   for (const [id, base] of Object.entries(rotulos)) {
@@ -2587,6 +2600,28 @@ function ligarEventos() {
 
   // Suspender derruba a loja ate alguem acordar a maquina: dois cliques, como
   // reiniciar.
+  // Agendar NAO derruba nada agora: um clique basta. Fazer confirmar uma acao
+  // que so acontece as 4h da manha ensina a confirmar sem ler.
+  $('btn-agendar-reinicio').addEventListener('click', async () => {
+    const m = Estado.maquinaAberta;
+    if (!m) return;
+    const b = $('btn-agendar-reinicio');
+    b.disabled = true;
+    try {
+      const r = await rpc('agendar_reinicio', {
+        p_machine_id: m.machine_id,
+        p_hora: 4,
+        p_dry_run: $('acao-simular').checked,
+      });
+      brinde(r.nota);
+      await carregarComandos(m.machine_id);
+    } catch (e) {
+      brinde(e.message, true);
+    } finally {
+      b.disabled = false;
+    }
+  });
+
   armarPerigo($('btn-sleep'), 'Confirmar: suspender', () =>
     pedirAcao('sleep_machine', { modo: 'suspender' }, true));
 
