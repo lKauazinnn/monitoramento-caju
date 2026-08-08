@@ -151,6 +151,20 @@ export function validateEnvelopeShape(
     }
   }
 
+  // Endereço da placa, para Wake-on-LAN. Opcional: agente antigo não manda.
+  if (o.network !== undefined) {
+    if (o.network === null || typeof o.network !== "object" || Array.isArray(o.network)) {
+      return { ok: false, message: "network não é objeto" };
+    }
+    const mac = (o.network as Record<string, unknown>).mac;
+    // `null` é legítimo: máquina só com Wi-Fi não tem MAC cabeado para reportar.
+    if (mac !== undefined && mac !== null) {
+      if (typeof mac !== "string" || mac.length > 32) {
+        return { ok: false, message: "network.mac inválido" };
+      }
+    }
+  }
+
   return { ok: true };
 }
 

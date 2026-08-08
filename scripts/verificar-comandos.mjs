@@ -139,6 +139,16 @@ try {
     sql(`select count(*) from public.events
          where kind='command_result' and payload->>'command_id'='${id1}'`) === '1');
 
+  // ------------------------------------------------- 1b. o MAC chega junto
+  // Sem MAC nao ha Wake-on-LAN: o pacote magico nao usa IP, usa o endereco da
+  // placa. Como quem reporta e o agente REAL desta maquina, este e o unico
+  // teste que prova que a consulta ao adaptador funciona num Windows de verdade
+  // — o teste SQL so consegue simular o valor ja pronto.
+  const mac = sql(`select coalesce(mac_address::text,'(nulo)')
+                   from public.machines where id='${maq}'`);
+  verificar('o agente reportou o MAC da placa cabeada',
+    /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac), mac);
+
   // -------------------------------------------------- 2. simulacao nao age
   console.log('\n== 2. dry-run nao toca no disco ==');
   // 365 dias (o teto do servidor): quase nenhum arquivo temporario e tao velho, entao mesmo se a simulacao

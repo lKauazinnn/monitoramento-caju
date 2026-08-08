@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=23" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=24" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=23">
+  <link rel="stylesheet" href="styles.css?v=24">
 </head>
 <body>
 
@@ -352,6 +352,12 @@
         <button id="btn-test-collection" class="btn-acao" type="button">Testar coleta</button>
       </div>
 
+      <!-- Só aparece com a máquina offline: ligar o que já está ligado não é
+           ação, é confusão. -->
+      <div class="acao-linha" id="linha-ligar" hidden>
+        <button id="btn-wake" class="btn-acao" type="button">Ligar o PC</button>
+      </div>
+
       <div class="acao-linha">
         <button id="btn-restart-machine" class="btn-perigo largo" type="button">Reiniciar o PC</button>
       </div>
@@ -513,7 +519,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=23"></script>
-<script src="dash.js?v=23"></script>
+<script src="config.js?v=24"></script>
+<script src="dash.js?v=24"></script>
 </body>
 </html>

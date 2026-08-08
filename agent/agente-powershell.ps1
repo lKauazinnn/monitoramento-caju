@@ -49,7 +49,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.2.0'
+$VERSAO = 'ps-1.3.0'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -343,6 +343,26 @@ function InfoMaquina {
     } catch { }
   }
 
+  # ---- MAC, para poder ser LIGADA remotamente ----------------------------
+  # Wake-on-LAN nao usa IP: o pacote magico carrega o endereco da placa. Sem
+  # isto, esta maquina nunca podera ser ligada pelo painel.
+  #
+  # A placa CABEADA, especificamente: WoL por Wi-Fi depende de suporte do
+  # adaptador e do ponto de acesso, e na pratica quase nunca funciona — anunciar
+  # que da para ligar uma maquina em Wi-Fi seria prometer o que nao se cumpre.
+  try {
+    $ad = Get-NetAdapter -Physical -ErrorAction Stop |
+            Where-Object { $_.Status -eq 'Up' -and $_.MediaType -ne 'Native 802.11' } |
+            Sort-Object -Property @{ Expression = { $_.LinkSpeed } } -Descending |
+            Select-Object -First 1
+
+    if ($ad -and $ad.MacAddress) {
+      # Get-NetAdapter devolve com hifen (AA-BB-CC); o banco normaliza, mas o
+      # formato com dois-pontos e o que todo mundo espera ver num log.
+      $info.mac = $ad.MacAddress.Replace('-', ':')
+    }
+  } catch { }
+
   return $info
 }
 
@@ -438,6 +458,9 @@ function Enviar {
     # O que executei desde o ultimo envio. Vai junto com a telemetria porque nao
     # ha canal de volta: a mesma conexao de saida serve para relatar e perguntar.
     command_results = @($script:resultadosPendentes)
+    # Endereco da placa, para esta maquina poder ser LIGADA pelo vizinho um dia.
+    # Vai fora de `machine` porque quem grava e a funcao da fila, nao a ingestao.
+    network = @{ mac = $Maquina.mac }
   }
 
   $cab = @{}
@@ -601,6 +624,83 @@ function ExecutarRunTestCollection {
   }
 }
 
+function ExecutarWakeMachine {
+  param([string] $Mac, [string] $Alvo, [bool] $Simulacao)
+
+  # O "pacote magico": 6 bytes 0xFF seguidos do MAC repetido 16 vezes. E so
+  # isso — nao ha protocolo, nao ha resposta, nao ha confirmacao. A placa do
+  # alvo reconhece o proprio endereco nesse padrao e liga a maquina.
+  $limpo = ($Mac -replace '[^0-9A-Fa-f]', '')
+  if ($limpo.Length -ne 12) {
+    return @{ ok = $false; texto = "MAC invalido: $Mac" }
+  }
+
+  $bytesMac = for ($i = 0; $i -lt 12; $i += 2) { [Convert]::ToByte($limpo.Substring($i, 2), 16) }
+  $pacote = [byte[]] (, 0xFF * 6) + ([byte[]] $bytesMac * 16)
+
+  if ($Simulacao) {
+    return @{ ok = $true
+              texto = "SIMULACAO: mandaria o pacote magico para $Alvo ($Mac)" }
+  }
+
+  # Broadcast na sub-rede de CADA placa. O broadcast global (255.255.255.255)
+  # sai por uma interface so, escolhida pelo sistema — e numa maquina com duas
+  # placas costuma ser a errada.
+  $enviados = 0
+  $erros = @()
+
+  try {
+    $udp = New-Object System.Net.Sockets.UdpClient
+    $udp.EnableBroadcast = $true
+
+    $redes = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+               Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.PrefixLength -lt 31 })
+
+    foreach ($r in $redes) {
+      try {
+        # Endereco de broadcast da sub-rede: IP com os bits de host todos em 1.
+        $ip = [Net.IPAddress]::Parse($r.IPAddress).GetAddressBytes()
+        $mascara = [uint32]0xFFFFFFFF -shl (32 - $r.PrefixLength)
+        $mb = [BitConverter]::GetBytes([uint32]$mascara)
+        if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($mb) }
+
+        $bc = New-Object byte[] 4
+        for ($i = 0; $i -lt 4; $i++) { $bc[$i] = $ip[$i] -bor (-bnot $mb[$i] -band 0xFF) }
+        $destino = [Net.IPAddress]::new($bc)
+
+        # 9 e a porta convencional (discard). 7 tambem e usada; mandar nas duas
+        # custa nada e cobre placa que so escuta uma.
+        foreach ($porta in 9, 7) {
+          $ponto = New-Object Net.IPEndPoint($destino, $porta)
+          [void]$udp.Send($pacote, $pacote.Length, $ponto)
+          $enviados++
+        }
+      } catch {
+        $erros += "$($r.IPAddress): $($_.Exception.Message)"
+      }
+    }
+
+    $udp.Close()
+  } catch {
+    return @{ ok = $false; texto = "falha ao abrir o socket: $($_.Exception.Message)" }
+  }
+
+  if ($enviados -eq 0) {
+    return @{ ok = $false
+              texto = "nao consegui enviar o pacote: $($erros -join '; ')" }
+  }
+
+  # `ok` significa "o pacote saiu", NAO "a maquina ligou". WoL nao tem resposta:
+  # quem confirma e o alvo voltar a reportar telemetria daqui a alguns minutos.
+  # Dizer "ligada com sucesso" aqui seria afirmar o que nao se sabe.
+  return @{
+    ok    = $true
+    texto = "pacote magico enviado para $Alvo ($Mac) em $enviados destino(s). " +
+            "Se a maquina estiver apta, ela aparece online em ate 2 min."
+    payload = @{ mac = $Mac; alvo = $Alvo; destinos = $enviados }
+  }
+}
+
 function ExecutarComando {
   param($Comando)
 
@@ -615,6 +715,7 @@ function ExecutarComando {
     'restart_service'     { return (ExecutarRestartService -Servico ([string]$p.servico) -Simulacao $sim) }
     'clear_temp'          { return (ExecutarClearTemp -DiasMinimos ([int]$p.dias_minimos) -Simulacao $sim) }
     'run_test_collection' { return (ExecutarRunTestCollection -Simulacao $sim) }
+    'wake_machine'        { return (ExecutarWakeMachine -Mac ([string]$p.mac) -Alvo ([string]$p.alvo) -Simulacao $sim) }
     'restart_machine' {
       # O relato precisa dizer o que REALMENTE aconteceu. "reinicio agendado"
       # numa simulacao ensina a nao confiar no dry-run, que so serve enquanto

@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.23-modo-visivel';
+const BUILD = '2026-08-08.24-ligar';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1636,6 +1636,7 @@ const NOME_DA_ACAO = {
   restart_service: 'Reiniciar serviço',
   clear_temp: 'Limpar temporários',
   restart_machine: 'Reiniciar o PC',
+  wake_machine: 'Ligar o PC',
   run_test_collection: 'Testar coleta',
 };
 
@@ -1695,6 +1696,27 @@ async function desenharAcoes(m) {
     motivos.push(`${a.pendentes} comando(s) aguardando o próximo ciclo do agente.`);
   }
 
+  // Ligar remotamente. Três coisas têm que ser verdade ao mesmo tempo, e cada
+  // uma que falta tem um motivo diferente: dizer qual é a diferença entre a
+  // pessoa resolver e a pessoa desistir.
+  const lig = a.ligar || {};
+  $('linha-ligar').hidden = lig.aplicavel !== true;
+
+  if (lig.aplicavel) {
+    const podeLigar = lig.tem_mac === true && !!lig.vizinho;
+    $('btn-wake').disabled = !podeLigar;
+
+    if (!lig.tem_mac) {
+      motivos.push('Não dá para ligar esta máquina: ela nunca reportou o endereço '
+        + 'da placa de rede (precisa de um ciclo com o agente ps-1.3.0 ou mais novo).');
+    } else if (!lig.vizinho) {
+      motivos.push('Não dá para ligar esta máquina: o pacote tem que sair de dentro '
+        + 'da loja, e não há nenhuma outra máquina online lá para enviá-lo.');
+    } else {
+      motivos.push(`Ligar usa ${lig.vizinho}, que está online na mesma loja.`);
+    }
+  }
+
   txt(aviso, motivos.join(' '));
   aviso.hidden = motivos.length === 0;
 
@@ -1734,6 +1756,7 @@ function refletirModoSimulacao() {
     'btn-clear-temp': 'Limpar temporários',
     'btn-test-collection': 'Testar coleta',
     'btn-restart-machine': 'Reiniciar o PC',
+    'btn-wake': 'Ligar o PC',
   };
 
   for (const [id, base] of Object.entries(rotulos)) {
@@ -2538,6 +2561,27 @@ function ligarEventos() {
     pedirAcao('restart_machine', {}, true));
 
   $('acao-simular').addEventListener('change', refletirModoSimulacao);
+
+  // Ligar o PC vai por caminho próprio: quem escolhe o vizinho que manda o
+  // pacote é o servidor, não a tela. A tela só sabe o alvo.
+  $('btn-wake').addEventListener('click', async () => {
+    const m = Estado.maquinaAberta;
+    if (!m) return;
+    const b = $('btn-wake');
+    b.disabled = true;
+    try {
+      const r = await rpc('ligar_maquina', {
+        p_alvo: m.machine_id,
+        p_dry_run: $('acao-simular').checked,
+      });
+      brinde(r.nota);
+      await carregarComandos(m.machine_id);
+    } catch (e) {
+      brinde(e.message, true);
+    } finally {
+      b.disabled = false;
+    }
+  });
 
   // "/" foca a busca, como em toda ferramenta de operação. Não sequestra a tecla
   // quando o foco já está num campo — senão seria impossível digitar uma barra.

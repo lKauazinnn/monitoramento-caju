@@ -289,9 +289,11 @@ async function handleIngest(req: Request): Promise<Response> {
   // caminho que não pode quebrar. Se a fila falhar, a telemetria já está
   // gravada e o agente só fica sem comando neste ciclo.
   const resultados = (body as Record<string, unknown>)?.command_results;
+  const rede = (body as Record<string, unknown>)?.network;
   const s = await callRpc("agente_sincronizar", {
     p_token: token,
     p_resultados: Array.isArray(resultados) ? resultados : [],
+    p_rede: (rede && typeof rede === "object" && !Array.isArray(rede)) ? rede : {},
   });
 
   if (!s.ok) {

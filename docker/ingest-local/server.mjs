@@ -313,6 +313,8 @@ const servidor = createServer(async (req, res) => {
       const s = await chamarRpc('agente_sincronizar', {
         p_token: token,
         p_resultados: Array.isArray(corpo.command_results) ? corpo.command_results : [],
+        p_rede: (corpo.network && typeof corpo.network === 'object' && !Array.isArray(corpo.network))
+          ? corpo.network : {},
       });
 
       if (s.ok) {
