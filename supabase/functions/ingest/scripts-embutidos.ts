@@ -2,7 +2,7 @@
 // GERADO — não edite à mão
 // =============================================================================
 // Origem:
-//   agent/agente-powershell.ps1  (22580 bytes, sha256:6b3a8dcb0c56a019)
+//   agent/agente-powershell.ps1  (32447 bytes, sha256:49966998eba674b1)
 //   docker/ingest-local/instalar.ps1  (11721 bytes, sha256:e6f50567e363068b)
 //
 // Regerar:  node scripts/gerar-scripts-embutidos.mjs
@@ -62,7 +62,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.1.0'
+$VERSAO = 'ps-1.2.0'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -448,6 +448,9 @@ function Enviar {
     sent_at       = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     machine       = $Maquina
     samples       = $Amostras
+    # O que executei desde o ultimo envio. Vai junto com a telemetria porque nao
+    # ha canal de volta: a mesma conexao de saida serve para relatar e perguntar.
+    command_results = @($script:resultadosPendentes)
   }
 
   $cab = @{}
@@ -475,6 +478,214 @@ function Enviar {
 }
 
 # ---------------------------------------------------------------------------
+# Execucao de comandos
+# ---------------------------------------------------------------------------
+# O agente so faz conexao de SAIDA. Nao existe rota do servidor ate este PC, e
+# criar uma exigiria porta liberada, IP publico ou VPN — as tres coisas que esta
+# arquitetura evita de proposito.
+#
+# Entao o servidor nao manda: ele deixa o comando na fila, e o agente PERGUNTA,
+# na resposta do mesmo POST de telemetria que ja acontece. Nenhum canal novo,
+# nenhuma credencial nova, nenhuma porta nova.
+#
+# NADA AQUI EXECUTA STRING VINDA DO SERVIDOR. O servidor manda um TIPO de uma
+# lista fechada e parametros ja validados; o mapeamento de tipo para acao mora
+# neste arquivo, assinado e instalado na maquina. Se o servidor for comprometido,
+# o pior que ele consegue e reiniciar um servico que esta maquina ja vigia.
+
+# Resultados esperam aqui ate o proximo ciclo poder envia-los. Nao ha canal de
+# volta imediato: relatar no ciclo seguinte e o preco de nao abrir porta na loja.
+#
+# EM DISCO, e nao so em memoria, pela mesma razao da regra 16 valer para as
+# amostras: entre executar e relatar existe uma janela, e nessa janela o agente
+# pode cair, ser reiniciado, ou a maquina desligar. Se o relato so existisse na
+# memoria do processo, o comando ficaria 'sent' ate expirar e o painel diria
+# "expirou sem ser executado" sobre um comando que executou — a pior mentira que
+# este sistema pode contar, porque leva alguem a executar de novo.
+$resultadosPath = Join-Path $dirDados 'resultados.jsonl'
+$script:resultadosPendentes = @()
+
+function ResultadosCarregar {
+  if (-not (Test-Path $resultadosPath)) { return @() }
+  $saida = @()
+  foreach ($linha in (Get-Content $resultadosPath -ErrorAction SilentlyContinue)) {
+    if ([string]::IsNullOrWhiteSpace($linha)) { continue }
+    try { $saida += ($linha | ConvertFrom-Json) }
+    catch { Registrar 'AVI' "resultado ilegivel descartado: $($_.Exception.Message)" }
+  }
+  return $saida
+}
+
+function ResultadoGravar {
+  param($Resultado)
+  try {
+    Add-Content -Path $resultadosPath -Encoding utf8 \`
+      -Value ($Resultado | ConvertTo-Json -Depth 8 -Compress)
+  } catch {
+    Registrar 'ERR' "nao consegui gravar o resultado em disco: $($_.Exception.Message)"
+  }
+}
+
+function ResultadosLimpar {
+  try { Remove-Item $resultadosPath -Force -ErrorAction SilentlyContinue } catch { }
+  $script:resultadosPendentes = @()
+}
+
+function ExecutarRestartService {
+  param([string] $Servico, [bool] $Simulacao)
+
+  # Cinto e suspensorio: o servidor ja validou contra a lista da maquina, mas o
+  # agente tem a SUA propria lista no config. Se as duas discordarem, a mais
+  # restritiva vence — o agente nao confia no servidor mais do que precisa.
+  if ($servicos.Count -gt 0 -and $servicos -notcontains $Servico) {
+    return @{ ok = $false; texto = "servico '$Servico' nao esta na lista local desta maquina" }
+  }
+
+  $svc = Get-Service -Name $Servico -ErrorAction SilentlyContinue
+  if (-not $svc) { return @{ ok = $false; texto = "servico '$Servico' nao existe nesta maquina" } }
+
+  if ($Simulacao) {
+    return @{ ok = $true; texto = "SIMULACAO: reiniciaria '$Servico' (estado atual: $($svc.Status))" }
+  }
+
+  $antes = $svc.Status
+  Restart-Service -Name $Servico -Force -ErrorAction Stop
+
+  # Confirma o estado em vez de assumir. \`Restart-Service\` retorna sem erro para
+  # servico que sobe e cai logo em seguida, que e justamente o caso interessante.
+  Start-Sleep -Seconds 3
+  $depois = (Get-Service -Name $Servico).Status
+
+  return @{
+    ok    = ($depois -eq 'Running')
+    texto = "servico '$Servico': $antes -> $depois"
+    payload = @{ servico = $Servico; antes = "$antes"; depois = "$depois" }
+  }
+}
+
+function ExecutarClearTemp {
+  param([int] $DiasMinimos, [bool] $Simulacao)
+
+  $limite = (Get-Date).AddDays(-$DiasMinimos)
+  $alvos = @($env:TEMP, (Join-Path $env:WINDIR 'Temp')) | Where-Object { $_ -and (Test-Path $_) }
+
+  $bytes = 0L; $n = 0; $falhas = 0
+
+  foreach ($dir in $alvos) {
+    # -Force para alcancar arquivo oculto; SilentlyContinue porque diretorio
+    # temporario tem sempre algo que o usuario atual nao le, e isso nao e falha.
+    $arquivos = @(Get-ChildItem -Path $dir -Recurse -File -Force -ErrorAction SilentlyContinue |
+                  Where-Object { $_.LastWriteTime -lt $limite })
+
+    foreach ($f in $arquivos) {
+      $bytes += $f.Length
+      if ($Simulacao) { $n++; continue }
+      try { Remove-Item $f.FullName -Force -ErrorAction Stop; $n++ }
+      catch { $falhas++ }   # arquivo em uso: normal, nao e erro do comando
+    }
+  }
+
+  $mb = [Math]::Round($bytes / 1MB, 1)
+  $verbo = if ($Simulacao) { 'apagaria' } else { 'apagou' }
+
+  return @{
+    ok    = $true
+    texto = "$verbo $n arquivo(s), \${mb}MB, mais velhos que $DiasMinimos dia(s)" +
+            $(if ($falhas -gt 0) { "; $falhas em uso, ignorados" } else { '' })
+    payload = @{ arquivos = $n; mb = $mb; em_uso = $falhas; simulacao = $Simulacao }
+  }
+}
+
+function ExecutarRunTestCollection {
+  param([bool] $Simulacao)
+
+  # Serve para responder "o agente ainda coleta?" sem esperar o proximo ciclo.
+  $a = NovaAmostra
+  # \`Coletar\` marca coletor que falhou como flag "erro_<nome>". Ler um campo que
+  # nao existe daria uma lista vazia e o relato diria "todos os coletores ok"
+  # justamente quando nenhum funcionou.
+  $falhos = @($a.flags | Where-Object { $_ -like 'erro_*' })
+
+  return @{
+    ok    = ($falhos.Count -eq 0)
+    texto = "coleta de teste: cpu $($a.cpu_pct)% mem $($a.mem_pct)% " +
+            $(if ($falhos.Count -gt 0) { "| coletores com falha: $($falhos -join ', ')" } else { '| todos os coletores ok' })
+    payload = @{ cpu_pct = $a.cpu_pct; mem_pct = $a.mem_pct; coletores_com_falha = $falhos }
+  }
+}
+
+function ExecutarComando {
+  param($Comando)
+
+  $tipo = [string]$Comando.kind
+  $sim  = [bool]$Comando.dry_run
+  $p    = $Comando.params
+
+  # \`switch\` sobre uma lista FECHADA, e o default recusa. Um tipo desconhecido
+  # vindo de um servidor mais novo tem que virar falha explicita, nunca acao
+  # adivinhada — e o relato de falha diz ao painel para atualizar o agente.
+  switch ($tipo) {
+    'restart_service'     { return (ExecutarRestartService -Servico ([string]$p.servico) -Simulacao $sim) }
+    'clear_temp'          { return (ExecutarClearTemp -DiasMinimos ([int]$p.dias_minimos) -Simulacao $sim) }
+    'run_test_collection' { return (ExecutarRunTestCollection -Simulacao $sim) }
+    'restart_machine'     { return @{ ok = $true; texto = 'reinicio agendado'; reiniciar = $true } }
+    default {
+      return @{ ok = $false; texto = "tipo de comando desconhecido nesta versao do agente ($VERSAO): $tipo" }
+    }
+  }
+}
+
+function ProcessarComandos {
+  param([array] $Comandos, [hashtable] $Maquina)
+
+  foreach ($c in $Comandos) {
+    $r = $null
+    try {
+      Registrar 'INF' ("comando {0} recebido{1}" -f $c.kind, $(if ($c.dry_run) { ' (simulacao)' } else { '' }))
+      $r = ExecutarComando $c
+    } catch {
+      # O comando falhar nao pode derrubar o agente: o monitoramento tem que
+      # sobreviver a acao remota, senao um comando ruim cega a loja.
+      $r = @{ ok = $false; texto = "erro ao executar: $($_.Exception.Message)" }
+    }
+
+    $registro = @{
+      command_id = $c.command_id
+      ok         = [bool]$r.ok
+      texto      = [string]$r.texto
+      payload    = $r.payload
+    }
+
+    # Grava ANTES de qualquer outra coisa: se o processo morrer daqui em diante,
+    # o relato sobrevive e sobe no proximo ciclo.
+    ResultadoGravar $registro
+    $script:resultadosPendentes += $registro
+
+    Registrar $(if ($r.ok) { 'INF' } else { 'AVI' }) ("comando {0}: {1}" -f $c.kind, $r.texto)
+
+    # REINICIO POR ULTIMO, e so depois de o resultado SAIR daqui.
+    # Se reiniciasse antes de relatar, o comando ficaria 'sent' ate expirar e o
+    # painel diria "expirou sem ser executado" para uma maquina que reiniciou
+    # certinho — o relato mentiria sobre o que aconteceu.
+    if ($r.reiniciar -and -not $c.dry_run) {
+      try {
+        # Com uma amostra fresca, e nao vazia: o contrato de ingestao recusa
+        # lote sem amostra, e esta e a ultima leitura antes de a maquina cair —
+        # exatamente a que interessa se ela nao voltar.
+        Enviar -Amostras @(NovaAmostra) -Maquina $Maquina | Out-Null
+        ResultadosLimpar
+        Registrar 'INF' 'resultado do reinicio enviado; reiniciando em 15s'
+      } catch {
+        Registrar 'AVI' "nao consegui relatar antes de reiniciar: $($_.Exception.Message)"
+      }
+      # /t 15 da tempo de o log ser gravado em disco antes do desligamento.
+      & shutdown.exe /r /t 15 /c 'Reinicio solicitado pelo Sentinela' | Out-Null
+      return
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Modo diagnostico
 # ---------------------------------------------------------------------------
 if ($MostrarJson) {
@@ -497,6 +708,14 @@ Registrar 'INF' "destino $($cfg.ingestUrl) | intervalo \${intervalo}s | spool $s
 $maquina = InfoMaquina
 $tentativa = 0
 $proximaInfo = (Get-Date).AddHours(1)
+
+# Retoma o que executou e nao conseguiu relatar antes de o processo anterior
+# terminar — queda do agente, reinicio da maquina, ou o proprio comando de
+# reinicio. Sem isto, gravar em disco nao serviria para nada.
+$script:resultadosPendentes = @(ResultadosCarregar)
+if ($script:resultadosPendentes.Count -gt 0) {
+  Registrar 'INF' "$($script:resultadosPendentes.Count) resultado(s) de comando pendente(s) do ciclo anterior"
+}
 
 while ($true) {
   $inicioCiclo = Get-Date
@@ -538,10 +757,21 @@ while ($true) {
         SpoolRemoverPrimeiras $n
         $tentativa = 0
 
+        # So limpa DEPOIS de o envio voltar sem erro. Limpar antes perderia o
+        # relato numa falha de rede, e o comando expiraria como "nao executado"
+        # tendo executado.
+        ResultadosLimpar
+
         $extra = ''
         if ($r.duplicates -gt 0) { $extra = ", $($r.duplicates) duplicadas" }
         Registrar 'INF' ("enviadas {0} | aceitas {1}{2} | cpu {3}% mem {4}/{5}MB" -f \`
           $enviar.Count, $r.accepted, $extra, $amostra.cpu_pct, $amostra.mem_used_mb, $amostra.mem_total_mb)
+
+        # 6. o que o servidor pediu. Por ultimo no ciclo: um comando demorado
+        #    (ou um reinicio) nao pode atrasar a gravacao da telemetria, que e a
+        #    funcao que o sistema nao pode perder.
+        $comandos = @($r.comandos)
+        if ($comandos.Count -gt 0) { ProcessarComandos -Comandos $comandos -Maquina $maquina }
       } else {
         SpoolRemoverPrimeiras $n
         Registrar 'AVI' "descartadas $n linha(s) ilegivel(is) do spool"
