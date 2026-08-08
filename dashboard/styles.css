@@ -973,6 +973,110 @@ input::placeholder { color: var(--fg3); }
 .fd-sub { font-size: 10.5px; color: var(--fg2); }
 .faixa-demo .btn-perigo { margin-left: auto; }
 
+/* -------------------------------------------------------------------------
+   Acoes remotas
+   ------------------------------------------------------------------------- */
+.acoes { margin-top: 26px; }
+.acoes h4 {
+  margin: 20px 0 8px;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--fg3);
+}
+
+/* Marcado por padrao, e visivel: simular e o caminho normal, agir de verdade e
+   a excecao consciente. */
+.simular {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12.5px;
+  color: var(--fg2);
+  cursor: pointer;
+}
+.simular input { accent-color: var(--ok); width: 15px; height: 15px; cursor: pointer; }
+
+.acao-linha { display: flex; gap: 8px; margin-bottom: 8px; }
+
+.acao-campo {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-p);
+  border: 1px solid var(--bd);
+  background: var(--pnl2);
+  color: var(--fg);
+  font-family: var(--fonte);
+  font-size: 12.5px;
+}
+.acao-campo option { background-color: var(--pop); }
+.acao-campo:disabled { opacity: .5; }
+
+.btn-acao {
+  flex: 0 0 auto;
+  padding: 8px 13px;
+  border-radius: var(--r-p);
+  border: 1px solid var(--bd);
+  background: var(--pnl2);
+  color: var(--fg);
+  font-family: var(--fonte);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.btn-acao:hover:not(:disabled) { border-color: var(--acento); color: var(--acento); }
+.btn-acao:disabled { opacity: .45; cursor: default; }
+
+.acoes .acao-linha:has(.btn-acao:only-child) .btn-acao { flex: 1 1 0; }
+
+/* Historico */
+.comandos { list-style: none; margin: 0; padding: 0; }
+
+.comando {
+  padding: 9px 11px;
+  margin-bottom: 6px;
+  border-radius: var(--r-p);
+  border: 1px solid var(--bd);
+  /* A barra da esquerda carrega o estado: da para varrer a lista sem ler. */
+  border-left: 3px solid var(--fg3);
+  background: var(--pnl2);
+  font-size: 12.5px;
+}
+
+.cmd-pending, .cmd-sent, .cmd-acked { border-left-color: var(--warn); }
+.cmd-succeeded { border-left-color: var(--ok); }
+.cmd-failed, .cmd-expired { border-left-color: var(--crit); }
+.cmd-canceled { border-left-color: var(--fg3); opacity: .7; }
+
+.cmd-topo { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.cmd-topo strong { font-weight: 600; }
+.cmd-estado { font-size: 11px; color: var(--fg3); white-space: nowrap; }
+.cmd-quando { font-size: 11px; color: var(--fg3); margin-top: 2px; }
+
+/* Saida do agente: pode ser longa e ter caminho de arquivo, entao quebra em
+   qualquer ponto em vez de esticar o painel. */
+.cmd-texto {
+  margin-top: 5px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--fg2);
+  word-break: break-word;
+}
+
+.btn-mini {
+  margin-top: 7px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--bd);
+  background: none;
+  color: var(--fg2);
+  font-family: var(--fonte);
+  font-size: 11px;
+  cursor: pointer;
+}
+.btn-mini:hover { border-color: var(--crit); color: var(--crit); }
+
 .zona-perigo {
   margin-top: 30px;
   padding: 14px 15px;

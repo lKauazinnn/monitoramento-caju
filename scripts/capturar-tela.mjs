@@ -97,10 +97,17 @@ try {
 
   await foto('01-dashboard', { paginaInteira: true });
 
-  // Painel de detalhe
-  await js("document.querySelector('.cartao')?.click(); true");
+  // Painel de detalhe. `.host-quad` e o alvo na vista inicial (a grade por
+  // loja); `.cartao` so existe quando um filtro esta ativo.
+  await js("(document.querySelector('.host-quad') || document.querySelector('.cartao'))?.click(); true");
   await dormir(2800);
   await foto('02-painel');
+
+  // A secao de acoes fica abaixo dos graficos: sem rolar, a foto do painel
+  // mostra tudo menos o que mudou.
+  await js("document.getElementById('acoes')?.scrollIntoView({ block: 'center' }); true");
+  await dormir(900);
+  await foto('02b-acoes');
   await js("document.getElementById('btn-fechar-painel')?.click(); true");
   await dormir(500);
 

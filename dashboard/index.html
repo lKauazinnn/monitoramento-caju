@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=21" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=22" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=21">
+  <link rel="stylesheet" href="styles.css?v=22">
 </head>
 <body>
 
@@ -330,6 +330,38 @@
     <div class="grafico-caixa"><canvas id="grafico-mem"></canvas></div>
     <div class="grafico-caixa"><canvas id="grafico-disco"></canvas></div>
 
+    <!-- Ações remotas.
+         Antes dos eventos porque é o que a pessoa veio fazer quando abre uma
+         máquina com problema; depois dos gráficos porque decidir agir sem olhar
+         o número é como este sistema vira o próprio incidente. -->
+    <section id="acoes" class="acoes" hidden>
+      <h3>Ações nesta máquina</h3>
+
+      <label class="simular">
+        <input type="checkbox" id="acao-simular" checked>
+        <span>Simular primeiro (não altera nada na máquina)</span>
+      </label>
+
+      <div class="acao-linha">
+        <select id="acao-servico" class="acao-campo" aria-label="Serviço a reiniciar"></select>
+        <button id="btn-restart-service" class="btn-acao" type="button">Reiniciar serviço</button>
+      </div>
+
+      <div class="acao-linha">
+        <button id="btn-clear-temp" class="btn-acao" type="button">Limpar temporários</button>
+        <button id="btn-test-collection" class="btn-acao" type="button">Testar coleta</button>
+      </div>
+
+      <div class="acao-linha">
+        <button id="btn-restart-machine" class="btn-perigo largo" type="button">Reiniciar o PC</button>
+      </div>
+
+      <p id="acao-aviso" class="dica" hidden></p>
+
+      <h4>Comandos recentes</h4>
+      <ul id="acao-historico" class="comandos"></ul>
+    </section>
+
     <h3>Eventos recentes</h3>
     <ul id="painel-eventos" class="eventos"></ul>
 
@@ -481,7 +513,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=21"></script>
-<script src="dash.js?v=21"></script>
+<script src="config.js?v=22"></script>
+<script src="dash.js?v=22"></script>
 </body>
 </html>

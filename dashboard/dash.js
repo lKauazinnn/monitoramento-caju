@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-07.21-relatorio';
+const BUILD = '2026-08-08.22-acoes';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1619,6 +1619,191 @@ function armarPerigo(botao, rotuloConfirma, acao) {
   return desarmar;
 }
 
+// ---------------------------------------------------------------------------
+// Ações remotas
+// ---------------------------------------------------------------------------
+// Nada aqui monta comando: monta um PEDIDO. O painel escolhe um tipo de uma
+// lista fechada e informa parâmetros; quem valida, autoriza e aplica os limites
+// é o servidor. Se este arquivo fosse adulterado no navegador, o pior que
+// conseguiria é pedir — e receber "não pode".
+
+const NOME_DA_ACAO = {
+  restart_service: 'Reiniciar serviço',
+  clear_temp: 'Limpar temporários',
+  restart_machine: 'Reiniciar o PC',
+  run_test_collection: 'Testar coleta',
+};
+
+const NOME_DO_ESTADO = {
+  pending: 'na fila',
+  sent: 'entregue',
+  acked: 'em execução',
+  succeeded: 'concluído',
+  failed: 'falhou',
+  expired: 'expirou',
+  canceled: 'cancelado',
+};
+
+/** Monta a seção de ações a partir do que o SERVIDOR disse ser possível. */
+async function desenharAcoes(m) {
+  const secao = $('acoes');
+  const aviso = $('acao-aviso');
+
+  let a;
+  try {
+    a = await rpc('acoes_da_maquina', { p_machine_id: m.machine_id });
+  } catch (_) {
+    // Falha ao perguntar não pode virar botão habilitado: some com a seção.
+    secao.hidden = true;
+    return;
+  }
+
+  // Quem não pode agir não vê os botões. Mostrar um botão que vai responder
+  // "apenas administradores" é convidar para a frustração.
+  secao.hidden = a.pode !== true;
+  if (!a.pode) return;
+
+  const sel = $('acao-servico');
+  limpar(sel);
+  const servicos = Array.isArray(a.servicos) ? a.servicos : [];
+  for (const s of servicos) sel.appendChild(el('option', null, s));
+  sel.disabled = servicos.length === 0;
+
+  // Só é possível reiniciar serviço que o perfil da máquina declara como
+  // crítico — no servidor. Aqui o botão apenas reflete isso.
+  $('btn-restart-service').disabled = servicos.length === 0;
+
+  const motivos = [];
+  if (a.agente_suporta !== true) {
+    motivos.push(`O agente desta máquina (${a.agent_version || 'versão desconhecida'}) `
+      + 'não executa comandos. Reinstale-o pelo comando de adicionar PC para atualizar.');
+  }
+  if (a.status !== 'online') {
+    motivos.push(`A máquina está ${a.status}: o comando fica na fila e expira em 30 min `
+      + 'se ela não voltar antes.');
+  }
+  if (a.reboot_liberado_em) {
+    motivos.push('Esta máquina foi reiniciada há pouco. '
+      + `Novo reinício liberado às ${horaCurta(a.reboot_liberado_em)}.`);
+  }
+  if (a.pendentes > 0) {
+    motivos.push(`${a.pendentes} comando(s) aguardando o próximo ciclo do agente.`);
+  }
+
+  txt(aviso, motivos.join(' '));
+  aviso.hidden = motivos.length === 0;
+
+  // Agente que não executa: os botões viram enfeite. Desligar é mais honesto
+  // que deixar clicar e a pessoa esperar por um resultado que não vem.
+  for (const id of ['btn-restart-service', 'btn-clear-temp',
+                    'btn-test-collection', 'btn-restart-machine']) {
+    if (a.agente_suporta !== true) $(id).disabled = true;
+  }
+  if (a.agente_suporta === true) {
+    $('btn-clear-temp').disabled = false;
+    $('btn-test-collection').disabled = false;
+    $('btn-restart-machine').disabled = false;
+    $('btn-restart-service').disabled = servicos.length === 0;
+  }
+
+  await carregarComandos(m.machine_id);
+}
+
+function horaCurta(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '—'
+    : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Histórico de comandos. textContent em tudo: nada daqui vira HTML. */
+async function carregarComandos(machineId) {
+  const ul = $('acao-historico');
+  limpar(ul);
+
+  let lista;
+  try {
+    lista = await api(`/comandos_da_maquina?machine_id=eq.${machineId}`
+      + '&order=created_at.desc&limit=12');
+  } catch (_) {
+    ul.appendChild(el('li', 'vazio', 'Não consegui ler o histórico de comandos.'));
+    return;
+  }
+
+  if (!lista.length) {
+    ul.appendChild(el('li', 'vazio', 'Nenhum comando ainda.'));
+    return;
+  }
+
+  let emAndamento = false;
+
+  for (const c of lista) {
+    if (c.em_andamento) emAndamento = true;
+
+    const li = el('li', `comando cmd-${c.status}`);
+
+    const topo = el('div', 'cmd-topo');
+    topo.appendChild(el('strong', null,
+      (NOME_DA_ACAO[c.kind] || c.kind) + (c.dry_run ? ' (simulação)' : '')));
+    topo.appendChild(el('span', 'cmd-estado', NOME_DO_ESTADO[c.status] || c.status));
+    li.appendChild(topo);
+
+    const quando = el('div', 'cmd-quando',
+      `${horaCurta(c.created_at)}${c.origem !== 'painel' ? ` · ${c.origem}` : ''}`);
+    li.appendChild(quando);
+
+    if (c.result_text) li.appendChild(el('div', 'cmd-texto', c.result_text));
+
+    // Cancelar só faz sentido antes de o agente retirar: depois disso ele pode
+    // estar executando neste instante, e dizer que cancelou seria mentira.
+    if (c.status === 'pending') {
+      const btn = el('button', 'btn-mini', 'Cancelar');
+      btn.type = 'button';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await rpc('cancelar_comando', { p_id: c.id });
+          brinde('Comando cancelado.');
+          await carregarComandos(machineId);
+        } catch (e) { brinde(e.message, true); btn.disabled = false; }
+      });
+      li.appendChild(btn);
+    }
+
+    ul.appendChild(li);
+  }
+
+  // Enquanto houver comando em voo, a lista se atualiza sozinha: o resultado
+  // chega no ciclo seguinte do agente, e ninguém deve precisar apertar F5 para
+  // descobrir se o que pediu funcionou.
+  clearTimeout(carregarComandos._t);
+  if (emAndamento && Estado.maquinaAberta?.machine_id === machineId) {
+    carregarComandos._t = setTimeout(() => carregarComandos(machineId), 10000);
+  }
+}
+
+/** Enfileira um comando e devolve o retorno do servidor. */
+async function pedirAcao(kind, params, confirmado) {
+  const m = Estado.maquinaAberta;
+  if (!m) return;
+
+  const simular = $('acao-simular').checked;
+
+  const r = await rpc('enfileirar_comando', {
+    p_machine_id: m.machine_id,
+    p_kind: kind,
+    p_params: params || {},
+    p_dry_run: simular,
+    p_confirmado: confirmado === true,
+  });
+
+  brinde(r.aviso
+    ? `${NOME_DA_ACAO[kind]}: ${r.aviso}`
+    : `${NOME_DA_ACAO[kind]} enviado${simular ? ' em modo simulação' : ''}.`);
+
+  await carregarComandos(m.machine_id);
+  await desenharAcoes(m);
+}
+
 async function removerMaquinaAberta() {
   const m = Estado.maquinaAberta;
   if (!m) return;
@@ -1784,11 +1969,18 @@ async function abrirPainel(m) {
   $('painel-fundo').hidden = false;
   $('painel').hidden = false;
 
-  await Promise.all([carregarGraficos(m.machine_id), carregarEventos(m.machine_id)]);
+  await Promise.all([
+    carregarGraficos(m.machine_id),
+    carregarEventos(m.machine_id),
+    desenharAcoes(m),
+  ]);
 }
 
 function fecharPainel() {
   Estado.maquinaAberta = null;
+  // Sem isto, a atualização do histórico continuaria rodando para uma máquina
+  // que ninguém está mais olhando, para sempre.
+  clearTimeout(carregarComandos._t);
   $('painel').hidden = true;
   $('painel-fundo').hidden = true;
 }
@@ -2285,6 +2477,26 @@ function ligarEventos() {
   // Remoção: dois cliques, e o rótulo do segundo diz o que vai sumir.
   armarPerigo($('btn-remover-demo'), 'Confirmar remoção', removerDemo);
   armarPerigo($('btn-remover-maquina'), 'Confirmar: apagar tudo', removerMaquinaAberta);
+
+  // Ações não destrutivas: um clique. Fazer alguém confirmar duas vezes para
+  // testar a coleta ensina a clicar duas vezes em tudo, e aí a confirmação do
+  // reinício deixa de significar alguma coisa.
+  $('btn-restart-service').addEventListener('click', () =>
+    pedirAcao('restart_service', { servico: $('acao-servico').value })
+      .catch((e) => brinde(e.message, true)));
+
+  $('btn-clear-temp').addEventListener('click', () =>
+    pedirAcao('clear_temp', { dias_minimos: 7 })
+      .catch((e) => brinde(e.message, true)));
+
+  $('btn-test-collection').addEventListener('click', () =>
+    pedirAcao('run_test_collection', {})
+      .catch((e) => brinde(e.message, true)));
+
+  // Reiniciar o PC derruba a loja por alguns minutos: dois cliques, como
+  // remover. E o servidor exige a confirmação de novo, por conta dele.
+  armarPerigo($('btn-restart-machine'), 'Confirmar: reiniciar o PC', () =>
+    pedirAcao('restart_machine', {}, true));
 
   // "/" foca a busca, como em toda ferramenta de operação. Não sequestra a tecla
   // quando o foco já está num campo — senão seria impossível digitar uma barra.
