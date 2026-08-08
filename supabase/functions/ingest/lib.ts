@@ -120,6 +120,37 @@ export function validateEnvelopeShape(
     };
   }
 
+  // Relato de comandos executados. Opcional: agente antigo não manda, e um
+  // agente antigo tem que continuar ingerindo normalmente.
+  if (o.command_results !== undefined) {
+    if (!Array.isArray(o.command_results)) {
+      return { ok: false, message: "command_results não é array" };
+    }
+
+    // Teto próprio. O agente executa no máximo 5 comandos por ciclo; um lote
+    // com centenas de resultados é agente adulterado ou defeituoso, e o banco
+    // não é o lugar de descobrir isso.
+    if (o.command_results.length > 50) {
+      return { ok: false, message: "command_results acima de 50 itens" };
+    }
+
+    for (const r of o.command_results) {
+      if (r === null || typeof r !== "object" || Array.isArray(r)) {
+        return { ok: false, message: "command_results tem item que não é objeto" };
+      }
+      const item = r as Record<string, unknown>;
+      // O id é UUID: validar aqui evita que uma string qualquer chegue ao cast
+      // no SQL, onde viraria erro 500 em vez de 400.
+      if (typeof item.command_id !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.command_id)) {
+        return { ok: false, message: "command_results tem command_id inválido" };
+      }
+      if (typeof item.ok !== "boolean") {
+        return { ok: false, message: "command_results tem item sem 'ok' booleano" };
+      }
+    }
+  }
+
   return { ok: true };
 }
 

@@ -306,7 +306,32 @@ const servidor = createServer(async (req, res) => {
         ms,
       }));
 
-      json(res, 200, d);
+      // 5. a fila de comandos, na mesma resposta — espelha a Edge Function.
+      // Chamada separada e DEPOIS da ingestão: se a fila falhar, a telemetria
+      // já está gravada e o agente só fica sem comando neste ciclo.
+      let comandos = [];
+      const s = await chamarRpc('agente_sincronizar', {
+        p_token: token,
+        p_resultados: Array.isArray(corpo.command_results) ? corpo.command_results : [],
+      });
+
+      if (s.ok) {
+        comandos = s.dados?.comandos ?? [];
+        if (comandos.length > 0) {
+          console.info(logLine('info', 'comandos_entregues', {
+            token_prefix: prefixo,
+            machine_id: d.machine_id,
+            // Só o tipo: params carregam nome de serviço e caminho.
+            kinds: comandos.map((c) => c.kind),
+          }));
+        }
+      } else {
+        console.warn(logLine('warn', 'sincronizar_falhou', {
+          token_prefix: prefixo, status: s.status, sqlstate: s.code, message: s.message,
+        }));
+      }
+
+      json(res, 200, { ...d, comandos });
       return;
     }
 

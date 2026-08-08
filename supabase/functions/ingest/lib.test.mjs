@@ -198,6 +198,60 @@ teste("samples vazio é rejeitado", () => {
   assert.equal(validateEnvelopeShape({ agent_version: "1.0.0", samples: [] }, 500).ok, false);
 });
 
+// ---- command_results: relato de comandos executados ------------------------
+// Entrada vinda da máquina da loja, portanto não confiável. O `command_id`
+// vira `::uuid` no SQL: uma string qualquer aqui vira erro 500 lá, e o agente
+// receberia "erro interno" para um defeito que é dele.
+
+const comBom = { ...envelopeBom, command_results: [
+  { command_id: "11111111-1111-4111-8111-111111111111", ok: true, texto: "feito" },
+] };
+
+teste("envelope com command_results válido passa", () => {
+  assert.deepEqual(validateEnvelopeShape(comBom, 500), { ok: true });
+});
+
+teste("command_results ausente continua passando (agente antigo)", () => {
+  assert.deepEqual(validateEnvelopeShape(envelopeBom, 500), { ok: true });
+});
+
+teste("command_results não-array é rejeitado", () => {
+  assert.equal(validateEnvelopeShape({ ...envelopeBom, command_results: "x" }, 500).ok, false);
+});
+
+teste("command_results vazio passa", () => {
+  assert.equal(validateEnvelopeShape({ ...envelopeBom, command_results: [] }, 500).ok, true);
+});
+
+teste("command_id que não é UUID é rejeitado", () => {
+  const r = validateEnvelopeShape(
+    { ...envelopeBom, command_results: [{ command_id: "'; drop table", ok: true }] }, 500);
+  assert.equal(r.ok, false);
+  assert.ok(r.message.includes("command_id"));
+});
+
+teste("command_id ausente é rejeitado", () => {
+  assert.equal(
+    validateEnvelopeShape({ ...envelopeBom, command_results: [{ ok: true }] }, 500).ok, false);
+});
+
+teste("item sem 'ok' booleano é rejeitado", () => {
+  assert.equal(validateEnvelopeShape({ ...envelopeBom, command_results: [
+    { command_id: "11111111-1111-4111-8111-111111111111", ok: "sim" }] }, 500).ok, false);
+});
+
+teste("item que não é objeto é rejeitado", () => {
+  assert.equal(
+    validateEnvelopeShape({ ...envelopeBom, command_results: ["x"] }, 500).ok, false);
+});
+
+teste("mais de 50 resultados é rejeitado", () => {
+  const um = { command_id: "11111111-1111-4111-8111-111111111111", ok: true };
+  assert.equal(
+    validateEnvelopeShape({ ...envelopeBom, command_results: new Array(51).fill(um) }, 500).ok,
+    false);
+});
+
 teste("lote acima do teto é rejeitado com o número na mensagem", () => {
   const r = validateEnvelopeShape(
     { agent_version: "1.0.0", samples: new Array(501).fill({}) },

@@ -280,7 +280,43 @@ async function handleIngest(req: Request): Promise<Response> {
     ms,
   }));
 
-  return json(d, 200);
+  // ---- 5. a fila de comandos, na MESMA resposta
+  // O agente só faz conexão de saída: não há rota daqui até o PC da loja. Então
+  // ele pergunta, e a pergunta pega carona neste POST que já acontece — sem
+  // canal novo, sem porta nova, autenticado pelo mesmo token da máquina.
+  //
+  // DEPOIS da ingestão, e em chamada SEPARADA de propósito: `ingest_batch` é o
+  // caminho que não pode quebrar. Se a fila falhar, a telemetria já está
+  // gravada e o agente só fica sem comando neste ciclo.
+  const resultados = (body as Record<string, unknown>)?.command_results;
+  const s = await callRpc("agente_sincronizar", {
+    p_token: token,
+    p_resultados: Array.isArray(resultados) ? resultados : [],
+  });
+
+  if (!s.ok) {
+    console.warn(logLine("warn", "sincronizar_falhou", {
+      token_prefix: prefixo,
+      status: s.status,
+      sqlstate: s.code,
+      message: s.message,
+    }));
+    return json({ ...d, comandos: [] }, 200);
+  }
+
+  const comandos = (s.data as Record<string, unknown>)?.comandos ?? [];
+
+  if (Array.isArray(comandos) && comandos.length > 0) {
+    console.info(logLine("info", "comandos_entregues", {
+      token_prefix: prefixo,
+      machine_id: d.machine_id,
+      // Só o tipo. O payload pode conter nome de serviço e caminho, e log de
+      // Edge Function é retido fora do nosso controle.
+      kinds: comandos.map((c) => (c as Record<string, unknown>).kind),
+    }));
+  }
+
+  return json({ ...d, comandos }, 200);
 }
 
 // -----------------------------------------------------------------------------
