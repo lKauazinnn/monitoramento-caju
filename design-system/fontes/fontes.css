@@ -1,0 +1,75 @@
+/* =============================================================================
+   Fontes da biblioteca — e por que elas existem AQUI e nao no painel
+   =============================================================================
+   O painel de producao NAO carrega fonte nenhuma, e isso e decisao consciente:
+   uma loja com internet ruim abriria o centro de operacoes com o texto de
+   metrica trocado no meio do turno. Ele usa a pilha do sistema.
+
+   A pilha e:
+
+     --fonte: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, ...
+     --mono:  "Cascadia Mono", ui-monospace, "JetBrains Mono", Consolas, ...
+
+   No Windows das lojas, as duas primeiras existem e ganham. Numa ferramenta de
+   desenho — que nao roda no Windows — nenhuma das duas existe, e o texto caia
+   para a fonte generica do navegador: o desenho ficava com proporcao diferente
+   do produto.
+
+   Entao a BIBLIOTECA serve os proximos nomes da propria pilha, Inter e
+   JetBrains Mono. Isto NAO muda o painel no Windows (Segoe e Cascadia
+   continuam vindo antes) e faz o desenho parecer com o produto em qualquer
+   outro sistema. Nao e substituto: sao os nomes que a pilha ja escolhia.
+
+   Inter e JetBrains Mono sao SIL Open Font License 1.1 — redistribuiveis.
+   Copiadas de @fontsource, subconjunto latino, so os pesos que o painel usa.
+   ========================================================================== */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./inter-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./inter-latin-600-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./inter-latin-700-normal.woff2') format('woff2');
+}
+
+/* 800 existe porque a marca do produto e o titulo do centro de operacoes usam
+   esse peso — sem ele o navegador simula o negrito e a marca fica borrada. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('./inter-latin-800-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./jetbrains-mono-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./jetbrains-mono-latin-600-normal.woff2') format('woff2');
+}

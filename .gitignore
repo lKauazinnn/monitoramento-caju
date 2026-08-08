@@ -71,3 +71,19 @@ dashboard/config.producao.js
 
 # CLI do Supabase baixada por scripts/publicar-supabase.ps1 (~116 MB)
 tools/
+
+# --- design-sync ---
+# Scripts encenados, saida regenerada e estado de maquina. O que E versionado
+# fica em .design-sync/ (config, notas, convencoes, previews) — sao as entradas
+# da sincronizacao, e e por elas que a proxima roda rapido.
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+design-system/node_modules/
+design-system/dist/
+design-system/demo/demo.js
+design-system/demo/demo.css
+design-system/src/sentinela.css
+design-system/capturas/
