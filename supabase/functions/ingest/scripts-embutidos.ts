@@ -2,7 +2,7 @@
 // GERADO — não edite à mão
 // =============================================================================
 // Origem:
-//   agent/agente-powershell.ps1  (40206 bytes, sha256:6fe5310122a3affa)
+//   agent/agente-powershell.ps1  (41707 bytes, sha256:c7799cdb8c602a20)
 //   docker/ingest-local/instalar.ps1  (12532 bytes, sha256:2dbff83b3f196c6c)
 //   scripts/atualizar-agente.ps1  (8832 bytes, sha256:8676568c50530e89)
 //
@@ -63,7 +63,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.3.0'
+$VERSAO = 'ps-1.3.1'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -364,18 +364,52 @@ function InfoMaquina {
   # A placa CABEADA, especificamente: WoL por Wi-Fi depende de suporte do
   # adaptador e do ponto de acesso, e na pratica quase nunca funciona — anunciar
   # que da para ligar uma maquina em Wi-Fi seria prometer o que nao se cumpre.
+  $amostraFlagRede = $null
+
+  # PELO ADAPTADOR DA ROTA PADRAO, e nao por \`Get-NetAdapter -Physical\`.
+  #
+  # A primeira versao filtrava por -Physical, e numa maquina virtualizada isso
+  # devolve VAZIO: o Windows nao marca a placa de VM como hardware fisico. O
+  # agente reportava \`mac = null\`, o servidor aceitava (null e legitimo: existe
+  # maquina so com Wi-Fi), e o painel dizia "nunca reportou o endereco da placa"
+  # sem nenhuma pista de por que.
+  #
+  # A rota padrao ja foi resolvida acima para o ip_lan, e ela aponta para a placa
+  # que REALMENTE carrega o trafego desta maquina — que e exatamente a que tem
+  # que receber o pacote magico. Serve para fisica e para virtual.
   try {
-    $ad = Get-NetAdapter -Physical -ErrorAction Stop |
-            Where-Object { $_.Status -eq 'Up' -and $_.MediaType -ne 'Native 802.11' } |
-            Sort-Object -Property @{ Expression = { $_.LinkSpeed } } -Descending |
-            Select-Object -First 1
+    $ad = $null
+
+    if ($rota) {
+      $ad = Get-NetAdapter -InterfaceIndex $rota.InterfaceIndex -ErrorAction SilentlyContinue
+    }
+
+    # Sem rota utilizavel: a melhor placa ligada que nao seja Wi-Fi.
+    if (-not $ad) {
+      $ad = Get-NetAdapter -ErrorAction Stop |
+              Where-Object { $_.Status -eq 'Up' -and $_.MediaType -ne 'Native 802.11' } |
+              Sort-Object -Property @{ Expression = { $_.LinkSpeed } } -Descending |
+              Select-Object -First 1
+    }
 
     if ($ad -and $ad.MacAddress) {
       # Get-NetAdapter devolve com hifen (AA-BB-CC); o banco normaliza, mas o
       # formato com dois-pontos e o que todo mundo espera ver num log.
       $info.mac = $ad.MacAddress.Replace('-', ':')
+
+      # Wi-Fi vai junto, mas MARCADO: WoL sobre Wi-Fi depende do adaptador e do
+      # ponto de acesso e quase nunca funciona. Sem esta marca, o painel
+      # ofereceria "Ligar o PC" para uma maquina que nunca vai acordar.
+      $info.mac_wifi = ($ad.MediaType -eq 'Native 802.11')
+    } else {
+      # Falhar em silencio foi o defeito. Se nao achou placa, DIGA.
+      $amostraFlagRede = 'sem_placa_para_mac'
     }
-  } catch { }
+  } catch {
+    $amostraFlagRede = "erro_mac: $($_.Exception.Message)"
+  }
+
+  if ($amostraFlagRede) { Registrar 'AVI' "MAC nao coletado: $amostraFlagRede" }
 
   return $info
 }
@@ -474,7 +508,7 @@ function Enviar {
     command_results = @($script:resultadosPendentes)
     # Endereco da placa, para esta maquina poder ser LIGADA pelo vizinho um dia.
     # Vai fora de \`machine\` porque quem grava e a funcao da fila, nao a ingestao.
-    network = @{ mac = $Maquina.mac }
+    network = @{ mac = $Maquina.mac; mac_wifi = $Maquina.mac_wifi }
   }
 
   $cab = @{}

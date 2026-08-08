@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.26-uptime';
+const BUILD = '2026-08-08.27-mac-wifi';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1707,7 +1707,10 @@ async function desenharAcoes(m) {
     const podeLigar = lig.tem_mac === true && !!lig.vizinho;
     $('btn-wake').disabled = !podeLigar;
 
-    if (!lig.tem_mac) {
+    if (lig.wifi) {
+      motivos.push('Não dá para ligar esta máquina: ela está em Wi-Fi, e Wake-on-LAN '
+        + 'por Wi-Fi não funciona na prática. Só por cabo.');
+    } else if (!lig.tem_mac) {
       motivos.push('Não dá para ligar esta máquina: ela nunca reportou o endereço '
         + 'da placa de rede (precisa de um ciclo com o agente ps-1.3.0 ou mais novo).');
     } else if (!lig.vizinho) {

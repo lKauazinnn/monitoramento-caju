@@ -169,6 +169,26 @@ begin
     raise exception 'FALHA 9: a resposta nao diz corretamente quem acorda quem: %', v_r;
   end if;
 
+  -- ------------------------------- 9b. Wi-Fi não pode ser acordado
+  -- WoL sobre Wi-Fi depende do adaptador E do ponto de acesso, e quase nunca
+  -- funciona. Oferecer "Ligar o PC" para uma máquina em Wi-Fi é uma promessa
+  -- que só se descobre falsa dentro da loja.
+  update public.machines set mac_is_wifi = true where id = v_alvo;
+
+  begin
+    perform public.ligar_maquina(v_alvo);
+    raise exception 'FALHA 9b: aceitou acordar uma maquina em Wi-Fi';
+  exception when sqlstate 'MON07' then
+    null;
+  end;
+
+  if (public.acoes_da_maquina(v_alvo) -> 'ligar' ->> 'wifi')::boolean is not true then
+    raise exception 'FALHA 9b: o painel nao informa que o impedimento e o Wi-Fi';
+  end if;
+
+  -- De volta ao cabo, para o resto do teste.
+  update public.machines set mac_is_wifi = false where id = v_alvo;
+
   -- ------------------- 10. suspender só quando existe caminho de volta
   -- Suspender uma máquina que não se sabe acordar é transformar um PC
   -- funcionando num PC apagado a 900 km. O painel só pode oferecer isso quando
