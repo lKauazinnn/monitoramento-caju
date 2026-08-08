@@ -1216,6 +1216,71 @@ input::placeholder { color: var(--fg3); }
   line-height: 1.55;
 }
 
+/* =========================================================== relatorio === */
+.modal-largo { width: min(1080px, calc(100vw - 32px)); }
+.rel-acoes { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+
+.rel-acoes select {
+  padding: 6px 10px;
+  background: var(--pnl2);
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.rel-resumo {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 1px;
+  background: var(--bd2);
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-m);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.rr-item { background: var(--pnl); padding: 11px 13px; display: flex; flex-direction: column; gap: 1px; }
+.rr-num { font-family: var(--mono); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rr-rot { font-size: 9px; letter-spacing: .13em; text-transform: uppercase; color: var(--fg3); }
+
+/* A tabela rola DENTRO da caixa: com trinta lojas ela nao pode empurrar o
+   rodape do modal para fora da tela. */
+.rel-tabela-caixa {
+  max-height: 46vh;
+  overflow: auto;
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-p);
+  margin-top: 12px;
+}
+
+.rel-tabela { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+
+.rel-tabela th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--pnl);
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--fg3);
+  border-bottom: 1px solid var(--bd);
+  white-space: nowrap;
+}
+
+.rel-tabela td { padding: 7px 10px; border-bottom: 1px solid var(--bd2); }
+.rel-tabela tr:last-child td { border-bottom: 0; }
+.rel-tabela tbody tr:hover { background: var(--hov); }
+.rel-tabela td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.rel-tabela td.ruim { color: var(--crit); }
+.rel-tabela td.alerta { color: var(--warn); }
+.rel-tabela td.ok { color: var(--ok); }
+.rel-vazio { padding: 30px; text-align: center; color: var(--fg3); }
+
 /* ============================================================== brinde === */
 .brinde {
   position: fixed;

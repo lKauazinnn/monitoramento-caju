@@ -307,15 +307,37 @@ if (!alvoHistorico) {
 
 let algumaFaixaComPontos = false;
 
+// 7 d e 30 d passaram a ler `metrics_hourly` (migração 0023), e o rollup só
+// consolida horas FECHADAS. Sem rodar o rollup aqui, aquelas duas faixas voltam
+// vazias para dado recém-inserido — o que é o comportamento correto do produto,
+// e uma reprovação enganosa neste teste.
+//
+// Rodar o rollup antes é o que torna esta verificação honesta: ela passa a
+// exercitar o caminho novo de verdade, em vez de só o cru de 24 h.
+psql('select public.rollup_horario(720);');
+
+const horasNoRollup = Number(psql(
+  `select count(*) from public.metrics_hourly where machine_id = '${alvoHistorico?.machine_id}'`));
+console.log(`        rollup: ${horasNoRollup} hora(s) consolidada(s) para a máquina do teste`);
+
 for (const faixa of (alvoHistorico ? ['24h', '7d', '30d'] : [])) {
   const h = await rpc('machine_history', { p_machine_id: alvoHistorico.machine_id, p_range: faixa });
-  const temDadoNaJanela = idadeDado < idades[faixa];
+
+  // 24 h lê o cru; 7 d e 30 d leem o rollup. A condição de "deveria ter pontos"
+  // é diferente para cada um, e tratá-los igual é o que fazia esta verificação
+  // reprovar sem defeito nenhum.
+  const temDadoNaJanela = faixa === '24h'
+    ? idadeDado < idades[faixa]
+    : horasNoRollup > 0;
 
   if (temDadoNaJanela) {
     verificar(`machine_history ${faixa} devolve pontos`, h.length > 0, `${h.length} pontos`);
     if (h.length) algumaFaixaComPontos = true;
   } else {
-    verificar(`machine_history ${faixa} vazia é correto (dado mais novo tem ${Math.round(idadeDado / 3600)}h)`,
+    verificar(`machine_history ${faixa} vazia é correto` +
+      (faixa === '24h'
+        ? ` (dado mais novo tem ${Math.round(idadeDado / 3600)}h)`
+        : ' (nenhuma hora consolidada no rollup)'),
       h.length === 0, `${h.length} pontos`);
   }
 

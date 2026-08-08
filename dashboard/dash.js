@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-06.20-incidente';
+const BUILD = '2026-08-07.21-relatorio';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -94,6 +94,7 @@ const Estado = {
   som: false,
   audio: null,
   faviconAtual: null,
+  relatorio: null,
   faixa: '24h',        // faixa do painel de detalhe
   faixaFrota: '24h',   // faixa do gráfico de carga da frota
   modo: 'lojas',       // 'lojas' (cartão por loja) ou 'maquinas' (cartão por PC)
@@ -549,6 +550,175 @@ function desenharNavMarcas() {
     });
     nav.appendChild(bt);
   }
+}
+
+// -----------------------------------------------------------------------------
+// Relatório mensal
+// -----------------------------------------------------------------------------
+async function abrirRelatorio() {
+  $('rel-fundo').hidden = false;
+  $('modal-relatorio').hidden = false;
+
+  const sel = $('rel-mes');
+  if (sel.options.length === 0) {
+    let meses = [];
+    try { meses = await rpc('meses_com_relatorio'); } catch (_) { meses = []; }
+
+    // Mês corrente sempre presente, mesmo sem rollup ainda: o relatório dele é
+    // legítimo (parcial), e uma lista vazia deixaria a tela sem saída.
+    const agora = new Date().toISOString().slice(0, 7);
+    if (!meses.includes(agora)) meses.unshift(agora);
+
+    for (const m of meses) {
+      const o = el('option', null, rotuloMes(m));
+      o.value = m;
+      sel.appendChild(o);
+    }
+    // Abre no mês passado quando ele existe: é o relatório que se pede.
+    sel.value = meses.length > 1 ? meses[1] : meses[0];
+  }
+
+  await desenharRelatorio();
+}
+
+function rotuloMes(iso) {
+  const [a, m] = iso.split('-');
+  const nomes = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+    'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  return `${nomes[Number(m) - 1]} de ${a}`;
+}
+
+async function desenharRelatorio() {
+  const mes = $('rel-mes').value;
+  const corpo = $('rel-corpo');
+  const resumo = $('rel-resumo');
+
+  limpar(corpo);
+  limpar(resumo);
+  txt($('rel-sub'), 'carregando…');
+
+  let r;
+  try {
+    r = await rpc('relatorio_mensal', { p_mes: `${mes}-01` });
+  } catch (e) {
+    txt($('rel-sub'), `falhou: ${e.message}`);
+    return;
+  }
+
+  Estado.relatorio = r;
+
+  txt($('rel-sub'),
+    `${r.mes} · ${r.resumo.maquinas} máquina(s), ${r.resumo.com_dado} com dado · `
+    + `gerado ${new Date(r.gerado_em).toLocaleString('pt-BR')}`);
+
+  const cartao = (num, rot, classe) => {
+    const d = el('div', 'rr-item');
+    const n = el('strong', `rr-num${classe ? ` ${classe}` : ''}`, num);
+    d.appendChild(n);
+    d.appendChild(el('span', 'rr-rot', rot));
+    return d;
+  };
+
+  const disp = r.resumo.disponibilidade_media;
+  resumo.appendChild(cartao(disp === null || disp === undefined ? '—' : `${disp}%`,
+    'disponibilidade média', disp !== null && disp < 99 ? 'alerta' : 'ok'));
+  resumo.appendChild(cartao(r.resumo.quedas ?? 0, 'quedas', r.resumo.quedas > 0 ? 'ruim' : null));
+  resumo.appendChild(cartao(r.resumo.criticos ?? 0, 'alertas críticos', r.resumo.criticos > 0 ? 'ruim' : null));
+  resumo.appendChild(cartao(r.resumo.alertas ?? 0, 'alertas no total'));
+  resumo.appendChild(cartao(r.resumo.reinicios ?? 0, 'reinícios'));
+
+  if (!r.maquinas || r.maquinas.length === 0) {
+    const tr = el('tr');
+    const td = el('td', 'rel-vazio', 'Nenhuma máquina no período.');
+    td.colSpan = 9;
+    tr.appendChild(td);
+    corpo.appendChild(tr);
+    return;
+  }
+
+  for (const m of r.maquinas) {
+    const tr = el('tr');
+
+    tr.appendChild(el('td', null, m.loja));
+    tr.appendChild(el('td', null, m.maquina));
+
+    const d = m.disponibilidade_pct;
+    tr.appendChild(el('td', `num ${d === null ? '' : d >= 99 ? 'ok' : d >= 95 ? 'alerta' : 'ruim'}`,
+      d === null || d === undefined ? 'sem dado' : `${d}%`));
+
+    tr.appendChild(el('td', 'num', `${m.cpu_media}%`));
+    tr.appendChild(el('td', `num${m.cpu_p95 >= 90 ? ' alerta' : ''}`, `${m.cpu_p95}%`));
+
+    const disco = m.disco_min_pct;
+    tr.appendChild(el('td', `num${disco !== null && disco <= 10 ? ' ruim' : ''}`,
+      disco === null || disco === undefined ? '—' : `${round1(disco)}%`));
+
+    tr.appendChild(el('td', 'num', m.reinicios));
+    tr.appendChild(el('td', `num${m.criticos > 0 ? ' ruim' : ''}`, m.alertas));
+    tr.appendChild(el('td', 'num', m.horas_em_alerta));
+
+    corpo.appendChild(tr);
+  }
+}
+
+function fecharRelatorio() {
+  $('modal-relatorio').hidden = true;
+  $('rel-fundo').hidden = true;
+}
+
+/**
+ * Exporta em CSV, não em PDF.
+ *
+ * O relatório existe para ser trabalhado: filtrar por loja, ordenar por
+ * disponibilidade, colar num e-mail. PDF é bonito e é um beco sem saída — e uma
+ * equipe enxuta abre planilha, não gera relatório.
+ *
+ * `;` como separador e BOM UTF-8 no início: é o que faz o Excel em português
+ * abrir o arquivo com as colunas separadas e os acentos certos, em vez de
+ * despejar tudo numa coluna só.
+ */
+function baixarRelatorioCsv() {
+  const r = Estado.relatorio;
+  if (!r) return;
+
+  const colunas = [
+    ['marca', 'Marca'], ['loja', 'Loja'], ['loja_nome', 'Nome da loja'],
+    ['maquina', 'Máquina'], ['disponibilidade_pct', 'Disponibilidade %'],
+    ['amostras', 'Amostras'], ['esperadas', 'Esperadas'],
+    ['cpu_media', 'CPU média %'], ['cpu_p95', 'CPU p95 %'], ['mem_media', 'Memória média %'],
+    ['temp_max', 'Temp. máx C'], ['disco_min_pct', 'Disco mín %'],
+    ['reinicios', 'Reinícios'], ['horas_com_servico_parado', 'Horas com serviço parado'],
+    ['alertas', 'Alertas'], ['criticos', 'Críticos'], ['quedas', 'Quedas'],
+    ['horas_em_alerta', 'Horas em alerta'],
+  ];
+
+  const campo = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    // Decimal com vírgula: o Excel em português não reconhece ponto como
+    // separador decimal e trataria 99.5 como texto.
+    const n = /^-?\d+\.\d+$/.test(s) ? s.replace('.', ',') : s;
+    return /[;"\n]/.test(n) ? `"${n.replace(/"/g, '""')}"` : n;
+  };
+
+  const linhas = [colunas.map(([, t]) => campo(t)).join(';')];
+  for (const m of r.maquinas) linhas.push(colunas.map(([k]) => campo(m[k])).join(';'));
+
+  const csv = `﻿${linhas.join('\r\n')}\r\n`;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `monitoramento-${r.mes}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  // Sem revoke, cada exportação vaza o blob até a aba fechar.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  brinde(`Planilha de ${r.mes} baixada.`);
 }
 
 // -----------------------------------------------------------------------------
@@ -2031,6 +2201,7 @@ function ligarEventos() {
 
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
+    if (!$('modal-relatorio').hidden) { fecharRelatorio(); return; }
     if (!$('modal-add').hidden) { fecharModalAdd(); return; }
     if (!$('painel').hidden) fecharPainel();
   });
@@ -2101,6 +2272,12 @@ function ligarEventos() {
 
   $('btn-tema').addEventListener('click', () => trocarTema());
   $('btn-som').addEventListener('click', alternarSom);
+
+  $('btn-relatorio').addEventListener('click', abrirRelatorio);
+  $('btn-fechar-rel').addEventListener('click', fecharRelatorio);
+  $('rel-fundo').addEventListener('click', fecharRelatorio);
+  $('rel-mes').addEventListener('change', desenharRelatorio);
+  $('btn-rel-csv').addEventListener('click', baixarRelatorioCsv);
   $('fi-abrir').addEventListener('click', abrirMaquinaDoIncidente);
 
   armarPerigo($('fi-reconhecer'), 'Confirmar', reconhecerIncidente);

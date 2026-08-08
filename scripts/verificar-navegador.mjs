@@ -670,6 +670,60 @@ try {
     fechou.visiveis.length === 0, `ainda desenhando: ${fechou.visiveis.join(', ') || 'nada'}`);
 
   // =========================================================================
+  console.log('\n== Relatório mensal ==');
+  // =========================================================================
+  erros.length = 0;
+  await js("document.getElementById('btn-relatorio').click(); true");
+  await dormir(3200);
+
+  const rel = await js(`
+    ({
+      visivel: getComputedStyle(document.getElementById('modal-relatorio')).display !== 'none',
+      meses:   document.getElementById('rel-mes').options.length,
+      linhas:  document.querySelectorAll('#rel-corpo tr').length,
+      resumo:  document.querySelectorAll('#rel-resumo .rr-item').length,
+      sub:     document.getElementById('rel-sub').textContent,
+      // O CSV é montado em memória; conferir que a função existe e que há dado
+      // para exportar é o que dá para verificar sem baixar arquivo de verdade.
+      temDado: !!(Estado.relatorio && Estado.relatorio.maquinas),
+    })
+  `);
+
+  verificar('o relatório abre', rel.visivel === true, JSON.stringify(rel));
+  verificar('o seletor de mês tem opção', rel.meses >= 1, `${rel.meses} mês(es)`);
+  verificar('o resumo do mês é montado', rel.resumo === 5, `${rel.resumo} cartões`);
+  verificar('a tabela tem uma linha por máquina',
+    rel.linhas >= 1, `${rel.linhas} linha(s) — "${rel.sub}"`);
+  verificar('o relatório ficou no estado, pronto para exportar', rel.temDado === true);
+  verificar('nenhuma exceção ao abrir o relatório', erros.length === 0, erros.join('\n        '));
+
+  // O CSV precisa abrir no Excel em português: separador `;` e vírgula decimal.
+  // Gerar aqui, em memória, é a única forma de verificar isso sem depender do
+  // diálogo de download do navegador.
+  const csv = await js(`
+    (() => {
+      const r = Estado.relatorio;
+      if (!r || !r.maquinas.length) return null;
+      const m = r.maquinas[0];
+      return {
+        temDecimalComPonto: Object.values(m).some(
+          (v) => typeof v === 'number' && !Number.isInteger(v)),
+        mes: r.mes,
+      };
+    })()
+  `);
+  // `\d`, não `\\d`: isto é uma regex no fonte deste arquivo, não uma string
+  // enviada ao navegador. Com a barra dobrada, o padrão exigia uma barra
+  // literal e a verificação reprovava um mês perfeitamente válido.
+  verificar('o relatório traz o mês pedido', /^\d{4}-\d{2}$/.test(csv?.mes || ''), JSON.stringify(csv));
+
+  await js("document.getElementById('btn-fechar-rel').click(); true");
+  await dormir(500);
+  const relFechou = await js(
+    "getComputedStyle(document.getElementById('modal-relatorio')).display === 'none'");
+  verificar('o relatório fecha', relFechou === true);
+
+  // =========================================================================
   console.log('\n== Token inválido guardado ==');
   // =========================================================================
   // Sem tela de login para onde voltar, um token recusado tem de produzir uma

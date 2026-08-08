@@ -124,6 +124,13 @@ try {
   await dormir(700);
   await foto('04-comando');
 
+  // Relatório mensal
+  await js("document.getElementById('btn-fechar-modal')?.click(); true");
+  await dormir(500);
+  await js("document.getElementById('btn-relatorio')?.click(); true");
+  await dormir(3000);
+  await foto('05-relatorio');
+
   ws.close();
 } catch (e) {
   console.error(`erro: ${e.message}`);

@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=20" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=21" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=20">
+  <link rel="stylesheet" href="styles.css?v=21">
 </head>
 <body>
 
@@ -75,6 +75,14 @@
     </nav>
 
     <nav id="nav-marcas" class="vistas" aria-label="Marcas"></nav>
+
+    <nav class="vistas" aria-label="Relatórios">
+      <span class="secao-lateral mono">Histórico</span>
+      <button id="btn-relatorio" class="vista" type="button">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+        <span class="vista-rot">Relatório mensal</span>
+      </button>
+    </nav>
 
     <!-- Pulso da ingestão: responde "os dados estão chegando?" sem depender de
          nenhuma máquina específica estar reportando. -->
@@ -414,6 +422,51 @@
   </div>
 </div>
 
+<!-- =========================================================================
+     Relatório mensal
+     =========================================================================
+     O painel responde "o que está quebrado AGORA". Isto responde "como foi o mês
+     passado", que é a pergunta da reunião — e a única que justifica guardar 400
+     dias de histórico. -->
+<div id="rel-fundo" class="cortina" hidden></div>
+
+<div id="modal-relatorio" class="modal modal-largo" hidden role="dialog" aria-modal="true" aria-labelledby="rel-titulo">
+  <header class="modal-topo">
+    <div>
+      <h2 id="rel-titulo">Relatório mensal</h2>
+      <p id="rel-sub" class="painel-sub mono">—</p>
+    </div>
+    <div class="rel-acoes">
+      <select id="rel-mes" aria-label="Mês do relatório"></select>
+      <button id="btn-rel-csv" class="btn-secundario" type="button">Baixar planilha</button>
+      <button id="btn-fechar-rel" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
+    </div>
+  </header>
+
+  <div class="modal-corpo">
+    <section id="rel-resumo" class="rel-resumo" aria-label="Resumo do mês"></section>
+
+    <p class="dica">
+      <strong>Disponibilidade</strong> é amostras recebidas ÷ amostras esperadas no mês
+      &mdash; quanto do tempo a máquina esteve <em>reportando</em>. Não é uptime do
+      Windows: uma máquina ligada mas sem rede conta como indisponível, porque para
+      o monitoramento ela estava muda.
+    </p>
+
+    <div class="rel-tabela-caixa">
+      <table class="rel-tabela">
+        <thead>
+          <tr>
+            <th>Loja</th><th>Máquina</th><th>Dispon.</th><th>CPU méd</th>
+            <th>CPU p95</th><th>Disco mín</th><th>Reinícios</th><th>Alertas</th><th>h em alerta</th>
+          </tr>
+        </thead>
+        <tbody id="rel-corpo"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <div id="brinde" class="brinde" hidden role="status"></div>
 
 <!-- Faixa de erro.
@@ -428,7 +481,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=20"></script>
-<script src="dash.js?v=20"></script>
+<script src="config.js?v=21"></script>
+<script src="dash.js?v=21"></script>
 </body>
 </html>
