@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.38-acessar-loja';
+const BUILD = '2026-08-10.39-volume-pequeno';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1868,6 +1868,13 @@ function cartaoLoja(loja) {
         + `de ${pior.label}, com ${gb(pior.disk_worst_free_gb) ?? '?'} livres `
         + `de ${gbNu(pior.disk_worst_total_gb) ?? '?'} (${Math.round(discoMin)}%). `
         + `Quanto MENOR, pior: ambar abaixo de ${PISO_DISCO_ATENCAO}%, vermelho abaixo de ${PISO_DISCO}%.`
+        // Um numero que muda sem explicacao e pior que um numero errado: se o
+        // servidor descartou um volume, a tela diz isso em vez de simplesmente
+        // mostrar outro numero do que mostrava ontem.
+        + (pior.disk_volumes_ignorados > 0
+            ? ` ${pior.disk_volumes_ignorados} volume(s) pequeno(s) fora da conta `
+              + '(recuperacao, EFI, reservada do sistema): vivem cheios por natureza.'
+            : '')
         // `desdeQuando` ja devolve "ha 4h": juntar "de ... atras" em volta
         // produzia "leitura de ha 4h atras".
         + (discoVelho
