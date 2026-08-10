@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Entrar — Monitoramento</title>
+<title>Entrar — Sentinela</title>
 
 <!-- =============================================================================
      LOGIN — usado APENAS no modo Supabase
@@ -19,31 +19,106 @@
 
      Na stack local esta página não é usada: o dev-up grava o token e o
      dashboard abre direto.
+
+     O texto acompanha essa separação: nada aqui promete número. A coluna da
+     esquerda diz o que o sistema faz, e não como ele está — quem responde "como
+     está" é o painel, com dado medido. Uma tela de login que exibisse "99,9% de
+     disponibilidade" estaria inventando o primeiro número que o operador vê.
      ============================================================================= -->
 
-<link rel="stylesheet" href="styles.css?v=8">
+<link rel="stylesheet" href="styles.css?v=34">
 </head>
 <body>
 
-<div class="tela-login">
-  <form id="form-login" class="caixa-login">
-    <h1>Monitoramento</h1>
-    <p class="sub">Acesso restrito à equipe de TI</p>
+<div class="lg-tela">
+  <!-- A mesma grade de fundo do painel. Aqui ela existe para a tela de entrada
+       pertencer visivelmente ao mesmo produto, e não parecer uma página avulsa. -->
+  <div class="lg-grade" aria-hidden="true"></div>
 
-    <label for="email">E-mail</label>
-    <input type="email" id="email" autocomplete="username" required>
+  <button id="lg-tema" class="lg-btn-tema" type="button" aria-label="Alternar tema claro e escuro">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.2"/>
+      <path d="M12 2v2.4M12 19.6V22M2 12h2.4M19.6 12H22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"/>
+    </svg>
+  </button>
 
-    <label for="senha">Senha</label>
-    <input type="password" id="senha" autocomplete="current-password" required>
+  <main class="lg-quadro">
 
-    <button type="submit" id="btn-entrar">Entrar</button>
+    <!-- ------------------------------------------------------------ identidade -->
+    <section class="lg-marca">
+      <div class="lg-selo" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2.6 4.4 5.7v6.1c0 4.6 3.1 8.4 7.6 9.6 4.5-1.2 7.6-5 7.6-9.6V5.7Z"/>
+          <path class="lg-pulso" d="M7.8 12.4h2.1l1.3-2.9 1.6 5 1.3-2.1h2.1"/>
+        </svg>
+      </div>
 
-    <p id="erro" class="erro" hidden></p>
-    <p id="aviso" class="aviso-dev" hidden></p>
-  </form>
+      <h1 class="lg-nome">Sentinela</h1>
+      <p class="lg-tag">Centro de operações · Cajupar</p>
+
+      <ul class="lg-lista">
+        <li>
+          <span class="lg-ponto lg-ponto-ok" aria-hidden="true"></span>
+          Vigia os PCs das lojas 24 horas, sem VPN e sem porta aberta
+        </li>
+        <li>
+          <span class="lg-ponto lg-ponto-warn" aria-hidden="true"></span>
+          Avisa antes de o disco encher e o serviço cair
+        </li>
+        <li>
+          <span class="lg-ponto lg-ponto-info" aria-hidden="true"></span>
+          Reinicia serviço, liga e suspende máquina à distância
+        </li>
+      </ul>
+
+      <p class="lg-pe">
+        Cada máquina tem token próprio, revogável uma a uma.
+        Toda a comunicação em HTTPS.
+      </p>
+    </section>
+
+    <!-- ---------------------------------------------------------- o formulário -->
+    <section class="lg-cartao">
+      <form id="form-login" novalidate>
+        <h2 class="lg-titulo">Entrar</h2>
+        <p class="lg-sub">Acesso restrito à equipe de TI</p>
+
+        <label class="lg-rot" for="email">E-mail</label>
+        <input class="lg-campo" type="email" id="email" name="email"
+               autocomplete="username" autocapitalize="off" spellcheck="false"
+               placeholder="voce@cajupar.com" required>
+
+        <label class="lg-rot" for="senha">Senha</label>
+        <div class="lg-senha">
+          <input class="lg-campo" type="password" id="senha" name="senha"
+                 autocomplete="current-password" required>
+          <!-- Ver a senha resolve o erro mais comum de digitação num teclado de
+               loja, e é preferível a errar três vezes e travar a conta. -->
+          <button id="btn-ver-senha" class="lg-ver" type="button"
+                  aria-label="Mostrar a senha" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M2.2 12S5.8 5.6 12 5.6 21.8 12 21.8 12 18.2 18.4 12 18.4 2.2 12 2.2 12Z"/>
+              <circle cx="12" cy="12" r="2.9"/>
+            </svg>
+          </button>
+        </div>
+
+        <button type="submit" id="btn-entrar" class="lg-entrar">Entrar</button>
+
+        <p id="erro" class="erro" hidden role="alert"></p>
+        <p id="aviso" class="aviso-dev" hidden></p>
+
+        <!-- Preenchido pelo login.js a partir do config: saber para QUAL ambiente
+             se está entrando evita o erro de mexer em produção achando que é a
+             stack local. -->
+        <p id="lg-ambiente" class="lg-ambiente" hidden></p>
+      </form>
+    </section>
+
+  </main>
 </div>
 
-<script src="config.js?v=8"></script>
-<script src="login.js?v=21"></script>
+<script src="config.js?v=34"></script>
+<script src="login.js?v=34"></script>
 </body>
 </html>

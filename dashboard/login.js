@@ -6,7 +6,9 @@
 // onde 'unsafe-inline' nao deveria existir: ela e o alvo mais obvio de uma
 // injecao, e a CSP e a ultima linha de defesa se algo passar.
 //
-// O comportamento e identico ao que estava embutido.
+// O caminho de autenticacao e o mesmo desde a primeira versao. O que entrou
+// depois foi tela: tema, ver a senha, e dizer para qual ambiente se esta
+// entrando.
 // =============================================================================
 
 'use strict';
@@ -20,11 +22,63 @@ function erro(msg) {
   e.hidden = false;
 }
 
-// Na stack local esta página não deveria ser aberta. Em vez de mostrar um
-// formulário que não serve para nada, manda direto para o dashboard.
+// -----------------------------------------------------------------------------
+// Tema
+// -----------------------------------------------------------------------------
+// Mesma chave do painel: quem trabalha no claro nao deve ser jogado no escuro
+// justamente na tela de entrada. Aplicado ANTES de qualquer outra coisa, para
+// nao existir um quadro pintado no tema errado.
+function aplicarTema(tema) {
+  document.documentElement.setAttribute('data-tema', tema === 'light' ? 'light' : 'dark');
+}
+
+var temaSalvo = 'dark';
+try { temaSalvo = localStorage.getItem('monitor.tema') || 'dark'; } catch (e) { /* modo privado */ }
+aplicarTema(temaSalvo);
+
+document.getElementById('lg-tema').addEventListener('click', function () {
+  var novo = document.documentElement.getAttribute('data-tema') === 'light' ? 'dark' : 'light';
+  aplicarTema(novo);
+  try { localStorage.setItem('monitor.tema', novo); } catch (e) { /* modo privado */ }
+});
+
+// -----------------------------------------------------------------------------
+// Ver a senha
+// -----------------------------------------------------------------------------
+document.getElementById('btn-ver-senha').addEventListener('click', function () {
+  var campo = document.getElementById('senha');
+  var mostrando = campo.type === 'text';
+  campo.type = mostrando ? 'password' : 'text';
+  this.setAttribute('aria-pressed', String(!mostrando));
+  this.setAttribute('aria-label', mostrando ? 'Mostrar a senha' : 'Ocultar a senha');
+  // O foco volta para o campo: quem clicou no olho estava digitando.
+  campo.focus();
+});
+
+// -----------------------------------------------------------------------------
+// Qual ambiente
+// -----------------------------------------------------------------------------
+// Entrar em producao achando que e a stack local e um erro barato de cometer e
+// caro de descobrir: daqui saem comandos para maquina de loja. O aviso e ambar
+// so quando e producao de fato.
+(function () {
+  var el = document.getElementById('lg-ambiente');
+  if (CFG.authMode !== 'supabase') return;
+
+  var host = '';
+  try { host = new URL(CFG.authUrl || '').host; } catch (e) { host = ''; }
+  if (!host) return;
+
+  el.textContent = 'Producao · ' + host;
+  el.setAttribute('data-producao', '1');
+  el.hidden = false;
+})();
+
+// Na stack local esta pagina nao deveria ser aberta. Em vez de mostrar um
+// formulario que nao serve para nada, manda direto para o dashboard.
 if (CFG.authMode !== 'supabase') {
   var aviso = document.getElementById('aviso');
-  aviso.textContent = 'Stack local não usa login. Redirecionando para o dashboard…';
+  aviso.textContent = 'Stack local nao usa login. Redirecionando para o dashboard...';
   aviso.hidden = false;
   setTimeout(function () { window.location.href = 'index.html?v=' + Date.now(); }, 1200);
 }
@@ -41,12 +95,23 @@ document.getElementById('form-login').addEventListener('submit', async function 
   var email = document.getElementById('email').value.trim();
   var senha = document.getElementById('senha').value;
 
+  // `novalidate` no formulario tirou a checagem do navegador para o desenho da
+  // mensagem ser o nosso. Ela precisa existir aqui, senao um campo vazio vira
+  // uma ida ao servidor para receber 'credenciais invalidas'.
+  if (!email || !senha) {
+    erro('preencha e-mail e senha');
+    btn.disabled = false;
+    btn.textContent = rotulo;
+    (email ? document.getElementById('senha') : document.getElementById('email')).focus();
+    return;
+  }
+
   try {
     var base = (CFG.authUrl || '').replace(/\/+$/, '');
-    if (!base) throw new Error('authUrl não configurado em config.js');
+    if (!base) throw new Error('authUrl nao configurado em config.js');
 
-    // Timeout explícito: sem ele, um endpoint inalcançável deixa o fetch
-    // pendurado e o usuário vê apenas o botão desabilitado, para sempre.
+    // Timeout explicito: sem ele, um endpoint inalcancavel deixa o fetch
+    // pendurado e o usuario ve apenas o botao desabilitado, para sempre.
     var ctrl = new AbortController();
     var t = setTimeout(function () { ctrl.abort(); }, 15000);
 
@@ -61,7 +126,7 @@ document.getElementById('form-login').addEventListener('submit', async function 
     var dados = await resp.json();
 
     if (!resp.ok || !dados.access_token) {
-      throw new Error(dados.error_description || dados.msg || 'credenciais inválidas');
+      throw new Error(dados.error_description || dados.msg || 'credenciais invalidas');
     }
 
     // Senha fora do DOM antes de navegar.
@@ -75,7 +140,7 @@ document.getElementById('form-login').addEventListener('submit', async function 
     window.location.href = 'index.html?v=' + Date.now();
   } catch (e) {
     erro(e.name === 'AbortError'
-      ? 'o servidor de autenticação não respondeu em 15s'
+      ? 'o servidor de autenticacao nao respondeu em 15s'
       : e.message);
     document.getElementById('senha').value = '';
     document.getElementById('senha').focus();
