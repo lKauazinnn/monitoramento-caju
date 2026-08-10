@@ -105,6 +105,11 @@ export const CONTROLES = [
   ['us-lista', 'quem tem acesso, com papel e escopo'],
 
   // ---------------------------------------------------------------- sessão
+  // A faixa existe para o painel NUNCA navegar sozinho para o login: ele fica
+  // numa TV, e sair da tela é perder a tela. Se ela sumir, o próximo a mexer
+  // provavelmente vai "simplificar" voltando o redirecionamento automático.
+  ['faixa-sessao', 'o aviso de sessão expirada, sem sair do painel'],
+  ['btn-fs-entrar', 'o único caminho para o login: um clique de alguém'],
   ['btn-sair', 'sair da sessão'],
   ['rotulo-usuario', 'quem está logado'],
   ['usuario-papel', 'com qual papel'],
@@ -134,5 +139,7 @@ export const COMPORTAMENTOS = [
   ['definir_acesso_usuario', 'trocar papel e escopo de um usuário'],
   ['remover_acesso_usuario', 'revogar o acesso de alguém'],
   ['admin-usuarios', 'a Edge Function que cria conta e troca senha'],
+  ['renovarToken', 'renovar a sessão sozinho, para ela não cair'],
+  ['insistirNaSessao', 'insistir na renovação para sempre, sem navegar'],
   ['cl-nome-btn', 'entrar na loja pelo teclado, sem depender do clique'],
 ];

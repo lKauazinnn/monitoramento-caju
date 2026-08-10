@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.44-sessao';
+const BUILD = '2026-08-10.45-tv';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -320,9 +320,45 @@ function sair() {
   window.location.replace('login.html');
 }
 
-function tokenRecusado(mensagem) {
-  descartarToken();
+/** Mostra ou esconde a faixa de sessao. Ver o comentario no index.html. */
+function avisarSessao(mostrar, sub) {
+  const f = $('faixa-sessao');
+  if (!f) return;
+  if (sub) txt($('fs-sub'), sub);
+  f.hidden = !mostrar;
+}
 
+/**
+ * Insiste em recuperar a sessao, para sempre.
+ *
+ * NAO desiste e NAO navega. O painel fica numa TV acompanhada por uma equipe:
+ * quem passa por ali nao vai digitar senha, e trocar o quadro por um formulario
+ * apaga a unica coisa que aquela tela existe para mostrar.
+ *
+ * Intervalo fixo de 30s em vez de recuo exponencial: recuo serve para poupar um
+ * servidor sob pressao, e aqui e UM navegador tentando renovar UM token. Meia
+ * hora de espera depois de algumas falhas seria pior para quem esta olhando do
+ * que dois pedidos por minuto para o Supabase.
+ */
+let timerRecuperar = null;
+
+function insistirNaSessao() {
+  if (timerRecuperar) return;
+
+  timerRecuperar = setInterval(async () => {
+    if (await renovarToken()) {
+      clearInterval(timerRecuperar);
+      timerRecuperar = null;
+      avisarSessao(false);
+      brinde('Sessao renovada.');
+      // O poll foi parado quando a sessao caiu; volta a andar.
+      iniciarAtualizacao();
+      carregar();
+    }
+  }, 30000);
+}
+
+function tokenRecusado(mensagem) {
   if (Estado.timerPoll) { clearInterval(Estado.timerPoll); Estado.timerPoll = null; }
   if (Estado.canalRealtime) {
     try { Estado.canalRealtime.close(); } catch (_) { /* ja fechado */ }
@@ -330,7 +366,21 @@ function tokenRecusado(mensagem) {
   }
 
   if (CFG.authMode === 'supabase') {
-    window.location.href = 'login.html';
+    // O token NAO e descartado aqui, ao contrario da versao anterior: sem o
+    // refresh_token guardado nao ha como se recuperar sozinho, e apaga-lo
+    // transformava um problema temporario em "precisa de senha".
+    if (Estado.refresh) {
+      avisarSessao(true, 'Tentando renovar sozinho. O painel segue mostrando o '
+        + 'ultimo estado conhecido.');
+      insistirNaSessao();
+      renovarToken();   // uma tentativa imediata, sem esperar os 30s
+      return;
+    }
+
+    // Sem refresh_token nao ha o que tentar. Ainda assim a faixa fica, e a
+    // navegacao passa a ser um CLIQUE de alguem -- nunca automatica.
+    avisarSessao(true, 'Esta sessao e anterior a renovacao automatica. '
+      + 'Entre de novo uma ultima vez.');
     return;
   }
 
@@ -3550,12 +3600,15 @@ function iniciarAtualizacao() {
   const ms = Math.max(5, Number(CFG.pollSeconds) || 20) * 1000;
   if (Estado.timerPoll) clearInterval(Estado.timerPoll);
   Estado.timerPoll = setInterval(() => {
+    // A RENOVACAO ACONTECE MESMO COM A ABA ESCONDIDA. Carregar dado numa aba que
+    // ninguem ve e desperdicio; deixar o token vencer nela nao e -- e o que fazia
+    // a sessao morrer sozinha em TV cuja aba o navegador suspendeu.
+    renovarSePerto();
     if (document.hidden) return;
     // Renova ANTES de carregar, e sem esperar: se faltar menos de 5 min para o
     // token vencer, a renovacao acontece agora e a carga seguinte ja usa o novo.
     // Deixar para o 401 funcionaria, mas produziria um erro por hora no console
     // de quem deixa o painel aberto — e um erro rotineiro treina a ignorar erro.
-    renovarSePerto();
     carregar();
   }, ms);
 
@@ -3946,6 +3999,13 @@ function ligarEventos() {
     $('btn-sair').hidden = false;
     $('btn-sair').addEventListener('click', sair);
   }
+
+  // O único caminho para o login depois de o painel estar aberto é este clique.
+  // Nada mais navega sozinho: numa TV, sair da tela é perder a tela.
+  $('btn-fs-entrar').addEventListener('click', () => {
+    descartarToken();
+    window.location.replace('login.html');
+  });
 
   ligarUsuarios();
   ligarEdicao();

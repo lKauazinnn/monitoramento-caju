@@ -2361,3 +2361,46 @@ input::placeholder { color: var(--fg3); }
 
 /* A gaveta aberta encosta na margem da linha, nao no fim da fileira de botoes. */
 .us-acoes details[open] { flex: 1 0 100%; order: 9; margin-top: 4px; }
+
+/* -------------------------------------------------------------- sessao na TV --- */
+/* No RODAPE, nao no topo: o topo carrega os KPIs, e a faixa empurraria a tela
+   inteira para baixo a cada expiracao -- numa TV isso e um solavanco visivel do
+   outro lado da sala. */
+.faixa-sessao {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(680px, calc(100vw - 32px));
+  padding: 11px 15px;
+  border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
+  border-radius: var(--r-m);
+  background: color-mix(in srgb, var(--warn) 12%, var(--pnl));
+  box-shadow: var(--sh);
+}
+
+.fs-ponto {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--warn);
+  animation: pulseDot 1.8s ease-in-out infinite;
+}
+
+.fs-texto { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fs-texto strong { font-size: 12.5px; color: var(--fg); }
+#fs-sub { font-size: 11px; color: var(--fg2); }
+
+/* Legivel a distancia: numa TV a 4 metros, 11px nao se le. */
+@media (min-width: 1600px) {
+  .faixa-sessao { padding: 15px 20px; bottom: 24px; }
+  .fs-texto strong { font-size: 15px; }
+  #fs-sub { font-size: 13px; }
+}
+
+@media (prefers-reduced-motion: reduce) { .fs-ponto { animation: none; } }

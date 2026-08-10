@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=43" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=44" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=43">
+  <link rel="stylesheet" href="styles.css?v=44">
 </head>
 <body>
 
@@ -399,6 +399,24 @@
      que pela regra 1 não chega ao navegador. Esta tela chama a Edge Function
      admin-usuarios, que valida quem pediu e guarda o segredo do lado servidor.
      ========================================================================= -->
+<!-- =========================================================================
+     Sessao expirada
+     =========================================================================
+     Esta faixa existe em lugar de mandar para o login. O painel fica numa TV,
+     acompanhado por uma equipe: navegar para um formulario de senha apaga o
+     quadro que as pessoas estao olhando e ninguem vai digitar nada ali. A faixa
+     avisa, o painel continua na tela com o ultimo estado conhecido, e a
+     renovacao segue tentando sozinha por tras.
+     ========================================================================= -->
+<div id="faixa-sessao" class="faixa-sessao" hidden role="status">
+  <span class="fs-ponto" aria-hidden="true"></span>
+  <div class="fs-texto">
+    <strong id="fs-titulo">Sessao expirada</strong>
+    <span id="fs-sub"></span>
+  </div>
+  <button id="btn-fs-entrar" class="btn-secundario" type="button">Entrar de novo</button>
+</div>
+
 <div id="modal-usuarios-fundo" class="cortina" hidden></div>
 
 <div id="modal-usuarios" class="modal modal-largo" hidden role="dialog" aria-modal="true"
@@ -705,7 +723,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=43"></script>
-<script src="dash.js?v=43"></script>
+<script src="config.js?v=44"></script>
+<script src="dash.js?v=44"></script>
 </body>
 </html>
