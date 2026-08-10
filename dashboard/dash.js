@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.43-wol';
+const BUILD = '2026-08-10.44-sessao';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -146,10 +146,23 @@ function cabecalhos() {
 
 async function api(caminho, opcoes = {}) {
   const base = CFG.restUrl.replace(/\/+$/, '');
-  const resp = await fetch(`${base}${caminho}`, { ...opcoes, headers: cabecalhos() });
+
+  // _semRenovar e controle nosso; passar para o fetch nao quebra, mas deixar
+  // opcao inventada chegar na API do navegador e como esconder lixo no bolso.
+  const { _semRenovar, ...doFetch } = opcoes;
+  const resp = await fetch(`${base}${caminho}`, { ...doFetch, headers: cabecalhos() });
 
   if (resp.status === 401 || resp.status === 403) {
-    // Token expirado ou revogado: derruba a sessão em vez de mostrar tela vazia.
+    // ANTES DE DERRUBAR, TENTA RENOVAR. O access_token do Supabase vale uma hora,
+    // e expirar no meio do turno nao e sessao invalida -- e sessao velha.
+    //
+    // O sinalizador _semRenovar corta a recursao: a segunda tentativa nao renova
+    // de novo, e um 401 nela significa que o problema nao era validade (senha trocada,
+    // usuario revogado, projeto reiniciado). Ai sim a sessao cai.
+    if (!opcoes._semRenovar && await renovarToken()) {
+      return api(caminho, { ...opcoes, _semRenovar: true });
+    }
+
     tokenRecusado(`HTTP ${resp.status} em ${caminho}`);
     throw new Error('não autorizado');
   }
@@ -183,29 +196,97 @@ const rpc = (nome, args = {}) =>
 // si continua sem saber o que e um formulario de login.
 const CHAVE_TOKEN = 'monitor.token';
 
-function guardarToken(token, usuario) {
+function guardarToken(token, usuario, refresh, expiraEm) {
   Estado.token = token;
   Estado.usuario = usuario;
+  Estado.refresh = refresh || Estado.refresh || null;
+  Estado.expiraEm = expiraEm || null;
   try {
-    sessionStorage.setItem(CHAVE_TOKEN, JSON.stringify({ token, usuario }));
+    localStorage.setItem(CHAVE_TOKEN, JSON.stringify({
+      token, usuario, refresh: Estado.refresh, expira_em: Estado.expiraEm,
+    }));
   } catch (_) { /* modo privado bloqueia storage */ }
 }
 
+/**
+ * Le a sessao guardada.
+ *
+ * Aceita as DUAS chaves, e a razao e a atualizacao: quem estava com o painel
+ * aberto tem a sessao antiga em sessionStorage, e ignora-la significaria
+ * deslogar todo mundo no momento exato em que eu publico a correcao de deslogar
+ * sozinho.
+ */
 function lerTokenGuardado() {
-  try {
-    const bruto = sessionStorage.getItem(CHAVE_TOKEN);
-    if (!bruto) return null;
-    const s = JSON.parse(bruto);
-    return s.token ? s : null;
-  } catch (_) {
-    return null;
+  for (const onde of [localStorage, sessionStorage]) {
+    try {
+      const bruto = onde.getItem(CHAVE_TOKEN);
+      if (!bruto) continue;
+      const s = JSON.parse(bruto);
+      if (s.token) return s;
+    } catch (_) { /* proximo */ }
   }
+  return null;
 }
 
 function descartarToken() {
   Estado.token = null;
   Estado.usuario = null;
-  try { sessionStorage.removeItem(CHAVE_TOKEN); } catch (_) { /* nada a fazer */ }
+  Estado.refresh = null;
+  Estado.expiraEm = null;
+  for (const onde of [localStorage, sessionStorage]) {
+    try { onde.removeItem(CHAVE_TOKEN); } catch (_) { /* nada a fazer */ }
+  }
+}
+
+/**
+ * Troca o refresh_token por um access_token novo.
+ *
+ * Uma renovacao por vez: sem isto, tres chamadas que voltam 401 juntas disparam
+ * tres renovacoes, e o Supabase invalida o refresh_token a cada uso -- as duas
+ * ultimas falhariam e derrubariam a sessao que a primeira acabou de salvar.
+ */
+let renovacaoEmCurso = null;
+
+function renovarToken() {
+  if (renovacaoEmCurso) return renovacaoEmCurso;
+  if (!Estado.refresh || CFG.authMode !== 'supabase') return Promise.resolve(false);
+
+  const base = String(CFG.authUrl || '').replace(/\/+$/, '');
+
+  renovacaoEmCurso = (async () => {
+    try {
+      const r = await fetch(base + '/token?grant_type=refresh_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: CFG.anonKey || '' },
+        body: JSON.stringify({ refresh_token: Estado.refresh }),
+      });
+      if (!r.ok) return false;
+
+      const d = await r.json();
+      if (!d.access_token) return false;
+
+      guardarToken(d.access_token, Estado.usuario,
+        d.refresh_token || Estado.refresh,
+        Date.now() + ((d.expires_in || 3600) * 1000));
+      return true;
+    } catch (_) {
+      // Rede caida nao e sessao invalida. Devolver false aqui faz o chamador
+      // tentar de novo no ciclo seguinte, em vez de deslogar quem so perdeu o
+      // link por um instante.
+      return false;
+    } finally {
+      renovacaoEmCurso = null;
+    }
+  })();
+
+  return renovacaoEmCurso;
+}
+
+/** Renova ANTES de expirar, com folga de 5 min. Chamada a cada ciclo de poll. */
+async function renovarSePerto() {
+  if (!Estado.refresh || !Estado.expiraEm) return;
+  if (Estado.expiraEm - Date.now() > 5 * 60 * 1000) return;
+  await renovarToken();
 }
 
 /**
@@ -3469,7 +3550,13 @@ function iniciarAtualizacao() {
   const ms = Math.max(5, Number(CFG.pollSeconds) || 20) * 1000;
   if (Estado.timerPoll) clearInterval(Estado.timerPoll);
   Estado.timerPoll = setInterval(() => {
-    if (!document.hidden) carregar();
+    if (document.hidden) return;
+    // Renova ANTES de carregar, e sem esperar: se faltar menos de 5 min para o
+    // token vencer, a renovacao acontece agora e a carga seguinte ja usa o novo.
+    // Deixar para o 401 funcionaria, mas produziria um erro por hora no console
+    // de quem deixa o painel aberto — e um erro rotineiro treina a ignorar erro.
+    renovarSePerto();
+    carregar();
   }, ms);
 
   if (CFG.authMode === 'supabase' && CFG.realtime) conectarRealtime();
@@ -4047,6 +4134,21 @@ async function principal() {
     }
     Estado.token = guardado.token;
     Estado.usuario = guardado.usuario;
+    Estado.refresh = guardado.refresh || null;
+    Estado.expiraEm = guardado.expira_em || null;
+
+    // Sessao aberta antes desta versao nao tem refresh guardado. Renovar e
+    // impossivel, mas expulsar agora seria trocar um incomodo por outro: ela
+    // segue valendo ate o access_token vencer, e o login seguinte ja guarda o
+    // refresh. A partir dai nunca mais cai.
+    if (!Estado.refresh) {
+      console.info('[sentinela] sessao sem refresh_token; a renovacao automatica '
+        + 'passa a valer no proximo login');
+    } else if (Estado.expiraEm && Estado.expiraEm - Date.now() < 5 * 60 * 1000) {
+      // Aba reaberta depois de horas: renova ANTES da primeira chamada, senao a
+      // primeira coisa que a pessoa ve e um erro que ja estava resolvido.
+      await renovarToken();
+    }
   } else {
     // Stack local: a URL da API e o token vêm do dev-config.json.
     try {

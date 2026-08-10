@@ -134,10 +134,26 @@ document.getElementById('form-login').addEventListener('submit', async function 
     // Senha fora do DOM antes de navegar.
     document.getElementById('senha').value = '';
 
-    sessionStorage.setItem(CHAVE_TOKEN, JSON.stringify({
+    // O refresh_token vinha na resposta e era JOGADO FORA. Era a causa de a
+    // sessao cair sozinha: o access_token do Supabase vale 1 hora, e sem o
+    // refresh nao havia como renovar -- passada a hora, a API recusava e o
+    // painel mandava para ca de novo, no meio do trabalho.
+    //
+    // localStorage e nao sessionStorage: em sessionStorage a sessao morre ao
+    // fechar a aba, e a pessoa que fecha o navegador no fim do dia tem que
+    // digitar senha na manha seguinte sem nenhum ganho de seguranca real.
+    var expiraEm = Date.now() + ((dados.expires_in || 3600) * 1000);
+
+    localStorage.setItem(CHAVE_TOKEN, JSON.stringify({
       token: dados.access_token,
+      refresh: dados.refresh_token || null,
+      expira_em: expiraEm,
       usuario: email,
     }));
+
+    // A chave antiga sai de cena, senao um sessionStorage remanescente venceria
+    // o localStorage novo na proxima abertura e a sessao voltaria a cair.
+    try { sessionStorage.removeItem(CHAVE_TOKEN); } catch (e) { }
 
     window.location.href = 'index.html?v=' + Date.now();
   } catch (e) {
