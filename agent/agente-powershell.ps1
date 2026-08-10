@@ -49,7 +49,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.4.1'
+$VERSAO = 'ps-1.4.2'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -750,13 +750,32 @@ function ExecutarWakeMachine {
     foreach ($r in $redes) {
       try {
         # Endereco de broadcast da sub-rede: IP com os bits de host todos em 1.
+        #
+        # SEM MASCARA DE 32 BITS AQUI, e sem `[uint32]`. A versao anterior fazia
+        #
+        #   $mascara = [uint32]0xFFFFFFFF -shl (32 - $r.PrefixLength)
+        #
+        # e nunca funcionou uma vez. No PowerShell, `0xFFFFFFFF` e Int32 e vale
+        # -1, nao 4294967295 — entao `[uint32]0xFFFFFFFF` e `[uint32](-1)` e
+        # estoura com "Value was either too large or too small for a UInt32"
+        # ANTES de deslocar bit nenhum. Como isso acontecia dentro do try de cada
+        # placa, o erro virava "nao consegui enviar o pacote" e parecia problema
+        # de rede.
+        #
+        # Byte por byte, da direita para a esquerda, os bits de host viram 1. So
+        # numeros pequenos, nenhuma conversao de tipo, nada para estourar.
         $ip = [Net.IPAddress]::Parse($r.IPAddress).GetAddressBytes()
-        $mascara = [uint32]0xFFFFFFFF -shl (32 - $r.PrefixLength)
-        $mb = [BitConverter]::GetBytes([uint32]$mascara)
-        if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($mb) }
-
         $bc = New-Object byte[] 4
-        for ($i = 0; $i -lt 4; $i++) { $bc[$i] = $ip[$i] -bor (-bnot $mb[$i] -band 0xFF) }
+        $bitsDeHost = 32 - $r.PrefixLength
+
+        for ($i = 3; $i -ge 0; $i--) {
+          $n = [Math]::Min(8, $bitsDeHost)
+          # (1 -shl n) - 1 = os n bits mais baixos em 1. Com n = 0 da zero, e o
+          # byte fica igual ao do IP — que e o certo para a parte da rede.
+          $bc[$i] = $ip[$i] -bor ((1 -shl $n) - 1)
+          $bitsDeHost -= $n
+        }
+
         $destino = [Net.IPAddress]::new($bc)
 
         # 9 e a porta convencional (discard). 7 tambem e usada; mandar nas duas

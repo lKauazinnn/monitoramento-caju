@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.42-usuarios-lista';
+const BUILD = '2026-08-10.43-wol';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -3059,7 +3059,7 @@ async function pedirAcao(kind, params, confirmado) {
 // para responder algo que já se sabe.
 //
 // AO PUBLICAR UM AGENTE NOVO, SUBA ESTA LINHA JUNTO.
-const VERSAO_ALVO_AGENTE = 'ps-1.4.1';
+const VERSAO_ALVO_AGENTE = 'ps-1.4.2';
 
 async function atualizarAgentes() {
   const r = await rpc('atualizar_frota', { p_versao_alvo: VERSAO_ALVO_AGENTE });
