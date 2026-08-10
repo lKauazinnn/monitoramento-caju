@@ -130,6 +130,17 @@
           <span id="rotulo-usuario" class="usuario-nome"></span>
           <span id="usuario-papel" class="mono etiqueta-micro">sessão local</span>
         </div>
+        <!-- Escondido na stack local: lá o token é gravado pelo dev-up e sair
+             só devolveria a pessoa para a mesma tela. Um botão que não faz nada
+             é pior que botão nenhum. -->
+        <button id="btn-sair" class="btn-sair" type="button" hidden
+                title="Sair" aria-label="Sair da sessão">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15.5 16.5 20 12l-4.5-4.5"/>
+            <path d="M20 12H9"/>
+            <path d="M12 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H12"/>
+          </svg>
+        </button>
       </div>
     </div>
   </aside>

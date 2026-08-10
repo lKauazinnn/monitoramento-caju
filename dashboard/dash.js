@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.33-atualizar';
+const BUILD = '2026-08-08.34-sair';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -214,6 +214,31 @@ function descartarToken() {
  * Sem tela de login para onde voltar, a unica coisa honesta e dizer o que houve
  * e como corrigir. No modo Supabase, manda para o login.html.
  */
+/**
+ * Sair.
+ *
+ * Reaproveita o desmonte do `tokenRecusado`: parar o poll e fechar o canal de
+ * realtime ANTES de navegar. Sem isso, o intervalo continua disparando durante a
+ * navegacao e cada chamada volta 401 — o console enche de erro numa saida que
+ * deu certo, e o proximo a depurar persegue um problema que nao existe.
+ *
+ * Sem confirmacao em dois cliques: sair nao destroi nada, e quem clicou por
+ * engano volta com a senha.
+ */
+function sair() {
+  descartarToken();
+
+  if (Estado.timerPoll) { clearInterval(Estado.timerPoll); Estado.timerPoll = null; }
+  if (Estado.canalRealtime) {
+    try { Estado.canalRealtime.close(); } catch (_) { /* ja fechado */ }
+    Estado.canalRealtime = null;
+  }
+
+  // `replace` e nao `href`: com href, o botao Voltar do navegador retorna ao
+  // painel ja sem token e a pessoa ve a tela de falha em vez do login.
+  window.location.replace('login.html');
+}
+
 function tokenRecusado(mensagem) {
   descartarToken();
 
@@ -3072,6 +3097,12 @@ function ligarEventos() {
   // Remoção: dois cliques, e o rótulo do segundo diz o que vai sumir.
   armarPerigo($('btn-remover-demo'), 'Confirmar remoção', removerDemo);
   armarPerigo($('btn-remover-maquina'), 'Confirmar: apagar tudo', removerMaquinaAberta);
+
+  // Sair so existe onde ha de onde sair: no modo Supabase.
+  if (CFG.authMode === 'supabase') {
+    $('btn-sair').hidden = false;
+    $('btn-sair').addEventListener('click', sair);
+  }
 
   ligarBotaoAtualizar();
 

@@ -61,15 +61,17 @@ document.getElementById('btn-ver-senha').addEventListener('click', function () {
 // Entrar em producao achando que e a stack local e um erro barato de cometer e
 // caro de descobrir: daqui saem comandos para maquina de loja. O aviso e ambar
 // so quando e producao de fato.
+//
+// SEM O ENDERECO DO PROJETO. Ele nao e segredo — esta no config.js desta mesma
+// pagina, no anon key e na URL de toda requisicao que o navegador faz, entao
+// esconder do texto nao esconderia de ninguem. Sai porque nao serve: quem esta
+// entrando ja sabe em que endereco esta, e o que ele precisa saber e se dali
+// sai comando para maquina de loja. Mostrar infraestrutura antes do login e
+// ruido para o operador e cortesia para quem estiver so olhando.
 (function () {
-  var el = document.getElementById('lg-ambiente');
   if (CFG.authMode !== 'supabase') return;
-
-  var host = '';
-  try { host = new URL(CFG.authUrl || '').host; } catch (e) { host = ''; }
-  if (!host) return;
-
-  el.textContent = 'Producao · ' + host;
+  var el = document.getElementById('lg-ambiente');
+  el.textContent = 'Producao';
   el.setAttribute('data-producao', '1');
   el.hidden = false;
 })();

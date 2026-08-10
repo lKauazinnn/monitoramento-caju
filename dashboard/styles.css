@@ -1986,3 +1986,31 @@ input::placeholder { color: var(--fg3); }
 @media (prefers-reduced-motion: reduce) {
   .lg-campo, .lg-entrar, .lg-ver, .lg-btn-tema { transition: none; }
 }
+
+/* -------------------------------------------------------------------- sair --- */
+/* Discreto de proposito: sair e a acao menos frequente desta barra, e um
+   botao vermelho ao lado do nome convidaria ao clique errado. */
+.btn-sair {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-p);
+  background: none;
+  color: var(--fg3);
+  cursor: pointer;
+  transition: color .13s ease, background .13s ease, border-color .13s ease;
+}
+
+.btn-sair:hover {
+  color: var(--crit);
+  background: color-mix(in srgb, var(--crit) 10%, transparent);
+  border-color: color-mix(in srgb, var(--crit) 28%, transparent);
+}
+
+.btn-sair svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+@media (prefers-reduced-motion: reduce) { .btn-sair { transition: none; } }
