@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.34-sair';
+const BUILD = '2026-08-08.35-explicado';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1749,19 +1749,67 @@ function cartaoLoja(loja) {
 
   const cpu = medias('cpu_pct');
   const rtt = medias('gw_latency_ms');
-  const discos = loja.maquinas
-    .filter((m) => m.disk_min_free_pct !== null && m.disk_min_free_pct !== undefined)
-    .map((m) => Number(m.disk_min_free_pct));
-  const discoMin = discos.length ? Math.min(...discos) : null;
+
+  // DISCO NAO E FILTRADO POR ONLINE, e isso e de proposito — mas exige aviso.
+  //
+  // CPU e RTT sao taxas instantaneas: de uma maquina desligada elas nao
+  // existem, e por isso as duas mostram travessao. Espaco livre em disco e
+  // ESTADO: disco nao se esvazia sozinho com o PC desligado. Um servidor que
+  // caiu com 3% livre continua sendo o problema mais urgente da loja, e
+  // esconder isso justamente quando ele para de reportar seria esconder o que
+  // mais importa.
+  //
+  // O que NAO se pode e mostrar essa leitura como se fosse de agora. A janela da
+  // view (status_lookback_hours) e de SETE DIAS, entao o numero pode ser de uma
+  // semana atras. Daqui em diante ele vem com til e com a idade no title.
+  const comDisco = loja.maquinas.filter(
+    (m) => m.disk_min_free_pct !== null && m.disk_min_free_pct !== undefined);
+  const pior = comDisco.length
+    ? comDisco.reduce((a, b) => (Number(b.disk_min_free_pct) < Number(a.disk_min_free_pct) ? b : a))
+    : null;
+  const discoMin = pior === null ? null : Number(pior.disk_min_free_pct);
+  // 'degradado' NAO conta como velho: a maquina responde, so tem algo errado —
+  // a leitura dela e de agora. Velho e quem parou de reportar.
+  const discoVelho = pior !== null
+    && !['online', 'degradado'].includes(estadoDe(pior));
 
   const cels = el('div', 'cl-celulas');
-  cels.appendChild(celula('online', `${online + degradado}/${loja.maquinas.length}`,
-    offline > 0 ? 'ruim' : null));
-  cels.appendChild(celula('cpu', cpu === null ? '—' : `${Math.round(cpu)}%`,
-    cpu !== null && cpu >= TETO_CPU ? 'alerta' : null));
-  cels.appendChild(celula('disco', discoMin === null ? '—' : `${Math.round(discoMin)}%`,
-    discoMin === null ? null : discoMin <= PISO_DISCO ? 'ruim' : discoMin <= PISO_DISCO_ATENCAO ? 'alerta' : null));
-  cels.appendChild(celula('rtt', rtt === null ? '—' : `${Math.round(rtt)}ms`, null));
+
+  cels.appendChild(celula(
+    'online', `${online + degradado}/${loja.maquinas.length}`,
+    offline > 0 ? 'ruim' : null,
+    `${online + degradado} de ${loja.maquinas.length} maquina(s) reportando. `
+    + 'Conta as degradadas, que respondem mas tem algo errado.'));
+
+  cels.appendChild(celula(
+    'cpu', cpu === null ? '—' : `${Math.round(cpu)}%`,
+    cpu !== null && cpu >= TETO_CPU ? 'alerta' : null,
+    cpu === null
+      ? 'Nenhuma maquina online agora, entao nao ha uso de CPU para medir.'
+      : `Media de uso de CPU das maquinas online. Fica ambar a partir de ${TETO_CPU}%.`));
+
+  cels.appendChild(celula(
+    'disco livre',
+    discoMin === null ? '—' : `${Math.round(discoMin)}%`,
+    discoMin === null ? null : discoMin <= PISO_DISCO ? 'ruim' : discoMin <= PISO_DISCO_ATENCAO ? 'alerta' : null,
+    discoMin === null
+      ? 'Nenhuma maquina desta loja reportou disco ainda.'
+      : `Espaco LIVRE no volume mais apertado da loja, em ${pior.label}. `
+        + `Quanto MENOR, pior: ambar em ${PISO_DISCO_ATENCAO}%, vermelho em ${PISO_DISCO}%.`
+        // `desdeQuando` ja devolve "ha 4h": juntar "de ... atras" em volta
+        // produzia "leitura de ha 4h atras".
+        + (discoVelho
+            ? ` Esta maquina parou de reportar: ultima leitura ${desdeQuando(pior.seconds_since_seen, estadoDe(pior))}, nao de agora.`
+            : ''),
+    discoVelho));
+
+  cels.appendChild(celula(
+    'rtt', rtt === null ? '—' : `${Math.round(rtt)}ms`, null,
+    rtt === null
+      ? 'Nenhuma maquina online agora, entao nao ha latencia para medir.'
+      : 'Tempo de ida e volta ate o roteador da loja, medido pelas maquinas online. '
+        + 'Mede a rede DE DENTRO da loja, nao a internet.'));
+
   c.appendChild(cels);
 
   return c;
@@ -1817,10 +1865,43 @@ function armarLixeira(botao, acao) {
   });
 }
 
-function celula(rotulo, valor, classe) {
+/**
+ * Uma celula do cartao de loja.
+ *
+ * `ajuda` NAO e enfeite. Estes rotulos sao de quatro a seis caracteres, e
+ * "DISCO 10%" foi lido como "10% usado" — o oposto do que e. Quando um numero
+ * fica vermelho justamente por ser BAIXO, o rotulo tem que dizer de que ele e
+ * porcentagem, e no espaco que cabe isso so entra no title.
+ *
+ * `velho` marca valor que nao e de agora. Ver a explicacao em cartaoDeLoja.
+ */
+function celula(rotulo, valor, classe, ajuda, velho) {
   const d = el('div', 'cel');
   d.appendChild(el('span', 'cel-rot', rotulo));
-  d.appendChild(el('span', `cel-val${classe ? ` ${classe}` : ''}`, valor));
+
+  const v = el('span', `cel-val${classe ? ` ${classe}` : ''}`);
+  v.appendChild(el('span', null, valor));
+
+  if (velho) {
+    // Um til antes do numero, e nao um asterisco depois: o til le como
+    // "aproximadamente/desatualizado" no lugar onde o olho ja esta, antes de
+    // acreditar no valor. Asterisco depois seria lido junto com a unidade.
+    v.classList.add('cel-velho');
+    const marca = el('span', 'cel-til', '~');
+    marca.setAttribute('aria-hidden', 'true');
+    v.insertBefore(marca, v.firstChild);
+  }
+
+  d.appendChild(v);
+
+  if (ajuda) {
+    // No elemento inteiro: quem passa o mouse mira o numero, nao o rotulo.
+    d.title = ajuda;
+    // O leitor de tela recebe rotulo, valor e explicacao numa frase, porque
+    // "DISCO 10 por cento" sozinho tambem engana quem nao ve a cor.
+    d.setAttribute('aria-label', `${rotulo}: ${valor}. ${ajuda}`);
+  }
+
   return d;
 }
 

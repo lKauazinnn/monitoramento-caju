@@ -2014,3 +2014,19 @@ input::placeholder { color: var(--fg3); }
 .btn-sair svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
 @media (prefers-reduced-motion: reduce) { .btn-sair { transition: none; } }
+
+/* --------------------------------------------------- leitura desatualizada --- */
+/* O til fica menor e mais apagado que o numero: ele avisa sem competir com o
+   valor. A cor do numero NAO muda -- um disco em 3% livre continua vermelho
+   mesmo sendo leitura de ontem, porque o problema e real. */
+.cel-til {
+  margin-right: 1px;
+  font-size: .82em;
+  opacity: .6;
+}
+
+.cel-velho { cursor: help; }
+
+/* Rotulo de duas palavras ("disco livre") nao pode quebrar linha e desalinhar
+   a fileira de quatro celulas. */
+.cel-rot { white-space: nowrap; }
