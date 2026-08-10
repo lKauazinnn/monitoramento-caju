@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.36-disco-gb';
+const BUILD = '2026-08-10.37-editar';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1736,6 +1736,15 @@ function cartaoLoja(loja) {
   lixeira.title = `Remover a loja ${loja.code} e as ${loja.maquinas.length} máquina(s) dela`;
   lixeira.setAttribute('aria-label', lixeira.title);
   lixeira.appendChild(iconeLixeira());
+  const lapis = el('button', 'btn-icone');
+  lapis.type = 'button';
+  lapis.title = `Corrigir código, nome ou fuso da loja ${loja.code}`;
+  lapis.setAttribute('aria-label', lapis.title);
+  lapis.appendChild(iconeLapis());
+  // stopPropagation: o cabecalho do cartao inteiro e clicavel e filtraria a loja.
+  lapis.addEventListener('click', (ev) => { ev.stopPropagation(); editarLoja(loja); });
+  acoes.appendChild(lapis);
+
   armarLixeira(lixeira, () => removerLoja(loja));
   acoes.appendChild(lixeira);
 
@@ -1839,6 +1848,24 @@ function cartaoLoja(loja) {
   return c;
 }
 
+/** Lapis, pelo mesmo caminho da lixeira e pela mesma razao (regra 7). */
+function iconeLapis() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.9');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  for (const d of ['M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z', 'M13.5 6.5l4 4']) {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+
 /** Lixeira em SVG por createElementNS: `innerHTML` abriria a porta da regra 7. */
 function iconeLixeira() {
   const NS = 'http://www.w3.org/2000/svg';
@@ -1899,6 +1926,201 @@ function armarLixeira(botao, acao) {
  *
  * `velho` marca valor que nao e de agora. Ver a explicacao em cartaoDeLoja.
  */
+// ---------------------------------------------------------------------------
+// Editar cadastro
+// ---------------------------------------------------------------------------
+// Um formulario generico. Cada chamada passa os campos e o que fazer ao salvar;
+// o resto — montar, limpar, desabilitar o botao, mostrar o erro do servidor — e
+// igual para maquina, loja e marca, e por isso mora aqui uma vez.
+//
+// OS LIMITES NAO SAO REPETIDOS AQUI. Nome repetido na loja, fuso invalido,
+// codigo em uso: quem decide e o banco, nas funcoes editar_*. Validar de novo no
+// navegador criaria uma segunda regra para divergir da primeira — e a do
+// navegador e justamente a que nao vale, porque qualquer um pode contorna-la.
+
+let edicaoAtual = null;
+
+function fecharEdicao() {
+  edicaoAtual = null;
+  $('modal-editar').hidden = true;
+  $('modal-editar-fundo').hidden = true;
+}
+
+/**
+ * @param {object}   cfg
+ * @param {string}   cfg.titulo
+ * @param {string}   cfg.dica
+ * @param {Array}    cfg.campos  {id, rotulo, valor, opcoes?, nota?}
+ * @param {Function} cfg.salvar  recebe {id: valor} e chama a RPC
+ */
+function abrirEdicao(cfg) {
+  edicaoAtual = cfg;
+
+  txt($('editar-titulo'), cfg.titulo);
+  txt($('editar-dica'), cfg.dica || '');
+  $('editar-dica').hidden = !cfg.dica;
+  $('editar-erro').hidden = true;
+
+  const caixa = $('editar-campos');
+  limpar(caixa);
+
+  for (const c of cfg.campos) {
+    const w = el('div', 'ed-campo');
+
+    const rot = el('label', null, c.rotulo);
+    rot.setAttribute('for', 'ed-' + c.id);
+    w.appendChild(rot);
+
+    let campo;
+    if (c.opcoes) {
+      campo = el('select');
+      for (const o of c.opcoes) {
+        const op = el('option', null, o.rotulo);
+        op.value = o.valor;
+        if (String(o.valor) === String(c.valor)) op.selected = true;
+        campo.appendChild(op);
+      }
+    } else {
+      campo = el('input');
+      campo.type = 'text';
+      campo.value = c.valor ?? '';
+      campo.autocomplete = 'off';
+      campo.spellcheck = false;
+    }
+    campo.id = 'ed-' + c.id;
+    w.appendChild(campo);
+
+    if (c.nota) w.appendChild(el('p', 'ed-nota', c.nota));
+    caixa.appendChild(w);
+  }
+
+  $('modal-editar-fundo').hidden = false;
+  $('modal-editar').hidden = false;
+
+  // Foco no primeiro campo, com o texto selecionado: quem abriu para corrigir um
+  // nome quer digitar por cima, nao posicionar cursor.
+  const primeiro = caixa.querySelector('input, select');
+  if (primeiro) {
+    primeiro.focus();
+    if (primeiro.select) primeiro.select();
+  }
+}
+
+function ligarEdicao() {
+  $('btn-fechar-editar').addEventListener('click', fecharEdicao);
+  $('modal-editar-fundo').addEventListener('click', fecharEdicao);
+
+  $('form-editar').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (!edicaoAtual) return;
+
+    const btn = $('btn-editar-salvar');
+    const rotulo = btn.textContent;
+    btn.disabled = true;
+    txt(btn, 'Salvando...');
+    $('editar-erro').hidden = true;
+
+    const vals = {};
+    for (const c of edicaoAtual.campos) vals[c.id] = $('ed-' + c.id).value;
+
+    try {
+      const r = await edicaoAtual.salvar(vals);
+      fecharEdicao();
+      brinde(r && r.nada_a_fazer ? 'Nada mudou.' : 'Cadastro corrigido.');
+      // Recarrega tudo: o nome novo aparece no cartao, na lista, na paleta e na
+      // gaveta. Atualizar so o campo visivel deixaria a paleta buscando pelo
+      // nome antigo e a gaveta com o cabecalho velho.
+      await carregar();
+    } catch (e) {
+      txt($('editar-erro'), e.message);
+      $('editar-erro').hidden = false;
+    } finally {
+      btn.disabled = false;
+      txt(btn, rotulo);
+    }
+  });
+}
+
+async function editarMaquinaAberta() {
+  const m = Estado.maquinaAberta;
+  if (!m) return;
+
+  // Perfis e lojas vem do servidor, filtrados pelo escopo de quem esta logado:
+  // oferecer uma loja que a pessoa nao pode usar seria montar um formulario cujo
+  // unico destino e falhar ao salvar.
+  if (!opcoesCadastro) {
+    try { opcoesCadastro = await rpc('opcoes_cadastro'); } catch (_) { opcoesCadastro = null; }
+  }
+  const lojas = (opcoesCadastro && opcoesCadastro.lojas) || [];
+  const perfis = (opcoesCadastro && opcoesCadastro.perfis) || [];
+
+  abrirEdicao({
+    titulo: 'Editar ' + m.label,
+    dica: 'Renomear nao reinstala nada: a maquina e identificada por um GUID, e o '
+        + 'agente ja instalado continua reportando com o nome novo.',
+    campos: [
+      { id: 'label', rotulo: 'Nome da máquina', valor: m.label,
+        nota: 'Precisa ser único dentro da loja.' },
+      { id: 'role_code', rotulo: 'Perfil', valor: m.role_code,
+        opcoes: perfis.length
+          ? perfis.map((p) => ({ valor: p.code, rotulo: p.name + ' (' + p.code + ')' }))
+          : [{ valor: m.role_code, rotulo: m.role_code }],
+        nota: 'O perfil define quais serviços são vigiados nesta máquina.' },
+      { id: 'site_id', rotulo: 'Loja', valor: m.site_id,
+        opcoes: lojas.length
+          ? lojas.map((l) => ({ valor: l.id, rotulo: l.code + ' — ' + l.name }))
+          : [{ valor: m.site_id, rotulo: m.site_code + ' — ' + m.site_name }],
+        nota: 'Mover a máquina leva o histórico dela junto.' },
+    ],
+    salvar: (v) => rpc('editar_maquina', {
+      p_machine_id: m.machine_id,
+      p_label: v.label,
+      p_role_code: v.role_code,
+      p_site_id: v.site_id,
+    }),
+  });
+}
+
+// Os fusos do Brasil, e nao a lista inteira do sistema: uma rede de lojas em
+// Brasilia e Sao Paulo nao precisa rolar por quatrocentos nomes para achar o seu.
+// Quem precisar de outro edita pelo SQL — o CHECK da tabela aceita qualquer fuso
+// valido.
+const FUSOS = [
+  'America/Sao_Paulo', 'America/Bahia', 'America/Fortaleza', 'America/Recife',
+  'America/Belem', 'America/Manaus', 'America/Cuiaba', 'America/Campo_Grande',
+  'America/Boa_Vista', 'America/Porto_Velho', 'America/Rio_Branco', 'America/Noronha',
+];
+
+function editarLoja(loja) {
+  // O cartao agrupa maquinas; os dados da loja moram em qualquer uma delas.
+  const ref = loja.maquinas[0];
+  if (!ref) { brinde('Esta loja nao tem maquina para identificar o cadastro.', true); return; }
+
+  const fusoAtual = ref.site_timezone || 'America/Sao_Paulo';
+
+  abrirEdicao({
+    titulo: 'Editar a loja ' + loja.code,
+    dica: 'O fuso decide a hora do reinício agendado e o fechamento do relatório '
+        + 'mensal. Errado, a máquina reinicia na hora errada.',
+    campos: [
+      { id: 'code', rotulo: 'Código', valor: loja.code,
+        nota: 'Letras, números, ponto e hífen. É o que aparece nos cartões.' },
+      { id: 'name', rotulo: 'Nome', valor: ref.site_name || '' },
+      { id: 'timezone', rotulo: 'Fuso horário', valor: fusoAtual,
+        // Se a loja estiver num fuso fora da lista, ele entra para nao ser
+        // trocado em silencio ao salvar outro campo.
+        opcoes: (FUSOS.includes(fusoAtual) ? FUSOS : [fusoAtual, ...FUSOS])
+          .map((t) => ({ valor: t, rotulo: t })) },
+    ],
+    salvar: (v) => rpc('editar_loja', {
+      p_site_id: ref.site_id,
+      p_code: v.code,
+      p_name: v.name,
+      p_timezone: v.timezone,
+    }),
+  });
+}
+
 function celula(rotulo, valor, classe, ajuda, velho, sub) {
   const d = el('div', 'cel');
   d.appendChild(el('span', 'cel-rot', rotulo));
@@ -3235,6 +3457,9 @@ function ligarEventos() {
     $('btn-sair').hidden = false;
     $('btn-sair').addEventListener('click', sair);
   }
+
+  ligarEdicao();
+  $('btn-editar-maquina').addEventListener('click', editarMaquinaAberta);
 
   ligarBotaoAtualizar();
 

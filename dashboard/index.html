@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=36" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=37" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=36">
+  <link rel="stylesheet" href="styles.css?v=37">
 </head>
 <body>
 
@@ -380,13 +380,46 @@
      ========================================================================= -->
 <div id="painel-fundo" class="cortina" hidden></div>
 
+<!-- =========================================================================
+     Editar cadastro
+     =========================================================================
+     UM modal para máquina, loja e marca. Os campos são montados em tempo de
+     execução a partir de uma lista, e não escritos três vezes no HTML: três
+     formulários separados divergem: um ganha validação, o outro não; um limpa o
+     erro ao reabrir, o outro mostra o erro da vez passada.
+     ========================================================================= -->
+<div id="modal-editar-fundo" class="cortina" hidden></div>
+
+<div id="modal-editar" class="modal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="editar-titulo">
+  <header class="modal-topo">
+    <h2 id="editar-titulo">Editar</h2>
+    <button id="btn-fechar-editar" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
+  </header>
+  <form id="form-editar" class="modal-corpo" novalidate>
+    <p id="editar-dica" class="dica"></p>
+    <div id="editar-campos"></div>
+    <p id="editar-erro" class="erro" hidden role="alert"></p>
+    <button id="btn-editar-salvar" class="btn-primario" type="submit">Salvar</button>
+  </form>
+</div>
+
 <aside id="painel" class="painel" hidden aria-label="Detalhe da máquina">
   <header class="painel-topo">
     <div>
       <h2 id="painel-titulo"></h2>
       <p id="painel-sub" class="painel-sub mono"></p>
     </div>
-    <button id="btn-fechar-painel" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
+    <div class="painel-acoes">
+      <button id="btn-editar-maquina" class="btn-icone" type="button"
+              title="Corrigir nome, perfil ou loja" aria-label="Editar o cadastro da máquina">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/>
+          <path d="M13.5 6.5l4 4"/>
+        </svg>
+      </button>
+      <button id="btn-fechar-painel" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
+    </div>
   </header>
 
   <div class="painel-corpo">
@@ -605,7 +638,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=36"></script>
-<script src="dash.js?v=36"></script>
+<script src="config.js?v=37"></script>
+<script src="dash.js?v=37"></script>
 </body>
 </html>

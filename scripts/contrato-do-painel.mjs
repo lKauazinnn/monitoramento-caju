@@ -86,6 +86,15 @@ export const CONTROLES = [
   ['atualizar-resumo', 'quantas máquinas vão se atualizar'],
   ['atualizar-lista', 'quais máquinas ainda precisam de visita'],
 
+  // ------------------------------------------------------- editar cadastro
+  // Antes disto, corrigir um nome errado exigia REMOVER a máquina — e remover
+  // leva o histórico inteiro. Se estes sumirem, volta a ser assim.
+  ['btn-editar-maquina', 'corrigir nome, perfil ou loja da máquina'],
+  ['modal-editar', 'o formulário de correção'],
+  ['editar-campos', 'os campos da correção'],
+  ['btn-editar-salvar', 'salvar a correção'],
+  ['editar-erro', 'o motivo de o servidor recusar a correção'],
+
   // ---------------------------------------------------------------- sessão
   ['btn-sair', 'sair da sessão'],
   ['rotulo-usuario', 'quem está logado'],
@@ -109,4 +118,7 @@ export const COMPORTAMENTOS = [
   ['acoes_da_maquina', 'o servidor dizendo o que pode ser oferecido'],
   ['refletirModoSimulacao', 'o rótulo do botão dizer que vai simular'],
   ['ligarPaleta', 'Ctrl K abre a paleta'],
+  ['editar_maquina', 'corrigir o cadastro da máquina sem apagá-la'],
+  ['editar_loja', 'corrigir código, nome e fuso da loja'],
+  ['iconeLapis', 'o lápis no cartão de loja'],
 ];
