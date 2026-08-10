@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-08.35-explicado';
+const BUILD = '2026-08-10.36-disco-gb';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -408,7 +408,9 @@ function problemasDe(m) {
         tipo: 'disco',
         titulo: `Disco crítico em ${m.disk_worst_drive || 'volume desconhecido'}`,
         desc: `${round1(disco)}% livre`
-          + (m.disk_min_free_gb ? ` (${round1(m.disk_min_free_gb)} GB).` : '.'),
+          + (m.disk_worst_free_gb !== null && m.disk_worst_free_gb !== undefined
+              ? ` (${gb(m.disk_worst_free_gb)} de ${gbNu(m.disk_worst_total_gb)}).`
+              : '.'),
       });
     } else if (disco <= PISO_DISCO_ATENCAO) {
       p.push({
@@ -1382,7 +1384,14 @@ function cartao(m) {
   const metricas = el('div', 'metricas');
   metricas.appendChild(metrica('CPU', pct(m.cpu_pct), barra(m.cpu_pct, 90)));
   metricas.appendChild(metrica('Memória', pct(m.mem_pct), barra(m.mem_pct, 92)));
-  metricas.appendChild(metrica('Disco livre', pct(m.disk_min_free_pct), barra(m.disk_min_free_pct, null, 10)));
+  // A barra continua sendo a porcentagem: ela e a escala visual e o eixo dos
+  // limiares. O texto e GB, que e o que se entende sem saber o tamanho do disco.
+  metricas.appendChild(metrica(
+    m.disk_worst_drive ? `Disco livre (${m.disk_worst_drive})` : 'Disco livre',
+    m.disk_worst_free_gb === null || m.disk_worst_free_gb === undefined
+      ? pct(m.disk_min_free_pct)
+      : `${gb(m.disk_worst_free_gb)} de ${gbNu(m.disk_worst_total_gb)}`,
+    barra(m.disk_min_free_pct, null, 10)));
   metricas.appendChild(metrica('Temp.', m.cpu_temp_c === null || m.cpu_temp_c === undefined ? null : `${round1(m.cpu_temp_c)} °C`, null));
   c.appendChild(metricas);
 
@@ -1444,7 +1453,7 @@ const TD_COLUNAS = [
   ['Estado', '.75fr', false],
   ['CPU', '.6fr', true],
   ['Mem', '.6fr', true],
-  ['Disco livre', '.7fr', true],
+  ['Disco livre', '.95fr', true],
   ['Temp', '.55fr', true],
   ['HB', '.7fr', true],
 ];
@@ -1600,7 +1609,17 @@ function desenharTabelaDensa(conteudo, lista) {
 
     linha.appendChild(tdNum(m.cpu_pct, '%', 0, tomPct(m.cpu_pct, 85, 95)));
     linha.appendChild(tdNum(m.mem_pct, '%', 0, tomPct(m.mem_pct, 85, 95)));
-    linha.appendChild(tdNum(m.disk_min_free_pct, '%', 0, tomDisco(m.disk_min_free_pct)));
+    // Cor pela porcentagem, texto em GB: varrer sessenta linhas pede o numero
+    // que dispensa conta.
+    const dLivre = gb(m.disk_worst_free_gb);
+    if (dLivre === null) {
+      linha.appendChild(tdNum(m.disk_min_free_pct, '%', 0, tomDisco(m.disk_min_free_pct)));
+    } else {
+      const cel = el('span', 'td-dir mono', `${dLivre} / ${gbNu(m.disk_worst_total_gb)}`);
+      const cor = tomDisco(m.disk_min_free_pct);
+      if (cor) cel.style.color = cor;
+      linha.appendChild(cel);
+    }
     linha.appendChild(tdNum(m.cpu_temp_c, '\u00b0', 0, tomPct(m.cpu_temp_c, 75, 85)));
 
     const hb = el('span', 'td-dir mono td-fraco', desdeQuando(m.seconds_since_seen, e));
@@ -1790,18 +1809,23 @@ function cartaoLoja(loja) {
 
   cels.appendChild(celula(
     'disco livre',
-    discoMin === null ? '—' : `${Math.round(discoMin)}%`,
+    // GB primeiro, porcentagem no title. "24 GB de 238" nao precisa de conta;
+    // "10%" precisa saber o tamanho do disco para significar alguma coisa.
+    discoMin === null ? '—' : (gb(pior.disk_worst_free_gb) ?? `${Math.round(discoMin)}%`),
     discoMin === null ? null : discoMin <= PISO_DISCO ? 'ruim' : discoMin <= PISO_DISCO_ATENCAO ? 'alerta' : null,
     discoMin === null
       ? 'Nenhuma maquina desta loja reportou disco ainda.'
-      : `Espaco LIVRE no volume mais apertado da loja, em ${pior.label}. `
-        + `Quanto MENOR, pior: ambar em ${PISO_DISCO_ATENCAO}%, vermelho em ${PISO_DISCO}%.`
+      : `Espaco LIVRE no volume mais apertado da loja: ${pior.disk_worst_drive || 'volume'} `
+        + `de ${pior.label}, com ${gb(pior.disk_worst_free_gb) ?? '?'} livres `
+        + `de ${gbNu(pior.disk_worst_total_gb) ?? '?'} (${Math.round(discoMin)}%). `
+        + `Quanto MENOR, pior: ambar abaixo de ${PISO_DISCO_ATENCAO}%, vermelho abaixo de ${PISO_DISCO}%.`
         // `desdeQuando` ja devolve "ha 4h": juntar "de ... atras" em volta
         // produzia "leitura de ha 4h atras".
         + (discoVelho
             ? ` Esta maquina parou de reportar: ultima leitura ${desdeQuando(pior.seconds_since_seen, estadoDe(pior))}, nao de agora.`
             : ''),
-    discoVelho));
+    discoVelho,
+    discoMin === null ? null : `de ${gbNu(pior.disk_worst_total_gb) ?? '?'}`));
 
   cels.appendChild(celula(
     'rtt', rtt === null ? '—' : `${Math.round(rtt)}ms`, null,
@@ -1875,7 +1899,7 @@ function armarLixeira(botao, acao) {
  *
  * `velho` marca valor que nao e de agora. Ver a explicacao em cartaoDeLoja.
  */
-function celula(rotulo, valor, classe, ajuda, velho) {
+function celula(rotulo, valor, classe, ajuda, velho, sub) {
   const d = el('div', 'cel');
   d.appendChild(el('span', 'cel-rot', rotulo));
 
@@ -1891,6 +1915,10 @@ function celula(rotulo, valor, classe, ajuda, velho) {
     marca.setAttribute('aria-hidden', 'true');
     v.insertBefore(marca, v.firstChild);
   }
+
+  // "de 238" abaixo do valor, e nao ao lado: ao lado, a fileira de quatro
+  // celulas perde o alinhamento na primeira loja com disco de 2 TB.
+  if (sub) v.appendChild(el('span', 'cel-sub', sub));
 
   d.appendChild(v);
 
@@ -2606,6 +2634,29 @@ function uptime(segundos) {
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+/**
+ * Espaco em disco para leitura humana.
+ *
+ * Sem casa decimal acima de 10 GB: "115 GB" e mais rapido de ler que
+ * "115,5 GB", e meio giga nao muda decisao nenhuma. Abaixo de 10 a decima
+ * importa — "0,8 GB" e "0 GB" sao situacoes bem diferentes.
+ *
+ * Acima de mil vira TB, porque "2048 GB" ninguem le de primeira.
+ */
+function gb(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return null;
+  const n = Number(v);
+  if (n >= 1024) return `${(n / 1024).toFixed(1).replace('.', ',')} TB`;
+  if (n >= 10) return `${Math.round(n)} GB`;
+  return `${n.toFixed(1).replace('.', ',')} GB`;
+}
+
+/** So o numero, para o "de 238" que acompanha o valor livre. */
+function gbNu(v) {
+  const s = gb(v);
+  return s === null ? null : s.replace(/ (GB|TB)$/, '');
 }
 
 function desdeQuando(segundos, status) {

@@ -2030,3 +2030,16 @@ input::placeholder { color: var(--fg3); }
 /* Rotulo de duas palavras ("disco livre") nao pode quebrar linha e desalinhar
    a fileira de quatro celulas. */
 .cel-rot { white-space: nowrap; }
+
+/* ------------------------------------------------------- "de 238" da celula --- */
+/* Abaixo do valor, menor e apagado: e contexto, nao medida. Bloco proprio para
+   nao herdar a cor de alerta do valor -- o total do disco nao fica vermelho. */
+.cel-sub {
+  display: block;
+  margin-top: 1px;
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: .01em;
+  color: var(--fg3);
+  white-space: nowrap;
+}
