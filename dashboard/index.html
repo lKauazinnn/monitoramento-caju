@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=40" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=41" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=40">
+  <link rel="stylesheet" href="styles.css?v=41">
 </head>
 <body>
 
@@ -410,9 +410,15 @@
 
   <div class="modal-corpo">
     <form id="form-novo-usuario" class="us-novo" novalidate>
-      <h3>Criar usuário</h3>
+      <div class="us-cabeca">
+        <h3>Criar usuário</h3>
+        <!-- Dito na tela, e não só no commit: quem cria a conta precisa saber
+             que a senha sai daqui uma única vez, ANTES de clicar. -->
+        <p class="us-cabeca-sub">A senha aparece uma vez, no fim. Anote antes de fechar.</p>
+      </div>
+
       <div class="us-grade">
-        <div>
+        <div class="us-larga">
           <label for="us-email">E-mail</label>
           <input type="email" id="us-email" autocomplete="off" spellcheck="false"
                  placeholder="pessoa@cajupar.com" required>
@@ -424,14 +430,15 @@
         <div>
           <label for="us-papel">Papel</label>
           <select id="us-papel"></select>
+          <p id="us-papel-nota" class="ed-nota"></p>
         </div>
       </div>
 
-      <p class="us-rot-lojas">Lojas</p>
+      <label class="us-rot-lojas" for="us-lojas">Lojas do escopo</label>
       <div id="us-lojas" class="us-lojas"></div>
       <p id="us-lojas-nota" class="ed-nota"></p>
 
-      <button id="btn-criar-usuario" class="btn-primario" type="submit">Criar e gerar senha</button>
+      <button id="btn-criar-usuario" class="btn-primario us-criar" type="submit">Criar e gerar senha</button>
       <p id="us-erro" class="erro" hidden role="alert"></p>
 
       <!-- A senha aparece UMA vez. Ela não é gravada em lugar nenhum nosso: se
@@ -698,7 +705,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=40"></script>
-<script src="dash.js?v=40"></script>
+<script src="config.js?v=41"></script>
+<script src="dash.js?v=41"></script>
 </body>
 </html>

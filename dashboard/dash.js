@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.40-usuarios';
+const BUILD = '2026-08-10.42-usuarios-lista';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -2258,7 +2258,10 @@ function desenharLojasEscolhidas(caixa, lojas, marcadas, inerte) {
     caixa.appendChild(rot);
   }
 
-  if (lojas.length === 0) caixa.appendChild(el('span', 'us-vazio', 'nenhuma loja cadastrada'));
+  if (lojas.length === 0) {
+    caixa.appendChild(el('span', 'us-lojas-vazia',
+      'Nenhuma loja cadastrada ainda — cadastre um PC primeiro.'));
+  }
 }
 
 function lojasMarcadas(caixa) {
@@ -2278,8 +2281,14 @@ async function abrirUsuarios() {
   try {
     usuariosCache = await rpc('usuarios_do_painel');
   } catch (e) {
+    // Caixa de erro, e nao texto cru no lugar da lista: quando a RPC falhou por
+    // cache de schema velho, a tela mostrou "HTTP 404: Could not find the
+    // function..." solto no meio do modal, com cara de layout quebrado em vez de
+    // cara de problema.
     limpar(lista);
-    lista.appendChild(el('p', 'us-vazio', e.message));
+    const box = el('p', 'erro');
+    txt(box, e.message);
+    lista.appendChild(box);
     return;
   }
 
@@ -2300,6 +2309,13 @@ async function abrirUsuarios() {
   const caixaLojas = $('us-lojas');
   const sincronizarLojas = () => {
     const admin = sel.value === 'admin';
+
+    // A descricao do papel vem do BANCO, junto com a lista. Reescrever aqui o
+    // que cada papel faz criaria duas versoes da mesma frase para divergirem
+    // quando o operator finalmente ganhar poderes.
+    const p = papeis.find((x) => x.code === sel.value);
+    txt($('us-papel-nota'), p ? p.descricao : '');
+
     desenharLojasEscolhidas(caixaLojas, lojas, [], admin);
     txt($('us-lojas-nota'), admin
       ? 'Administrador vê todas as lojas: o escopo não se aplica.'
@@ -2329,7 +2345,19 @@ function desenharListaUsuarios(dados) {
     const souEu = u.user_id === dados.eu;
 
     const quem = el('div', 'us-quem');
-    quem.appendChild(el('div', 'us-email', u.email || u.user_id));
+    const linhaEmail = el('div', 'us-email');
+    if (u.email) {
+      linhaEmail.appendChild(el('span', null, u.email));
+    } else {
+      // Conta anterior a 0035: o e-mail dela vive no schema auth, que estas
+      // funcoes nao leem de proposito. Dizer isso e melhor que mostrar um uuid
+      // no lugar do nome, que faz a lista parecer defeituosa.
+      linhaEmail.appendChild(el('span', 'us-sem-email', 'sem e-mail registrado'));
+    }
+    linhaEmail.appendChild(el('span', 'us-papel-selo us-papel-' + u.role, papelBonito(u.role)));
+    quem.appendChild(linhaEmail);
+
+    if (!u.email) quem.appendChild(el('div', 'us-id', u.user_id));
     const meta = el('div', 'us-meta');
     txt(meta, (u.nome ? u.nome + ' · ' : '')
       + (u.todas_as_lojas

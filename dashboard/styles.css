@@ -1277,7 +1277,19 @@ input::placeholder { color: var(--fg3); }
 .modal-corpo label { display: block; margin: 16px 0 6px; font-size: 11.5px; color: var(--fg2); font-weight: 500; }
 .modal-corpo > label:first-child { margin-top: 0; }
 
-.modal-corpo input[type="text"], .modal-corpo select {
+/* A LISTA DE TIPOS E O CONTRATO. Ela nasceu com `text` porque era o unico tipo
+   que existia nos modais, e quando entrou um `email` na tela de usuarios o campo
+   ficou estreito e pálido do lado de um `text` bem desenhado -- parecia bug de
+   layout e era uma regra que nunca soube daquele tipo.
+
+   Tipo novo de campo entra AQUI, e nao numa regra propria: duas regras com as
+   mesmas propriedades divergem, e a que perder a disputa e sempre a que alguem
+   esqueceu de atualizar. */
+.modal-corpo input[type="text"],
+.modal-corpo input[type="email"],
+.modal-corpo input[type="password"],
+.modal-corpo input[type="number"],
+.modal-corpo select {
   width: 100%;
   padding: 10px 12px;
   background: var(--pnl2);
@@ -1287,6 +1299,8 @@ input::placeholder { color: var(--fg3); }
   font-size: 13.5px;
   font-family: inherit;
 }
+
+.modal-corpo input::placeholder { color: var(--fg3); }
 
 .modal-corpo input:focus, .modal-corpo select:focus {
   outline: none;
@@ -2139,9 +2153,14 @@ input::placeholder { color: var(--fg3); }
 
 .us-grade {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, .9fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px 14px;
+  align-items: start;
 }
+
+/* E-mail ocupa a linha inteira: e o campo mais longo dos tres, e era o que
+   estava com menos espaco. */
+.us-larga { grid-column: 1 / -1; }
 
 .us-grade label { margin: 0 0 6px; }
 
@@ -2195,18 +2214,19 @@ input::placeholder { color: var(--fg3); }
 
 .us-linha {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
   padding: 12px 0;
   border-top: 1px solid var(--bd2);
 }
+
+.us-linha-empilhada { /* marcador para o teste de layout, ver verificar-nada-sumiu */ }
 
 .us-quem { min-width: 0; }
 .us-email { font-size: 12.5px; font-weight: 600; word-break: break-all; }
 .us-meta { margin-top: 3px; font-family: var(--mono); font-size: 10px; color: var(--fg3); }
 .us-eu { color: var(--info); }
-.us-acoes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+.us-acoes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .us-acoes select { width: auto; min-width: 120px; }
 
 .us-vazio { font-size: 11.5px; color: var(--fg3); padding: 12px 0; }
@@ -2216,3 +2236,128 @@ input::placeholder { color: var(--fg3); }
   .us-linha { grid-template-columns: minmax(0, 1fr); }
   .us-acoes { justify-content: flex-start; }
 }
+
+/* ------------------------------------------------------- usuarios: acabamento --- */
+.us-cabeca { margin-bottom: 16px; }
+.us-cabeca h3 { margin: 0; }
+.us-cabeca-sub { margin: 5px 0 0; font-size: 11px; color: var(--fg3); }
+
+.us-novo .us-grade label { margin-top: 0; }
+.us-criar { margin-top: 18px; }
+
+/* A pastilha DESENHA o estado; a caixa nativa fica so como alvo de clique e de
+   teclado. Checkbox do sistema num tema escuro sai cinza-claro e chapado, e
+   vinte delas numa fileira e a coisa mais feia que esta tela tinha. */
+.us-loja input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.us-loja {
+  position: relative;
+  padding: 6px 11px;
+  font-size: 11px;
+  letter-spacing: .02em;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+
+/* O visto entra na frente do codigo quando marcada, e o espaco dele existe
+   sempre -- sem isso a pastilha pula de largura ao ser clicada e a fileira
+   inteira se reorganiza embaixo do cursor. */
+.us-loja::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--bd);
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.us-loja.marcada::before {
+  border-color: var(--info);
+  background: var(--info);
+  box-shadow: inset 0 0 0 1.5px var(--pnl);
+}
+
+/* Foco visivel na pastilha, ja que a caixa nativa esta escondida: sem isto,
+   quem navega por teclado perde completamente onde esta. */
+.us-loja:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--info) 65%, transparent);
+  outline-offset: 2px;
+}
+
+.us-lojas { align-content: flex-start; min-height: 46px; }
+.us-lojas:empty::after,
+.us-lojas-vazia { font-size: 11px; color: var(--fg3); }
+
+/* A gaveta de lojas da lista. O triangulo padrao do <details> ao lado de um
+   texto estilizado de botao le como defeito, nao como controle. */
+.us-acoes details > summary { list-style: none; cursor: pointer; }
+.us-acoes details > summary::-webkit-details-marker { display: none; }
+.us-acoes details[open] > summary { border-color: color-mix(in srgb, var(--info) 40%, transparent); color: var(--fg); }
+
+/* A gaveta aberta sai da fileira de botoes e ocupa a linha inteira: dentro do
+   flex ela ficava estrangulada num canto. */
+.us-acoes details { position: relative; }
+.us-acoes details[open] { flex: 1 0 100%; order: 9; }
+
+/* Altura igual em tudo que e clicavel na linha. Antes, select e botao tinham
+   alturas diferentes e a fileira parecia desalinhada. */
+.us-acoes select,
+.us-acoes .btn-secundario,
+.us-acoes .btn-perigo,
+.us-acoes details > summary {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 11.5px;
+  border-radius: var(--r-p);
+}
+
+.us-linha { padding: 14px 0; }
+.us-linha:hover { background: color-mix(in srgb, var(--fg) 2%, transparent); }
+
+/* Papel como etiqueta, ao lado do e-mail: da para varrer a lista e ver quem e
+   admin sem ler o conteudo de cada select. */
+.us-papel-selo {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  vertical-align: 2px;
+}
+
+.us-papel-admin    { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.us-papel-operator { color: var(--info); background: color-mix(in srgb, var(--info) 14%, transparent); }
+.us-papel-viewer   { color: var(--fg3); background: var(--pnl2); }
+
+@media (prefers-reduced-motion: reduce) { .us-loja { transition: none; } }
+
+/* ---------------------------------------------------- usuarios: lista legivel --- */
+/* A etiqueta de papel nao quebra: em coluna estreita ela virava uma torre de
+   letras, uma por linha. */
+.us-papel-selo { white-space: nowrap; }
+
+/* `break-all` no e-mail existe para uuid de 36 caracteres nao estourar a
+   caixa. Com a linha empilhada ha largura de sobra, mas a regra fica: e mais
+   barato quebrar um uuid do que ter rolagem horizontal no modal. */
+.us-email { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; line-height: 1.35; }
+
+/* Conta sem e-mail registrado (criada antes da 0035): o uuid vai para a linha
+   de baixo, em fonte menor. Ele nao e o NOME de ninguem -- botar um uuid onde
+   deveria estar um e-mail faz a lista parecer defeito. */
+.us-sem-email { color: var(--fg3); font-weight: 500; font-style: italic; }
+.us-id { font-family: var(--mono); font-size: 9.5px; color: var(--fg3); }
+
+/* A gaveta aberta encosta na margem da linha, nao no fim da fileira de botoes. */
+.us-acoes details[open] { flex: 1 0 100%; order: 9; margin-top: 4px; }
