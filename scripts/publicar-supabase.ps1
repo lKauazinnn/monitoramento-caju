@@ -522,6 +522,21 @@ verify_jwt = false
     exit 1
   }
   Ok "funcao publicada em $urlIngest"
+
+  # -------------------------------------------------------------------------
+  # admin-usuarios: criar conta e trocar senha
+  # -------------------------------------------------------------------------
+  # SEM --no-verify-jwt, e sem entrada no config.toml, de proposito. O padrao e
+  # verify_jwt = true, e e o que se quer aqui: quem chama esta funcao e uma
+  # pessoa logada no painel, nao um agente. O gateway recusa quem nao tem JWT, e
+  # a funcao ainda confere no BANCO se esse JWT e de administrador -- ter JWT
+  # valido nao e ser admin.
+  $r = Supa @('functions', 'deploy', 'admin-usuarios', '--yes') -Mostrar
+  if ($r.Codigo -ne 0) {
+    Erro 'deploy de admin-usuarios falhou.'
+    exit 1
+  }
+  Ok 'funcao admin-usuarios publicada (com verificacao de JWT ligada)'
 }
 
 # ---------------------------------------------------------------------------
