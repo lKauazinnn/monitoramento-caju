@@ -36,7 +36,7 @@ window.MONITOR_CONFIG = {
 
   // Intervalo do polling. É o fallback quando Realtime não está disponível —
   // e no modo local ele é o único caminho, porque PostgREST não tem Realtime.
-  pollSeconds: 20,
+  pollSeconds: 10,
 
   // Realtime do Supabase. Ignorado fora do modo supabase.
   realtime: true,
