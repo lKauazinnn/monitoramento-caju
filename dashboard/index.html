@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=39" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=40" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=39">
+  <link rel="stylesheet" href="styles.css?v=40">
 </head>
 <body>
 
@@ -116,6 +116,10 @@
 
       <!-- Som DESLIGADO por padrão. Numa tela de parede ele salva o turno; numa
            mesa compartilhada é motivo para desligar o monitoramento inteiro. -->
+      <button id="btn-usuarios" class="btn-lateral" type="button" hidden>
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.4"/><path d="M2.6 20a6.4 6.4 0 0 1 12.8 0"/><path d="M17 11.2a2.8 2.8 0 1 0-1.6-5.1"/><path d="M18.2 20h3.2a5 5 0 0 0-3.6-4.8"/></svg>
+        <span>Usuários</span>
+      </button>
       <button id="btn-atualizar-agentes" class="btn-lateral" type="button">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg>
         <span id="btn-atualizar-rot">Atualizar agentes</span>
@@ -388,6 +392,62 @@
      formulários separados divergem: um ganha validação, o outro não; um limpa o
      erro ao reabrir, o outro mostra o erro da vez passada.
      ========================================================================= -->
+<!-- =========================================================================
+     Usuários
+     =========================================================================
+     Só admin vê. A criação da conta NÃO acontece aqui: ela exige a service_role,
+     que pela regra 1 não chega ao navegador. Esta tela chama a Edge Function
+     admin-usuarios, que valida quem pediu e guarda o segredo do lado servidor.
+     ========================================================================= -->
+<div id="modal-usuarios-fundo" class="cortina" hidden></div>
+
+<div id="modal-usuarios" class="modal modal-largo" hidden role="dialog" aria-modal="true"
+     aria-labelledby="usuarios-titulo">
+  <header class="modal-topo">
+    <h2 id="usuarios-titulo">Usuários</h2>
+    <button id="btn-fechar-usuarios" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
+  </header>
+
+  <div class="modal-corpo">
+    <form id="form-novo-usuario" class="us-novo" novalidate>
+      <h3>Criar usuário</h3>
+      <div class="us-grade">
+        <div>
+          <label for="us-email">E-mail</label>
+          <input type="email" id="us-email" autocomplete="off" spellcheck="false"
+                 placeholder="pessoa@cajupar.com" required>
+        </div>
+        <div>
+          <label for="us-nome">Nome</label>
+          <input type="text" id="us-nome" autocomplete="off" placeholder="opcional">
+        </div>
+        <div>
+          <label for="us-papel">Papel</label>
+          <select id="us-papel"></select>
+        </div>
+      </div>
+
+      <p class="us-rot-lojas">Lojas</p>
+      <div id="us-lojas" class="us-lojas"></div>
+      <p id="us-lojas-nota" class="ed-nota"></p>
+
+      <button id="btn-criar-usuario" class="btn-primario" type="submit">Criar e gerar senha</button>
+      <p id="us-erro" class="erro" hidden role="alert"></p>
+
+      <!-- A senha aparece UMA vez. Ela não é gravada em lugar nenhum nosso: se
+           for perdida, o caminho é redefinir, não recuperar. -->
+      <div id="us-senha" class="us-senha" hidden>
+        <p class="us-senha-rot">Senha temporária — anote agora, ela não aparece de novo</p>
+        <div class="comando-caixa"><pre id="us-senha-valor"></pre></div>
+        <button id="btn-copiar-senha" class="btn-secundario" type="button">Copiar</button>
+      </div>
+    </form>
+
+    <h3 class="us-titulo-lista">Quem tem acesso</h3>
+    <div id="us-lista"></div>
+  </div>
+</div>
+
 <div id="modal-editar-fundo" class="cortina" hidden></div>
 
 <div id="modal-editar" class="modal" hidden role="dialog" aria-modal="true"
@@ -638,7 +698,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=39"></script>
-<script src="dash.js?v=39"></script>
+<script src="config.js?v=40"></script>
+<script src="dash.js?v=40"></script>
 </body>
 </html>

@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.39-volume-pequeno';
+const BUILD = '2026-08-10.40-usuarios';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -2184,6 +2184,312 @@ function editarLoja(loja) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Usuários
+// ---------------------------------------------------------------------------
+// Papel e escopo saem por RPC normal. CRIAR CONTA e TROCAR SENHA saem pela Edge
+// Function admin-usuarios, porque as duas exigem a service_role — e a regra 1 diz
+// que ela nunca chega ao navegador.
+//
+// Nada aqui decide quem pode o quê. O botão só aparece para admin porque oferecer
+// o que vai falhar é ruim de usar, mas quem RECUSA é o banco: esconder botão não
+// é autorização.
+
+let usuariosCache = null;
+
+/**
+ * Endereço da função, derivado do authUrl.
+ *
+ * Não é uma constante nova no config: o projeto já teve um defeito de endereço
+ * duplicado (o '/ingest' que eu apaguei sem querer e quebrou só em produção).
+ * Um endereço só, derivado, não pode divergir de si mesmo.
+ */
+function urlAdminUsuarios() {
+  const base = String(CFG.authUrl || '').replace(/\/+$/, '');
+  if (!base) throw new Error('authUrl nao configurado');
+  return base.replace(/\/auth\/v1$/, '/functions/v1/admin-usuarios');
+}
+
+async function chamarAdminUsuarios(corpo) {
+  const r = await fetch(urlAdminUsuarios(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: CFG.anonKey || '',
+      Authorization: 'Bearer ' + (Estado.token || ''),
+    },
+    body: JSON.stringify(corpo),
+  });
+
+  let d = null;
+  try { d = await r.json(); } catch (_) { d = null; }
+
+  if (!r.ok) {
+    // A função devolve 'conserto' quando a conta ficou criada e só o papel
+    // falhou. Perder essa frase deixaria o admin achando que nada aconteceu e
+    // tentando de novo com o mesmo e-mail.
+    const msg = (d && (d.erro || d.message)) || ('a funcao respondeu ' + r.status);
+    throw new Error(d && d.conserto ? msg + ' — ' + d.conserto : msg);
+  }
+  return d;
+}
+
+function papelBonito(code) {
+  return code === 'admin' ? 'Administrador'
+    : code === 'operator' ? 'Operador'
+    : 'Somente leitura';
+}
+
+function desenharLojasEscolhidas(caixa, lojas, marcadas, inerte) {
+  limpar(caixa);
+  caixa.classList.toggle('inerte', !!inerte);
+
+  for (const l of lojas) {
+    const rot = el('label', 'us-loja');
+    const cx = el('input');
+    cx.type = 'checkbox';
+    cx.value = l.id;
+    cx.checked = marcadas.includes(l.id);
+    if (cx.checked) rot.classList.add('marcada');
+    cx.addEventListener('change', () => rot.classList.toggle('marcada', cx.checked));
+    rot.appendChild(cx);
+    rot.appendChild(el('span', null, l.code));
+    rot.title = l.name;
+    caixa.appendChild(rot);
+  }
+
+  if (lojas.length === 0) caixa.appendChild(el('span', 'us-vazio', 'nenhuma loja cadastrada'));
+}
+
+function lojasMarcadas(caixa) {
+  return [...caixa.querySelectorAll('input:checked')].map((c) => c.value);
+}
+
+async function abrirUsuarios() {
+  $('modal-usuarios-fundo').hidden = false;
+  $('modal-usuarios').hidden = false;
+  $('us-erro').hidden = true;
+  $('us-senha').hidden = true;
+
+  const lista = $('us-lista');
+  limpar(lista);
+  lista.appendChild(el('p', 'us-vazio', 'carregando...'));
+
+  try {
+    usuariosCache = await rpc('usuarios_do_painel');
+  } catch (e) {
+    limpar(lista);
+    lista.appendChild(el('p', 'us-vazio', e.message));
+    return;
+  }
+
+  const papeis = usuariosCache.papeis || [];
+  const lojas = usuariosCache.lojas || [];
+
+  // Formulário de criação
+  const sel = $('us-papel');
+  limpar(sel);
+  for (const p of papeis) {
+    const o = el('option', null, p.nome);
+    o.value = p.code;
+    o.title = p.descricao;
+    if (p.code === 'viewer') o.selected = true;   // o menor privilégio, por padrão
+    sel.appendChild(o);
+  }
+
+  const caixaLojas = $('us-lojas');
+  const sincronizarLojas = () => {
+    const admin = sel.value === 'admin';
+    desenharLojasEscolhidas(caixaLojas, lojas, [], admin);
+    txt($('us-lojas-nota'), admin
+      ? 'Administrador vê todas as lojas: o escopo não se aplica.'
+      : 'Sem nenhuma marcada, a pessoa entra e não vê loja alguma.');
+  };
+  sel.onchange = sincronizarLojas;
+  sincronizarLojas();
+
+  desenharListaUsuarios(usuariosCache);
+}
+
+function desenharListaUsuarios(dados) {
+  const lista = $('us-lista');
+  limpar(lista);
+
+  const usuarios = dados.usuarios || [];
+  const lojas = dados.lojas || [];
+  const papeis = dados.papeis || [];
+
+  if (usuarios.length === 0) {
+    lista.appendChild(el('p', 'us-vazio', 'ninguém cadastrado.'));
+    return;
+  }
+
+  for (const u of usuarios) {
+    const linha = el('div', 'us-linha');
+    const souEu = u.user_id === dados.eu;
+
+    const quem = el('div', 'us-quem');
+    quem.appendChild(el('div', 'us-email', u.email || u.user_id));
+    const meta = el('div', 'us-meta');
+    txt(meta, (u.nome ? u.nome + ' · ' : '')
+      + (u.todas_as_lojas
+        ? 'todas as lojas'
+        : (u.lojas || []).length + ' loja(s): '
+          + ((u.lojas || []).map((l) => l.code).join(', ') || 'nenhuma'))
+      + (souEu ? ' · você' : ''));
+    if (souEu) meta.classList.add('us-eu');
+    quem.appendChild(meta);
+    linha.appendChild(quem);
+
+    const acoes = el('div', 'us-acoes');
+
+    const selPapel = el('select');
+    for (const p of papeis) {
+      const o = el('option', null, p.nome);
+      o.value = p.code;
+      if (p.code === u.role) o.selected = true;
+      selPapel.appendChild(o);
+    }
+    selPapel.setAttribute('aria-label', 'Papel de ' + (u.email || u.user_id));
+    acoes.appendChild(selPapel);
+
+    // Escopo: uma gaveta por usuário, fechada. Vinte lojas por vinte usuários
+    // abertas de uma vez viraria uma parede de caixinhas.
+    const det = el('details');
+    const sum = el('summary', 'btn-secundario', 'Lojas');
+    det.appendChild(sum);
+    const caixa = el('div', 'us-lojas');
+    caixa.style.marginTop = '8px';
+    det.appendChild(caixa);
+    det.addEventListener('toggle', () => {
+      if (det.open) {
+        desenharLojasEscolhidas(caixa, lojas,
+          (u.lojas || []).map((l) => l.id), u.role === 'admin' || selPapel.value === 'admin');
+      }
+    });
+    acoes.appendChild(det);
+
+    const salvar = el('button', 'btn-secundario', 'Salvar');
+    salvar.type = 'button';
+    salvar.addEventListener('click', async () => {
+      salvar.disabled = true;
+      try {
+        // 'null' quando a gaveta nunca foi aberta: assim salvar o PAPEL não
+        // apaga o escopo de ninguém. É o par null/vazio da migração 0035, e é o
+        // motivo de ele existir.
+        const escopo = det.open ? lojasMarcadas(caixa) : null;
+        await rpc('definir_acesso_usuario', {
+          p_user_id: u.user_id,
+          p_role: selPapel.value,
+          p_site_ids: escopo,
+        });
+        brinde('Acesso atualizado.');
+        await abrirUsuarios();
+      } catch (e) {
+        brinde(e.message, true);
+      } finally {
+        salvar.disabled = false;
+      }
+    });
+    acoes.appendChild(salvar);
+
+    const senha = el('button', 'btn-secundario', 'Nova senha');
+    senha.type = 'button';
+    armarPerigo(senha, 'Confirmar', async () => {
+      const r = await chamarAdminUsuarios({ acao: 'senha', user_id: u.user_id });
+      mostrarSenha(r.senha_temporaria);
+      brinde('Senha redefinida.');
+    });
+    acoes.appendChild(senha);
+
+    // Sem botão de revogar em si mesmo: o banco recusa (MON09), e oferecer um
+    // botão que só existe para dar erro é pior que não ter botão.
+    if (!souEu) {
+      const rev = el('button', 'btn-perigo', 'Revogar');
+      rev.type = 'button';
+      armarPerigo(rev, 'Confirmar', async () => {
+        await rpc('remover_acesso_usuario', { p_user_id: u.user_id });
+        brinde('Acesso revogado.');
+        await abrirUsuarios();
+      });
+      acoes.appendChild(rev);
+    }
+
+    linha.appendChild(acoes);
+    lista.appendChild(linha);
+  }
+}
+
+function mostrarSenha(valor) {
+  txt($('us-senha-valor'), valor || '');
+  $('us-senha').hidden = !valor;
+  $('us-senha').scrollIntoView({ block: 'nearest' });
+}
+
+function ligarUsuarios() {
+  const fechar = () => {
+    $('modal-usuarios').hidden = true;
+    $('modal-usuarios-fundo').hidden = true;
+    // A senha sai da tela ao fechar. Deixá-la ali faria a próxima abertura
+    // mostrar a senha de outra pessoa.
+    txt($('us-senha-valor'), '');
+    $('us-senha').hidden = true;
+  };
+
+  $('btn-usuarios').addEventListener('click', abrirUsuarios);
+  $('btn-fechar-usuarios').addEventListener('click', fechar);
+  $('modal-usuarios-fundo').addEventListener('click', fechar);
+
+  $('btn-copiar-senha').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText($('us-senha-valor').textContent);
+      brinde('Senha copiada.');
+    } catch (_) {
+      brinde('O navegador nao liberou a area de transferencia; copie na mao.', true);
+    }
+  });
+
+  $('form-novo-usuario').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+
+    const btn = $('btn-criar-usuario');
+    btn.disabled = true;
+    txt(btn, 'Criando...');
+    $('us-erro').hidden = true;
+    $('us-senha').hidden = true;
+
+    try {
+      const papel = $('us-papel').value;
+      const r = await chamarAdminUsuarios({
+        acao: 'criar',
+        email: $('us-email').value.trim(),
+        nome: $('us-nome').value.trim(),
+        role: papel,
+        // Admin ignora escopo; mandar lista seria gravar um limite que não vale.
+        site_ids: papel === 'admin' ? null : lojasMarcadas($('us-lojas')),
+      });
+
+      mostrarSenha(r.senha_temporaria);
+      $('us-email').value = '';
+      $('us-nome').value = '';
+      brinde('Usuario criado.');
+
+      // Recarrega a lista SEM apagar a senha da tela: ela aparece uma vez, e
+      // fechar/reabrir a perderia.
+      const antes = r.senha_temporaria;
+      usuariosCache = await rpc('usuarios_do_painel');
+      desenharListaUsuarios(usuariosCache);
+      mostrarSenha(antes);
+    } catch (e) {
+      txt($('us-erro'), e.message);
+      $('us-erro').hidden = false;
+    } finally {
+      btn.disabled = false;
+      txt(btn, 'Criar e gerar senha');
+    }
+  });
+}
+
 function celula(rotulo, valor, classe, ajuda, velho, sub) {
   const d = el('div', 'cel');
   d.appendChild(el('span', 'cel-rot', rotulo));
@@ -2854,6 +3160,11 @@ async function verificarDadosDemo() {
     // operador abrir a primeira máquina.
     Estado.ehAdmin = d.is_admin === true;
 
+    // Gerenciar usuario e privilegio de admin. Esconder o botao NAO e
+    // autorizacao -- o banco recusa de qualquer forma -- mas oferecer o que vai
+    // responder "apenas administradores" e convidar para a frustracao.
+    $('btn-usuarios').hidden = !Estado.ehAdmin;
+
     const tem = (d.maquinas > 0 || d.lojas > 0) && d.is_admin === true;
     faixa.hidden = !tem;
     if (tem) {
@@ -3521,6 +3832,7 @@ function ligarEventos() {
     $('btn-sair').addEventListener('click', sair);
   }
 
+  ligarUsuarios();
   ligarEdicao();
   $('btn-editar-maquina').addEventListener('click', editarMaquinaAberta);
 

@@ -95,6 +95,15 @@ export const CONTROLES = [
   ['btn-editar-salvar', 'salvar a correção'],
   ['editar-erro', 'o motivo de o servidor recusar a correção'],
 
+  // -------------------------------------------------------------- usuários
+  ['btn-usuarios', 'abrir o painel de usuários (só admin)'],
+  ['modal-usuarios', 'o painel de usuários'],
+  ['form-novo-usuario', 'criar usuário'],
+  ['us-papel', 'escolher o papel do novo usuário'],
+  ['us-lojas', 'escolher as lojas do escopo'],
+  ['us-senha-valor', 'a senha temporária, que aparece uma vez'],
+  ['us-lista', 'quem tem acesso, com papel e escopo'],
+
   // ---------------------------------------------------------------- sessão
   ['btn-sair', 'sair da sessão'],
   ['rotulo-usuario', 'quem está logado'],
@@ -122,5 +131,8 @@ export const COMPORTAMENTOS = [
   ['editar_loja', 'corrigir código, nome e fuso da loja'],
   ['iconeLapis', 'o lápis no cartão de loja'],
   ['acessarLoja', 'clicar no cartão entra na loja'],
+  ['definir_acesso_usuario', 'trocar papel e escopo de um usuário'],
+  ['remover_acesso_usuario', 'revogar o acesso de alguém'],
+  ['admin-usuarios', 'a Edge Function que cria conta e troca senha'],
   ['cl-nome-btn', 'entrar na loja pelo teclado, sem depender do clique'],
 ];
