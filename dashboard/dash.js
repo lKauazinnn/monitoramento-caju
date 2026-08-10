@@ -3190,7 +3190,7 @@ async function pedirAcao(kind, params, confirmado) {
 // para responder algo que já se sabe.
 //
 // AO PUBLICAR UM AGENTE NOVO, SUBA ESTA LINHA JUNTO.
-const VERSAO_ALVO_AGENTE = 'ps-1.4.2';
+const VERSAO_ALVO_AGENTE = 'ps-1.5.0';
 
 async function atualizarAgentes() {
   const r = await rpc('atualizar_frota', { p_versao_alvo: VERSAO_ALVO_AGENTE });

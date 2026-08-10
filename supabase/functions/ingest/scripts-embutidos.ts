@@ -2,7 +2,7 @@
 // GERADO — não edite à mão
 // =============================================================================
 // Origem:
-//   agent/agente-powershell.ps1  (49105 bytes, sha256:bae1be204e65acd5)
+//   agent/agente-powershell.ps1  (51070 bytes, sha256:487e503b867adec9)
 //   docker/ingest-local/instalar.ps1  (12532 bytes, sha256:2dbff83b3f196c6c)
 //   scripts/atualizar-agente.ps1  (8832 bytes, sha256:8676568c50530e89)
 //
@@ -63,7 +63,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.4.2'
+$VERSAO = 'ps-1.5.0'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -384,6 +384,50 @@ function InfoMaquina {
     $c = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
     $info.cpu_model = $c[0].Name
     $info.cpu_cores = ($c | Measure-Object -Property NumberOfCores -Sum).Sum
+  } catch { }
+
+  # ---- Virtualizacao: quem hospeda esta maquina --------------------------
+  # Wake-on-LAN nao alcanca maquina virtual (a placa nao existe com a VM
+  # desligada), e ligar uma exige a API do hipervisor. Para chegar la faltavam
+  # tres coisas, e DUAS delas o proprio Windows sabe responder de dentro da VM:
+  #
+  #   QUAL hipervisor  -> o fabricante da placa-mae virtual se entrega
+  #   QUAL VM e esta   -> o UUID de SMBIOS e o mesmo que o hipervisor conhece
+  #
+  # A terceira, a credencial, nenhum agente pode descobrir — ela vem de uma
+  # pessoa. Mas sem estas duas o operador teria que abrir cada VM para dizer
+  # onde ela mora, e e exatamente esse trabalho manual que o sistema existe
+  # para eliminar.
+  #
+  # Fica no InfoMaquina, que roda de hora em hora, e nao no ciclo de 60s: isto
+  # nao muda enquanto a maquina existir.
+  try {
+    $cs = Cim Win32_ComputerSystem
+    $info.virt_fabricante = $cs.Manufacturer
+    $info.virt_modelo     = $cs.Model
+
+    # Fabricante e modelo em texto identificam o hipervisor sem depender de
+    # nenhuma lista nossa ficar atualizada:
+    #   QEMU / Standard PC (Q35 + ICH9)  -> KVM (Proxmox, libvirt)
+    #   VMware, Inc.                     -> ESXi / Workstation
+    #   Microsoft Corporation + Virtual Machine -> Hyper-V
+    #   innotek GmbH                     -> VirtualBox
+    #   Xen                              -> XCP-ng / XenServer
+    # A classificacao fica no SERVIDOR, com o texto cru guardado: se aparecer um
+    # hipervisor que eu nao previ, o dado esta la para alguem ler.
+  } catch { }
+
+  try {
+    $p = Cim Win32_ComputerSystemProduct
+    # O UUID de SMBIOS. No Proxmox e o mesmo valor que a API devolve para a VM,
+    # entao ele e a ponte entre "esta maquina" e "o vmid la" — sem ninguem
+    # digitar numero de VM em formulario.
+    $info.virt_uuid = $p.UUID
+  } catch { }
+
+  try {
+    $b = Cim Win32_BIOS
+    $info.virt_bios = ($b.Manufacturer, $b.SMBIOSBIOSVersion -join ' ')
   } catch { }
   # O IP vem do adaptador que ATENDE A ROTA PADRAO, nao do primeiro da lista.
   #
