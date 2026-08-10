@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.45-tv';
+const BUILD = '2026-08-10.46-honesto';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -3198,11 +3198,24 @@ async function atualizarAgentes() {
   const pulos = Array.isArray(r.pulos) ? r.pulos : [];
   const n = r.enfileiradas || 0;
 
+  // "vão se atualizar" era promessa, e promessa que nao se cumpre parece mentira.
+  //
+  // O numero sai de `machines_status.agent_version`, que e a versao da ULTIMA
+  // AMOSTRA — ela pode estar até um minuto atrasada. Uma máquina que acabou de
+  // trocar de versão ainda consta com a antiga, entra na conta, recebe o comando,
+  // e o agente responde "já está nesta versão; nada a fazer". A operação foi
+  // correta do começo ao fim e a frase da tela ficou falsa.
+  //
+  // Agora a tela diz o que foi PEDIDO, não o que vai acontecer, e manda olhar o
+  // histórico — que traz a resposta de cada agente, uma por uma.
   txt($('atualizar-resumo'),
     n === 0 && pulos.length === 0
-      ? 'Toda a frota já está na ' + VERSAO_ALVO_AGENTE + '. Nada a fazer.'
-      : n + ' máquina(s) vão se atualizar para ' + VERSAO_ALVO_AGENTE + ' no próximo '
-        + 'ciclo do agente (até 1 min). Nenhuma reinicia; só o agente troca de versão.');
+      ? 'Toda a frota já está na ' + VERSAO_ALVO_AGENTE + '. Nada foi enviado.'
+      : n + ' pedido(s) de atualização para ' + VERSAO_ALVO_AGENTE + ' na fila. '
+        + 'Cada agente responde no próximo ciclo (até 1 min) dizendo se trocou de '
+        + 'versão ou se já estava nela — a máquina que acabou de trocar ainda '
+        + 'aparece com a versão antiga por até um minuto e pode receber um pedido '
+        + 'à toa. Nenhuma máquina reinicia; só o agente.');
 
   const lista = $('atualizar-lista');
   limpar(lista);
