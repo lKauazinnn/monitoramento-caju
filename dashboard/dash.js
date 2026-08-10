@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.37-editar';
+const BUILD = '2026-08-10.38-acessar-loja';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1707,6 +1707,42 @@ function desenharCartoesDeLoja(conteudo, lista) {
   conteudo.appendChild(grade);
 }
 
+/**
+ * Entrar na loja: filtra a frota para ela e troca para a vista por maquina.
+ *
+ * Reaproveita o filtro que ja existia (`Estado.filtros.loja` e o select
+ * `#filtro-loja`) em vez de inventar um segundo caminho de navegacao. Dois
+ * caminhos para o mesmo estado divergem: um limpa o filtro de marca, o outro
+ * nao, e a tela passa a mostrar coisas diferentes conforme por onde se chegou.
+ *
+ * O clique no botao de modo e disparado de proposito, em vez de escrever
+ * `Estado.modo = 'maquinas'`: o handler dele tambem grava a preferencia e ajusta
+ * o aria-selected do controle segmentado. Atribuir direto deixaria os dois
+ * dessincronizados — a tela na vista nova e o botao aceso na antiga.
+ */
+function acessarLoja(loja) {
+  Estado.filtros.loja = loja.code;
+
+  // A marca sai do caminho: se o filtro de marca estiver em outra marca, a loja
+  // escolhida sumiria da lista e o clique pareceria nao ter funcionado.
+  const ref = loja.maquinas[0];
+  if (ref && Estado.filtros.marca && ref.brand_code !== Estado.filtros.marca) {
+    Estado.filtros.marca = '';
+  }
+
+  preencherFiltros();
+
+  const btnModo = document.querySelector('[data-modo="maquinas"]');
+  if (btnModo) btnModo.click();
+
+  aplicarFiltros();
+
+  // A grade fica abaixo dos KPIs; sem isto, em tela pequena o clique filtra
+  // fora do campo de visao e parece que nada aconteceu.
+  $('conteudo').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  brinde(`Loja ${loja.code}: ${loja.maquinas.length} maquina(s).`);
+}
+
 function cartaoLoja(loja) {
   const estados = loja.maquinas.map(estadoDe);
   const offline = estados.filter((e) => e === 'offline').length;
@@ -1724,7 +1760,11 @@ function cartaoLoja(loja) {
 
   const cab = el('div', 'cl-cab');
   const ident = el('div');
-  ident.appendChild(el('div', 'cl-nome', loja.nome || loja.code));
+  const nome = el('button', 'cl-nome cl-nome-btn', loja.nome || loja.code);
+  nome.type = 'button';
+  nome.title = `Ver as ${loja.maquinas.length} maquina(s) de ${loja.code}`;
+  nome.addEventListener('click', (ev) => { ev.stopPropagation(); acessarLoja(loja); });
+  ident.appendChild(nome);
   ident.appendChild(el('p', 'cl-meta', `${loja.marca || 'sem marca'} · ${loja.code}`));
   cab.appendChild(ident);
 
@@ -1845,6 +1885,22 @@ function cartaoLoja(loja) {
 
   c.appendChild(cels);
 
+  // Clique em qualquer lugar do cartao entra na loja.
+  //
+  // O guarda e `closest('button')` e nao stopPropagation espalhado pelos filhos:
+  // com stopPropagation, todo botao novo que alguem acrescentar ao cartao no
+  // futuro passa a filtrar a loja por engano, e quem esquecer a linha nao
+  // descobre — o sintoma e um clique que faz duas coisas. Aqui a regra e uma so,
+  // num lugar so, e vale para botao que ainda nao existe.
+  c.classList.add('cl-clicavel');
+  c.addEventListener('click', (ev) => {
+    if (ev.target.closest('button')) return;
+    // Selecionar texto do cartao nao pode virar navegacao.
+    const sel = window.getSelection();
+    if (sel && String(sel).length > 0) return;
+    acessarLoja(loja);
+  });
+
   return c;
 }
 
@@ -1924,7 +1980,7 @@ function armarLixeira(botao, acao) {
  * fica vermelho justamente por ser BAIXO, o rotulo tem que dizer de que ele e
  * porcentagem, e no espaco que cabe isso so entra no title.
  *
- * `velho` marca valor que nao e de agora. Ver a explicacao em cartaoDeLoja.
+ * `velho` marca valor que nao e de agora. Ver a explicacao em cartaoLoja.
  */
 // ---------------------------------------------------------------------------
 // Editar cadastro

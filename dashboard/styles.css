@@ -2083,3 +2083,44 @@ input::placeholder { color: var(--fg3); }
 .ed-campo { margin-bottom: 16px; }
 .ed-campo:last-child { margin-bottom: 0; }
 .ed-nota { margin: 5px 0 0; font-size: 10.5px; color: var(--fg3); line-height: 1.45; }
+
+/* ------------------------------------------------------- cartao de loja clicavel --- */
+.cl-clicavel { cursor: pointer; }
+
+/* Borda e elevacao, nao troca de fundo: o fundo do cartao carrega a situacao
+   da loja (incidente, atencao, estavel), e clarea-lo no hover apagaria o
+   unico sinal de cor que a vista por loja tem. */
+.cl-clicavel:hover {
+  border-color: color-mix(in srgb, var(--info) 34%, var(--bd));
+  transform: translateY(-1px);
+  box-shadow: var(--sh);
+}
+
+.cl-clicavel { transition: border-color .14s ease, transform .14s ease, box-shadow .14s ease; }
+
+/* O nome como botao, sem parecer botao: ele ja era o titulo do cartao, e
+   pintar de azul competiria com o selo de situacao. O sublinhado no hover diz
+   que e clicavel sem acrescentar cor a uma tela que ja usa cor para estado. */
+.cl-nome-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cl-nome-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* Foco visivel: e por aqui que o teclado entra na loja. */
+.cl-nome-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--info) 70%, transparent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cl-clicavel { transition: none; }
+  .cl-clicavel:hover { transform: none; }
+}

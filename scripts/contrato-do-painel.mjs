@@ -121,4 +121,6 @@ export const COMPORTAMENTOS = [
   ['editar_maquina', 'corrigir o cadastro da máquina sem apagá-la'],
   ['editar_loja', 'corrigir código, nome e fuso da loja'],
   ['iconeLapis', 'o lápis no cartão de loja'],
+  ['acessarLoja', 'clicar no cartão entra na loja'],
+  ['cl-nome-btn', 'entrar na loja pelo teclado, sem depender do clique'],
 ];
