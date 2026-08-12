@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.54-smart-cru';
+const BUILD = '2026-08-12.55-ordem-dos-cartoes';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1834,7 +1834,8 @@ function desenharCartoesDeLoja(conteudo, lista) {
   lojas.sort((a, b) => peso(a) - peso(b) || a.code.localeCompare(b.code, 'pt-BR'));
 
   const grade = el('div', 'grade-lojas');
-  for (const l of lojas) grade.appendChild(cartaoLoja(l));
+  for (const l of aplicarOrdem(lojas)) grade.appendChild(cartaoLoja(l));
+  ligarArrastarCartoes(grade);
   conteudo.appendChild(grade);
 }
 
@@ -1954,6 +1955,161 @@ function linhaSaudeDaLoja(loja) {
   return l;
 }
 
+// ---------------------------------------------------------------------------
+// Ordem escolhida dos cartoes
+// ---------------------------------------------------------------------------
+// A ordem alfabetica e util para quem procura; inutil para quem VIGIA. Numa TV, o
+// olho aprende o lugar: a loja mais critica no topo esquerdo, o resto onde a
+// pessoa quiser. Ordem que muda sozinha destroi essa memoria.
+//
+// Guardada em localStorage e nao no banco: e preferencia de quem OLHA aquela tela,
+// nao propriedade da loja. Duas TVs em salas diferentes podem querer ordens
+// diferentes, e o banco imporia uma.
+
+const CHAVE_ORDEM = 'monitor.ordemLojas';
+
+function ordemDasLojas() {
+  try {
+    const b = localStorage.getItem(CHAVE_ORDEM);
+    const a = b ? JSON.parse(b) : null;
+    return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function salvarOrdem(codigos) {
+  try { localStorage.setItem(CHAVE_ORDEM, JSON.stringify(codigos)); } catch (_) { /* modo privado */ }
+}
+
+/**
+ * Ordena as lojas pela escolha do usuario.
+ *
+ * Loja NOVA vai para o fim, nao para a posicao alfabetica: se ela aparecesse no
+ * meio, empurraria tudo que a pessoa posicionou e a memoria visual iria embora.
+ * No fim ela e notada e a pessoa decide onde fica.
+ */
+function aplicarOrdem(lojas) {
+  const escolhida = ordemDasLojas();
+  if (escolhida.length === 0) return lojas;
+
+  const pos = new Map(escolhida.map((c, i) => [c, i]));
+  return [...lojas].sort((a, b) => {
+    const pa = pos.has(a.code) ? pos.get(a.code) : Number.MAX_SAFE_INTEGER;
+    const pb = pos.has(b.code) ? pos.get(b.code) : Number.MAX_SAFE_INTEGER;
+    if (pa !== pb) return pa - pb;
+    return (a.code || '').localeCompare(b.code || '', 'pt-BR');
+  });
+}
+
+/** Le a ordem que esta na tela e guarda. */
+function guardarOrdemDaTela(grade) {
+  const codigos = [...grade.querySelectorAll('.cartao-loja')]
+    .map((c) => c.dataset.loja)
+    .filter(Boolean);
+  if (codigos.length > 0) salvarOrdem(codigos);
+}
+
+/** Alca em SVG, pelo mesmo caminho da lixeira e do lapis (regra 7). */
+function iconeAlca() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  for (const y of [7, 12, 17]) {
+    for (const x of [9, 15]) {
+      const c = document.createElementNS(NS, 'line');
+      c.setAttribute('x1', x); c.setAttribute('y1', y);
+      c.setAttribute('x2', x); c.setAttribute('y2', y);
+      svg.appendChild(c);
+    }
+  }
+  return svg;
+}
+
+let arrastando = null;
+
+/**
+ * Liga arrastar-e-soltar na grade.
+ *
+ * Um handler na GRADE, nao um por cartao: a grade e redesenhada a cada carga (a
+ * cada 10s), e handler por cartao seria religado quarenta vezes por minuto. Aqui
+ * o listener sobrevive ao redesenho porque quem redesenha e o conteudo, nao a
+ * grade.
+ */
+function ligarArrastarCartoes(grade) {
+  if (grade.dataset.arrastarLigado === '1') return;
+  grade.dataset.arrastarLigado = '1';
+
+  grade.addEventListener('dragstart', (ev) => {
+    const c = ev.target.closest('.cartao-loja');
+    if (!c || !ev.target.closest('.cl-alca')) return;
+    arrastando = c;
+    c.classList.add('cl-arrastando');
+    // 'move' e nao 'copy': o cursor tem que dizer que a coisa muda de lugar.
+    ev.dataTransfer.effectAllowed = 'move';
+    // Firefox exige payload para iniciar o arrasto.
+    ev.dataTransfer.setData('text/plain', c.dataset.loja || '');
+  });
+
+  grade.addEventListener('dragover', (ev) => {
+    if (!arrastando) return;
+    ev.preventDefault();
+    const sobre = ev.target.closest('.cartao-loja');
+    if (!sobre || sobre === arrastando) return;
+
+    for (const x of grade.querySelectorAll('.cl-alvo')) x.classList.remove('cl-alvo');
+    sobre.classList.add('cl-alvo');
+  });
+
+  grade.addEventListener('drop', (ev) => {
+    if (!arrastando) return;
+    ev.preventDefault();
+    const sobre = ev.target.closest('.cartao-loja');
+    for (const x of grade.querySelectorAll('.cl-alvo')) x.classList.remove('cl-alvo');
+    if (!sobre || sobre === arrastando) return;
+
+    // Antes ou depois, decidido pela metade do cartao: soltar na esquerda insere
+    // antes, na direita depois. Sem isso nao ha como colocar algo no fim.
+    const r = sobre.getBoundingClientRect();
+    const depois = (ev.clientX - r.left) > (r.width / 2);
+    sobre.parentNode.insertBefore(arrastando, depois ? sobre.nextSibling : sobre);
+
+    guardarOrdemDaTela(grade);
+    brinde('Ordem salva.');
+  });
+
+  grade.addEventListener('dragend', () => {
+    if (arrastando) arrastando.classList.remove('cl-arrastando');
+    for (const x of grade.querySelectorAll('.cl-alvo')) x.classList.remove('cl-alvo');
+    arrastando = null;
+  });
+
+  // TECLADO: setas movem o cartao com a alca focada. Arrastar-e-soltar sozinho
+  // deixaria a funcao inacessivel para quem nao usa mouse -- e numa tela de
+  // operacao isso tambem exclui quem esta usando so o teclado com as duas maos
+  // ocupadas.
+  grade.addEventListener('keydown', (ev) => {
+    const alca = ev.target.closest('.cl-alca');
+    if (!alca) return;
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+
+    const c = alca.closest('.cartao-loja');
+    if (!c) return;
+    ev.preventDefault();
+
+    if (ev.key === 'ArrowLeft' && c.previousElementSibling) {
+      c.parentNode.insertBefore(c, c.previousElementSibling);
+    } else if (ev.key === 'ArrowRight' && c.nextElementSibling) {
+      c.parentNode.insertBefore(c.nextElementSibling, c);
+    } else {
+      return;
+    }
+
+    guardarOrdemDaTela(grade);
+    alca.focus();
+  });
+}
+
 function cartaoLoja(loja) {
   const estados = loja.maquinas.map(estadoDe);
   const offline = estados.filter((e) => e === 'offline').length;
@@ -1968,8 +2124,18 @@ function cartaoLoja(loja) {
   else if (online === 0) { situacao = 'parada'; rotulo = 'sem dados'; }
 
   const c = el('article', `cartao-loja cl-${situacao}`);
+  c.dataset.loja = loja.code;
 
   const cab = el('div', 'cl-cab');
+  const alca = el('div', 'cl-alca');
+  alca.draggable = true;
+  alca.tabIndex = 0;
+  alca.setAttribute('role', 'button');
+  alca.title = 'Arraste para reordenar. Com o foco aqui, use as setas esquerda e direita.';
+  alca.setAttribute('aria-label', `Reordenar ${loja.code}`);
+  alca.appendChild(iconeAlca());
+  cab.appendChild(alca);
+
   const ident = el('div');
   const nome = el('button', 'cl-nome cl-nome-btn', loja.nome || loja.code);
   nome.type = 'button';
@@ -2148,6 +2314,9 @@ function cartaoLoja(loja) {
   c.classList.add('cl-clicavel');
   c.addEventListener('click', (ev) => {
     if (ev.target.closest('button')) return;
+    // A alca tem role=button mas nao e <button>: sem esta linha, arrastar
+    // terminaria entrando na loja.
+    if (ev.target.closest('.cl-alca')) return;
     // Selecionar texto do cartao nao pode virar navegacao.
     const sel = window.getSelection();
     if (sel && String(sel).length > 0) return;

@@ -2512,3 +2512,48 @@ input::placeholder { color: var(--fg3); }
   .cl-saude { font-size: 12px; }
   .cl-saude b { font-size: 13px; }
 }
+
+/* ------------------------------------------------- ordem escolhida do cartao --- */
+/* A alca e o UNICO ponto que arrasta. O cartao inteiro arrastavel brigaria com
+   o clique que entra na loja e com selecionar texto -- e voce perderia o gesto
+   mais usado da tela para ganhar o menos usado. */
+.cl-alca {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 26px;
+  flex: 0 0 auto;
+  margin-right: 2px;
+  border-radius: var(--r-p);
+  color: var(--fg3);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity .13s ease, color .13s ease, background .13s ease;
+}
+
+/* Aparece no hover do cartao: numa TV, 20 alcas visiveis o tempo todo sao 20
+   ruidos. Quem vai arrastar esta com o mouse no cartao. */
+.cartao-loja:hover .cl-alca { opacity: 1; }
+.cl-alca:hover { color: var(--fg); background: var(--hov); }
+.cl-alca:active { cursor: grabbing; }
+.cl-alca svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
+/* Foco visivel: a alca e alcancavel por teclado e move com as setas. */
+.cl-alca:focus-visible { opacity: 1; outline: 2px solid color-mix(in srgb, var(--info) 70%, transparent); outline-offset: 1px; }
+
+.cl-arrastando { opacity: .4; }
+
+/* Linha no lugar onde vai cair, e nao o cartao mudando de posicao ao vivo:
+   reordenar a grade durante o arrasto faz o alvo fugir do cursor. */
+.cl-alvo { box-shadow: -3px 0 0 0 var(--info); }
+
+.cl-ordem-aviso {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 10.5px;
+  color: var(--fg3);
+}
+
+@media (prefers-reduced-motion: reduce) { .cl-alca { transition: none; } }
