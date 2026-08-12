@@ -2418,3 +2418,63 @@ input::placeholder { color: var(--fg3); }
    vermelho, servidor saudavel tem anel verde. O anel diz QUEM e; a cor dele
    continua dizendo COMO esta. */
 
+
+/* ------------------------------------------------------------ saude do disco --- */
+.secao-discos { margin: 22px 0 0; }
+.secao-discos h3 { margin: 0 0 4px; font-size: 12.5px; }
+
+.disco-linha {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 0;
+  border-top: 1px solid var(--bd2);
+}
+
+.disco-id { display: flex; flex-direction: column; gap: 2px; }
+.disco-letra { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.disco-tipo {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: .08em;
+  background: var(--pnl2);
+  color: var(--fg3);
+  width: fit-content;
+}
+
+/* SSD e HDD tem falhas diferentes: SSD gasta por escrita, HDD morre por setor.
+   A cor distingue os dois porque a leitura do desgaste depende de qual e. */
+.disco-tipo-ssd { color: var(--info); background: color-mix(in srgb, var(--info) 12%, transparent); }
+.disco-tipo-hdd { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+
+.disco-barra { height: 5px; border-radius: 4px; background: var(--pnl2); overflow: hidden; }
+.disco-barra i { display: block; height: 100%; border-radius: 4px; background: var(--ok); }
+.disco-espaco { font-size: 11.5px; margin-bottom: 5px; }
+.disco-nums { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
+
+.disco-num { display: flex; flex-direction: column; gap: 1px; }
+.disco-num b { font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
+.disco-num span {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--fg3);
+}
+
+/* "nao medido" nao pode parecer numero: sem negrito, sem mono grande, em cinza.
+   O contrario -- um 0% com a mesma tipografia de um 78% -- e o que fazia a tela
+   afirmar desgaste zero em 44 discos que ninguem tinha medido. */
+.disco-sem { font-size: 10.5px; font-style: italic; color: var(--fg3); font-weight: 400; }
+
+.disco-selo { font-size: 10px; white-space: nowrap; }
+.disco-pequeno { opacity: .55; }
+.disco-vazio { font-size: 11.5px; color: var(--fg3); padding: 10px 0; }
+
+@media (max-width: 560px) {
+  .disco-linha { grid-template-columns: 56px minmax(0, 1fr); }
+}

@@ -49,7 +49,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.6.1'
+$VERSAO = 'ps-1.7.0'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -267,6 +267,53 @@ function NovaAmostra {
       $amostra.flags += 'smart_unavailable'
     }
 
+    # ---- SAUDE POR VOLUME, medida de verdade -----------------------------
+    # `HealthStatus` sozinho e binario e diz "OK" ate o disco estar morrendo:
+    # ele nao avisa antes, que e a unica coisa que interessa em saude de disco.
+    #
+    # `Get-StorageReliabilityCounter` da o que decide troca de peca:
+    #   Wear         -> desgaste do SSD em %, o numero que diz quando trocar
+    #   PowerOnHours -> idade real, nao data de compra
+    #
+    # E embutido no Windows 8/Server 2012 para cima: nada de instalar smartmontools
+    # em quarenta maquinas de loja.
+    #
+    # O mapa e POR LETRA porque desgaste e do disco FISICO e a amostra e por
+    # volume: dois volumes no mesmo SSD compartilham o mesmo desgaste, e dois
+    # discos na mesma maquina tem desgastes diferentes. Atribuir um numero so a
+    # todos os volumes seria inventar.
+    $saudeVol = @{}
+    try {
+      foreach ($pd in Get-PhysicalDisk -ErrorAction Stop) {
+        $rc = $null
+        try { $rc = $pd | Get-StorageReliabilityCounter -ErrorAction Stop } catch { }
+
+        $letras = @()
+        try {
+          $letras = @(Get-Partition -DiskNumber $pd.DeviceId -ErrorAction Stop |
+                      Where-Object { $_.DriveLetter } |
+                      ForEach-Object { "$($_.DriveLetter):" })
+        } catch { }
+
+        foreach ($l in $letras) {
+          $saudeVol[$l] = @{
+            # `-eq 'Healthy'` e nao `-ne 0`: aqui HealthStatus vem como texto.
+            ok    = ($pd.HealthStatus -eq 'Healthy')
+            tipo  = if ($pd.MediaType -and "$($pd.MediaType)" -ne 'Unspecified') { "$($pd.MediaType)" } else { $null }
+            # NULO quando nao medido, NUNCA zero. Zero de desgaste num HDD de 2011
+            # nao e leitura, e preenchimento -- e era o que o painel mostrava para
+            # os 44 discos da frota.
+            wear  = if ($rc -and $null -ne $rc.Wear)         { [int]$rc.Wear }         else { $null }
+            horas = if ($rc -and $null -ne $rc.PowerOnHours) { [int]$rc.PowerOnHours } else { $null }
+          }
+        }
+      }
+    } catch {
+      # Get-PhysicalDisk falha em VM sem disco virtual apresentado como fisico, e
+      # em Windows antigo. Sem ele, a amostra sai como antes -- sem inventar.
+      $amostra.flags += 'saude_disco_indisponivel'
+    }
+
     # Size > 0 no filtro WQL, e nao so DriveType=3.
     #
     # Esta maquina tem um G: com Size = 0 — volume montado mas sem tamanho
@@ -274,15 +321,23 @@ function NovaAmostra {
     # unidade virtual). Ele entrava na serie com total_gb = 0 e free_pct nulo,
     # sujando o "menor volume livre" do dashboard com um disco que nao existe.
     foreach ($v in Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3 AND Size > 0' -ErrorAction Stop) {
+      # O do volume vence o geral da maquina: se a letra estiver no mapa, a
+      # medida e DAQUELE disco fisico. Sem ela, cai no antigo, que e melhor que
+      # nada mas nao distingue disco.
+      $sv = $saudeVol[$v.DeviceID]
+
       $amostra.disks += @{
         drive        = $v.DeviceID
         volume_label = $v.VolumeName
         filesystem   = $v.FileSystem
         total_gb     = [Math]::Round([double]$v.Size / 1GB, 2)
         free_gb      = [Math]::Round([double]$v.FreeSpace / 1GB, 2)
-        smart_ok     = $saude
-        smart_source = if ($null -ne $saude) { 'wmi' } else { 'none' }
-        media_type   = $tipo
+        smart_ok     = if ($sv) { $sv.ok } else { $saude }
+        smart_source = if ($sv -or $null -ne $saude) { 'wmi' } else { 'none' }
+        media_type   = if ($sv -and $sv.tipo) { $sv.tipo } else { $tipo }
+        # Os dois campos que existiam no banco e nunca foram preenchidos.
+        smart_wear_pct       = if ($sv) { $sv.wear }  else { $null }
+        smart_power_on_hours = if ($sv) { $sv.horas } else { $null }
       }
       # free_pct NAO e enviado: derivado no servidor.
     }

@@ -12,9 +12,9 @@
        formulário de credencial.
 
        O ?v= muda a URL do arquivo: um navegador que já guardou "dash.js" tem
-       aquela cópia indexada pela URL exata, e pedir "dash.js?v=51" é pedir outro
+       aquela cópia indexada pela URL exata, e pedir "dash.js?v=52" é pedir outro
        recurso. AO ALTERAR dash.js OU styles.css, SUBA ESTE NÚMERO. -->
-  <link rel="stylesheet" href="styles.css?v=51">
+  <link rel="stylesheet" href="styles.css?v=52">
 </head>
 <body>
 
@@ -520,6 +520,15 @@
     <div class="grafico-caixa"><canvas id="grafico-mem"></canvas></div>
     <div class="grafico-caixa"><canvas id="grafico-disco"></canvas></div>
 
+    <!-- Saúde dos discos.
+         Depois dos gráficos e ANTES das ações: decidir trocar um disco é decisão
+         de peça, e ela vem antes de mexer na máquina. -->
+    <section id="secao-discos" class="secao-discos" hidden>
+      <h3>Discos</h3>
+      <p id="discos-medido" class="dica"></p>
+      <div id="painel-discos"></div>
+    </section>
+
     <!-- Ações remotas.
          Antes dos eventos porque é o que a pessoa veio fazer quando abre uma
          máquina com problema; depois dos gráficos porque decidir agir sem olhar
@@ -723,7 +732,7 @@
 </div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="config.js?v=51"></script>
-<script src="dash.js?v=51"></script>
+<script src="config.js?v=52"></script>
+<script src="dash.js?v=52"></script>
 </body>
 </html>

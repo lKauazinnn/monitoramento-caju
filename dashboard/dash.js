@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.51-pulso-com-orcamento';
+const BUILD = '2026-08-12.52-saude-disco';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -2956,6 +2956,137 @@ const NOME_DO_ESTADO = {
 };
 
 /** Monta a seção de ações a partir do que o SERVIDOR disse ser possível. */
+// ---------------------------------------------------------------------------
+// Saude dos discos
+// ---------------------------------------------------------------------------
+// TODOS os discos, nao o pior. Uma maquina com um SSD novo e um HD gasto e
+// exatamente o caso em que o resumo por maquina mentiria -- e e o caso em que a
+// informacao serve para alguma coisa.
+//
+// A regra que atravessa esta secao: o que nao foi medido aparece como "nao
+// medido", em cinza e italico, NUNCA como zero. Antes disto o painel afirmava
+// 0% de desgaste nos 44 discos da frota, e um 0 com a mesma tipografia de um 78
+// e uma afirmacao que ninguem desconfia.
+
+/** Horas ligado em algo que se le: 41000h nao diz nada, "4,7 anos" diz. */
+function idadeDisco(horas) {
+  if (horas === null || horas === undefined) return null;
+  const h = Number(horas);
+  if (h < 48) return h + ' h';
+  const dias = h / 24;
+  if (dias < 90) return Math.round(dias) + ' dias';
+  const anos = h / 8760;
+  return anos.toFixed(1).replace('.', ',') + ' anos';
+}
+
+/** Cor do desgaste. Acima de 80% o SSD entra no fim da vida util. */
+function tomDesgaste(v) {
+  if (v === null || v === undefined) return null;
+  if (v >= 90) return 'var(--crit)';
+  if (v >= 80) return 'var(--warn)';
+  return null;
+}
+
+function celulaDisco(rotulo, valor, cor) {
+  const d = el('div', 'disco-num');
+  if (valor === null || valor === undefined) {
+    d.appendChild(el('b', 'disco-sem', 'nao medido'));
+  } else {
+    const b = el('b', null, valor);
+    if (cor) b.style.color = cor;
+    d.appendChild(b);
+  }
+  d.appendChild(el('span', null, rotulo));
+  return d;
+}
+
+async function desenharDiscos(machineId) {
+  const secao = $('secao-discos');
+  const caixa = $('painel-discos');
+  limpar(caixa);
+  secao.hidden = false;
+
+  let d;
+  try {
+    d = await rpc('discos_da_maquina', { p_machine_id: machineId });
+  } catch (e) {
+    txt($('discos-medido'), '');
+    caixa.appendChild(el('p', 'disco-vazio', e.message));
+    return;
+  }
+
+  const discos = (d && d.discos) || [];
+
+  if (discos.length === 0) {
+    txt($('discos-medido'), '');
+    caixa.appendChild(el('p', 'disco-vazio',
+      'Nenhuma leitura de disco na janela. A maquina precisa de um ciclo do agente.'));
+    return;
+  }
+
+  txt($('discos-medido'), 'Medido em ' + horaCurta(d.medido_em)
+    + '. Desgaste e horas exigem agente ps-1.7.0 e driver que informe o contador.');
+
+  for (const k of discos) {
+    const linha = el('div', 'disco-linha');
+    // Particao de servico entra apagada: ela nao decide nada, mas esconde-la
+    // faria a soma dos discos nao fechar com o que o Windows mostra.
+    if (k.pequeno) linha.classList.add('disco-pequeno');
+
+    const ident = el('div', 'disco-id');
+    ident.appendChild(el('div', 'disco-letra', k.drive || '?'));
+    if (k.tipo) {
+      const t = String(k.tipo).toUpperCase();
+      ident.appendChild(el('span',
+        'disco-tipo ' + (t === 'SSD' ? 'disco-tipo-ssd' : t === 'HDD' ? 'disco-tipo-hdd' : ''), t));
+    }
+    linha.appendChild(ident);
+
+    const meio = el('div');
+    const livre = gb(k.free_gb);
+    const total = gbNu(k.total_gb);
+    meio.appendChild(el('div', 'disco-espaco',
+      (livre ?? '?') + ' livres de ' + (total ?? '?')
+      + (k.etiqueta ? '  ·  ' + k.etiqueta : '')));
+
+    const barra = el('div', 'disco-barra');
+    const fill = el('i');
+    const pct = k.free_pct === null || k.free_pct === undefined ? null : Number(k.free_pct);
+    fill.style.width = (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%';
+    if (pct !== null && pct <= PISO_DISCO) fill.style.background = 'var(--crit)';
+    else if (pct !== null && pct <= PISO_DISCO_ATENCAO) fill.style.background = 'var(--warn)';
+    barra.appendChild(fill);
+    meio.appendChild(barra);
+
+    const nums = el('div', 'disco-nums');
+    nums.appendChild(celulaDisco('livre',
+      pct === null ? null : Math.round(pct) + '%', tomDisco(pct)));
+    nums.appendChild(celulaDisco('desgaste',
+      k.desgaste_pct === null || k.desgaste_pct === undefined
+        ? null : Math.round(k.desgaste_pct) + '%',
+      tomDesgaste(k.desgaste_pct)));
+    nums.appendChild(celulaDisco('ligado', idadeDisco(k.horas_ligado)));
+    meio.appendChild(nums);
+
+    linha.appendChild(meio);
+
+    // O selo do Windows fica por ULTIMO e discreto de proposito: ele diz "OK"
+    // ate o disco estar morrendo, entao nao pode ser a primeira coisa que se le.
+    const selo = k.saude_ok === true
+      ? el('span', 'etiqueta etiqueta-online disco-selo', 'sem falha')
+      : k.saude_ok === false
+      ? el('span', 'etiqueta etiqueta-offline disco-selo', 'FALHA')
+      : el('span', 'disco-sem', 'sem leitura');
+    if (k.saude_ok === true) {
+      selo.title = 'Sinalizador do Windows. Ele diz OK ate o disco estar quase morto — '
+        + 'quem avisa antes e o desgaste.';
+    }
+    linha.appendChild(selo);
+
+    caixa.appendChild(linha);
+  }
+}
+
 async function desenharAcoes(m) {
   const secao = $('acoes');
   const aviso = $('acao-aviso');
@@ -3234,7 +3365,7 @@ async function pedirAcao(kind, params, confirmado) {
 // para responder algo que já se sabe.
 //
 // AO PUBLICAR UM AGENTE NOVO, SUBA ESTA LINHA JUNTO.
-const VERSAO_ALVO_AGENTE = 'ps-1.6.1';
+const VERSAO_ALVO_AGENTE = 'ps-1.7.0';
 
 async function atualizarAgentes() {
   // `opcoesCadastro` carrega o endereço de ingestão, e é dele que sai o comando
@@ -3566,6 +3697,8 @@ async function abrirPainel(m) {
   // A zona de remoção só existe para quem pode remover. Mostrar um botão que
   // vai responder "apenas administradores" é convidar para a frustração.
   $('zona-perigo').hidden = Estado.ehAdmin !== true;
+
+  void desenharDiscos(m.machine_id);
 
   $('painel-fundo').hidden = false;
   $('painel').hidden = false;
