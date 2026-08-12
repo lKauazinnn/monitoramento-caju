@@ -2557,3 +2557,19 @@ input::placeholder { color: var(--fg3); }
 }
 
 @media (prefers-reduced-motion: reduce) { .cl-alca { transition: none; } }
+
+/* --------------------------------------- o cartao inteiro pega para arrastar --- */
+/* `grab` no cartao todo, e nao `pointer`: o cursor precisa dizer qual gesto
+   aquele lugar aceita. Clique continua funcionando -- o navegador distingue
+   pressionar-e-soltar de pressionar-e-mover. */
+.cartao-loja[draggable="true"] { cursor: grab; }
+.cartao-loja[draggable="true"]:active { cursor: grabbing; }
+
+/* Os controles de dentro mantem o cursor deles: ali o gesto e clicar, e o
+   cursor nao pode prometer arrasto onde a acao e outra. */
+.cartao-loja[draggable="true"] button,
+.cartao-loja[draggable="true"] .host-quad { cursor: pointer; }
+.cartao-loja[draggable="true"] .cl-alca { cursor: grab; }
+
+/* A alca continua existindo: ela e o caminho de TECLADO (setas movem) e a dica
+   visual de que o cartao se move. Sem ela, arrastar seria um segredo. */

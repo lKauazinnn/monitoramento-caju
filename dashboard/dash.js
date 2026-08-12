@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.55-ordem-dos-cartoes';
+const BUILD = '2026-08-12.56-arrasta-de-qualquer-ponto';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -2028,6 +2028,9 @@ function iconeAlca() {
 
 let arrastando = null;
 
+// Instante em que o ultimo arrasto terminou. Ver o comentario no guarda do clique.
+let arrastouAgora = 0;
+
 /**
  * Liga arrastar-e-soltar na grade.
  *
@@ -2042,7 +2045,7 @@ function ligarArrastarCartoes(grade) {
 
   grade.addEventListener('dragstart', (ev) => {
     const c = ev.target.closest('.cartao-loja');
-    if (!c || !ev.target.closest('.cl-alca')) return;
+    if (!c) return;
     arrastando = c;
     c.classList.add('cl-arrastando');
     // 'move' e nao 'copy': o cursor tem que dizer que a coisa muda de lugar.
@@ -2079,6 +2082,7 @@ function ligarArrastarCartoes(grade) {
   });
 
   grade.addEventListener('dragend', () => {
+    arrastouAgora = Date.now();
     if (arrastando) arrastando.classList.remove('cl-arrastando');
     for (const x of grade.querySelectorAll('.cl-alvo')) x.classList.remove('cl-alvo');
     arrastando = null;
@@ -2126,12 +2130,27 @@ function cartaoLoja(loja) {
   const c = el('article', `cartao-loja cl-${situacao}`);
   c.dataset.loja = loja.code;
 
+  // ARRASTA DE QUALQUER PONTO. Quem distingue arrasto de clique e o proprio
+  // navegador: em elemento `draggable`, mover com o botao pressionado inicia o
+  // arrasto e NAO dispara clique depois; pressionar e soltar sem mover dispara o
+  // clique normalmente.
+  //
+  // Nao precisei de limiar de pixels nem de temporizador — a plataforma ja faz
+  // essa distincao, e reimplementa-la a mao seria inventar um segundo criterio
+  // para divergir do primeiro em toque, caneta e mouse lento.
+  //
+  // O custo: selecionar texto dentro do cartao deixa de funcionar. E a troca que
+  // "arrastar de qualquer lugar" implica, e ninguem copia texto de cartao de
+  // painel — copia-se de dentro da gaveta.
+  c.draggable = true;
+
   const cab = el('div', 'cl-cab');
   const alca = el('div', 'cl-alca');
   alca.draggable = true;
   alca.tabIndex = 0;
   alca.setAttribute('role', 'button');
-  alca.title = 'Arraste para reordenar. Com o foco aqui, use as setas esquerda e direita.';
+  alca.title = 'Arraste o cartao de qualquer ponto para reordenar. '
+    + 'Com o foco aqui, use as setas esquerda e direita.';
   alca.setAttribute('aria-label', `Reordenar ${loja.code}`);
   alca.appendChild(iconeAlca());
   cab.appendChild(alca);
@@ -2317,6 +2336,9 @@ function cartaoLoja(loja) {
     // A alca tem role=button mas nao e <button>: sem esta linha, arrastar
     // terminaria entrando na loja.
     if (ev.target.closest('.cl-alca')) return;
+    // 250ms depois de um arrasto, clique nao e navegacao. Cobre o navegador que
+    // dispara clique no fim do arrasto — sem isso, reordenar entraria na loja.
+    if (Date.now() - arrastouAgora < 250) return;
     // Selecionar texto do cartao nao pode virar navegacao.
     const sel = window.getSelection();
     if (sel && String(sel).length > 0) return;
