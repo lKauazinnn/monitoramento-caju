@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.48-servidor-primeiro';
+const BUILD = '2026-08-10.49-nao-oferecer-ligar-vm';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -3008,10 +3008,24 @@ async function desenharAcoes(m) {
   $('linha-ligar').hidden = lig.aplicavel !== true;
 
   if (lig.aplicavel) {
-    const podeLigar = lig.tem_mac === true && !!lig.vizinho;
+    // `mac_is_virtual` vem da view (0037), calculado no servidor — não é a tela
+    // adivinhando. O banco JÁ recusa este comando; isto aqui é para o botão não
+    // ser oferecido. Oferecer e recusar depois é gastar o clique de quem opera
+    // para ensinar uma regra que a tela já conhecia.
+    const virtual = m.mac_is_virtual === true;
+
+    const podeLigar = !virtual && lig.tem_mac === true && !!lig.vizinho;
     $('btn-wake').disabled = !podeLigar;
 
-    if (lig.wifi) {
+    if (virtual) {
+      // Primeiro na cadeia: numa VM os outros motivos são irrelevantes. Ela pode
+      // ter MAC, ter vizinho online e estar no cabo — e continuar impossível de
+      // ligar por rede, porque a placa não existe com a máquina desligada.
+      motivos.push('Não dá para ligar esta máquina por rede: ela é virtual, e com '
+        + 'a VM desligada a placa de rede não existe — não há o que receber o '
+        + 'pacote. Ligue pelo hipervisor. Para aplicar atualização ou liberar '
+        + 'memória sem sair do painel, use Reiniciar: o agente executa de dentro.');
+    } else if (lig.wifi) {
       motivos.push('Não dá para ligar esta máquina: ela está em Wi-Fi, e Wake-on-LAN '
         + 'por Wi-Fi não funciona na prática. Só por cabo.');
     } else if (!lig.tem_mac) {
