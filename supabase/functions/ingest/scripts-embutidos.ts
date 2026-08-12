@@ -2,7 +2,7 @@
 // GERADO — não edite à mão
 // =============================================================================
 // Origem:
-//   agent/agente-powershell.ps1  (53181 bytes, sha256:b25f401bc272c76a)
+//   agent/agente-powershell.ps1  (55970 bytes, sha256:db4b8ae45138a814)
 //   docker/ingest-local/instalar.ps1  (12532 bytes, sha256:2dbff83b3f196c6c)
 //   scripts/atualizar-agente.ps1  (8832 bytes, sha256:8676568c50530e89)
 //
@@ -63,7 +63,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.6.0'
+$VERSAO = 'ps-1.6.1'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -597,7 +597,11 @@ function SpoolRemoverPrimeiras {
 # Envio
 # ---------------------------------------------------------------------------
 function Enviar {
-  param([array] $Amostras, [hashtable] $Maquina)
+  # \`PrazoSegundos\` existe para o PULSO. O envio normal pode esperar 30s: perder
+  # uma amostra e pior que atrasar. O pulso nao: ele e melhoria de latencia, e um
+  # pulso pendurado 30s dentro do laco de espera rouba metade do ciclo seguinte.
+  # Prazo curto ali significa "se nao for rapido, deixa para o proximo".
+  param([array] $Amostras, [hashtable] $Maquina, [int] $PrazoSegundos = 30)
 
   $envelope = @{
     agent_version = $VERSAO
@@ -632,7 +636,7 @@ function Enviar {
 
   # Regra 18: timeout explicito.
   $resp = Invoke-RestMethod -Uri $url -Method Post -Headers $cab \`
-            -ContentType 'application/json' -Body $corpo -TimeoutSec 30
+            -ContentType 'application/json' -Body $corpo -TimeoutSec $PrazoSegundos
   return $resp
 }
 
@@ -1089,17 +1093,50 @@ function ProcessarComandos {
         Registrar 'AVI' "nao consegui relatar antes de atualizar: $($_.Exception.Message)"
       }
 
-      # Sobe o agente NOVO num processo separado e sai. A tarefa agendada
-      # tambem o traria de volta no proximo boot, mas esperar o proximo boot
-      # para uma correcao de coletor seria esperar semanas.
+      # Sobe o agente NOVO e CONFERE QUE ELE VIVEU antes de sair.
+      #
+      # A versao anterior fazia Start-Process e \`exit 0\` sem olhar o resultado.
+      # Num servidor onde a sessao 0 nao cria processo (desktop heap esgotado,
+      # 0xC0000142), o processo novo morria na largada e o velho ja tinha se
+      # despedido: a maquina ficava SEM AGENTE ate o proximo boot. Foi assim que
+      # eu apaguei o monitoramento de duas maquinas de loja, relatando sucesso.
+      #
+      # Uma atualizacao que falha deve deixar a maquina rodando a versao ANTIGA,
+      # nunca sem monitoramento nenhum.
+      $novo = $null
       try {
-        Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
+        $novo = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList @(
           '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-          ("\`"" + $script:reiniciarAgenteDepois + "\`"")) | Out-Null
+          ("\`"" + $script:reiniciarAgenteDepois + "\`""))
       } catch {
         Registrar 'ERR' "nao consegui subir o agente novo: $($_.Exception.Message)"
       }
-      exit 0
+
+      # 4s: tempo de o PowerShell carregar e falhar se for falhar. Processo que
+      # morre por politica ou por falta de recurso morre nos primeiros segundos.
+      $vivo = $false
+      if ($novo) {
+        Start-Sleep -Seconds 4
+        try { $vivo = -not (Get-Process -Id $novo.Id -ErrorAction Stop).HasExited } catch { $vivo = $false }
+      }
+
+      if ($vivo) {
+        Registrar 'INF' "agente novo de pe (pid $($novo.Id)); saindo"
+        exit 0
+      }
+
+      # Nao subiu. Volta o arquivo antigo para o proximo boot nao insistir numa
+      # versao que nao roda aqui, e SEGUE VIVO nesta versao — ela esta carregada
+      # em memoria e funciona.
+      Registrar 'ERR' 'o agente novo nao subiu; restaurando a versao anterior e continuando nesta'
+      try {
+        $bkp = "$($script:reiniciarAgenteDepois).anterior"
+        if (Test-Path $bkp) { Copy-Item $bkp $script:reiniciarAgenteDepois -Force }
+      } catch {
+        Registrar 'ERR' "nem o rollback funcionou: $($_.Exception.Message)"
+      }
+
+      $script:reiniciarAgenteDepois = $null
     }
 
     # SUSPENDER, pela mesma razao e na mesma ordem: o relato sai primeiro.
@@ -1267,24 +1304,39 @@ while ($true) {
   #
   # Se o envio falhar, o catch de sempre trata: o pulso e melhoria de latencia,
   # nao caminho critico. A amostra ja esta no spool.
+  # O PULSO TEM ORCAMENTO DE TEMPO, e este e o conserto da primeira versao.
+  #
+  # Antes ele usava "o tempo que sobra do ciclo". Numa maquina cuja coleta demora
+  # 50s sobravam 15s, entao ela mandava 1 lote por minuto — quase nenhum pulso.
+  # As maquinas que MAIS precisavam do pulso eram as que menos recebiam, e o
+  # envio extra dentro do laco principal atrasava ainda mais o ciclo delas. Duas
+  # ficaram instaveis por isso.
+  #
+  # Agora: o pulso so acontece se houver folga de verdade, ele tem prazo curto
+  # proprio, e NUNCA empurra o proximo ciclo. Se a espera for menor que 20s, nao
+  # ha folga e ele simplesmente nao pulsa — a amostra do ciclo ja e o contato.
   $fim = (Get-Date).AddSeconds($espera)
   $ultima = $amostra
+  $podePulsar = ($espera -ge 20) -and ($tentativa -eq 0) -and ($null -ne $ultima)
 
   while ((Get-Date) -lt $fim) {
     $resta = ($fim - (Get-Date)).TotalSeconds
-    Start-Sleep -Seconds ([Math]::Min(15, [Math]::Max(1, $resta)))
+    Start-Sleep -Seconds ([int][Math]::Max(1, [Math]::Min(15, $resta)))
 
-    if ((Get-Date) -ge $fim) { break }
-    if ($tentativa -gt 0) { continue }   # em falha, o recuo manda; nao insistir
-    if ($null -eq $ultima) { continue }
+    # Nao pulsa perto do fim: um envio comecando a 3s do proximo ciclo atrasa a
+    # coleta, que e a funcao que nao pode ser perdida.
+    if (($fim - (Get-Date)).TotalSeconds -lt 5) { break }
+    if (-not $podePulsar) { continue }
 
     try {
       # \`Out-Null\` e nao \`Registrar\`: um pulso por 15s encheria o log com linha
       # que nao diz nada. O que interessa no log e a amostra e a falha.
-      Enviar -Amostras @($ultima) -Maquina $maquina | Out-Null
+      Enviar -Amostras @($ultima) -Maquina $maquina -PrazoSegundos 8 | Out-Null
     } catch {
-      # Silencio proposital. Falha de pulso nao e novidade: se a rede caiu, o
-      # ciclo seguinte vai registrar isso com o contexto todo.
+      # Silencio proposital, e o pulso PARA no primeiro erro deste ciclo. Insistir
+      # numa rede que nao responde e o que transformava latencia em atraso de
+      # coleta: cada tentativa pendurada roubava segundos do ciclo seguinte.
+      $podePulsar = $false
     }
   }
 }
