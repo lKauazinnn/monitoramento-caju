@@ -2,7 +2,7 @@
 // GERADO — não edite à mão
 // =============================================================================
 // Origem:
-//   agent/agente-powershell.ps1  (51070 bytes, sha256:487e503b867adec9)
+//   agent/agente-powershell.ps1  (53181 bytes, sha256:b25f401bc272c76a)
 //   docker/ingest-local/instalar.ps1  (12532 bytes, sha256:2dbff83b3f196c6c)
 //   scripts/atualizar-agente.ps1  (8832 bytes, sha256:8676568c50530e89)
 //
@@ -63,7 +63,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.5.0'
+$VERSAO = 'ps-1.6.0'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -1241,7 +1241,52 @@ while ($true) {
   }
 
   if ($espera -lt 1) { $espera = 1 }
-  Start-Sleep -Seconds $espera
+
+  # -------------------------------------------------------------------------
+  # PULSO: reenvio da ultima amostra durante a espera
+  # -------------------------------------------------------------------------
+  # O problema: com envio a cada 60s, o servidor so pode declarar uma maquina
+  # offline depois de ~120s (dois envios perdidos). Menos que isso e qualquer
+  # ciclo lento vira falso offline. Entao saber que um servidor caiu levava mais
+  # de dois minutos.
+  #
+  # A solucao NAO e um endpoint novo: e reenviar a MESMA amostra a cada 15s.
+  #
+  #   - \`register_metrics\` carimba \`last_contact_at = now()\` em TODO lote aceito
+  #   - a amostra repetida cai no \`on conflict do nothing\` da chave
+  #     (machine_id, time) e nao cria linha nenhuma
+  #
+  # Ou seja: o contato e renovado a cada 15s sem inserir um unico registro. Sem
+  # crescimento de banco, sem migracao, sem rota nova. O limiar de offline pode
+  # cair para ~40s.
+  #
+  # ISTO SO FUNCIONA POR CAUSA DA 0032. Antes dela, quem marcava o contato era o
+  # relogio do AGENTE, vindo dentro da amostra — reenviar a mesma amostra
+  # reenviaria o mesmo timestamp e nao renovaria nada. Foi a separacao entre
+  # "quando foi medido" e "quando chegou" que tornou o pulso possivel.
+  #
+  # Se o envio falhar, o catch de sempre trata: o pulso e melhoria de latencia,
+  # nao caminho critico. A amostra ja esta no spool.
+  $fim = (Get-Date).AddSeconds($espera)
+  $ultima = $amostra
+
+  while ((Get-Date) -lt $fim) {
+    $resta = ($fim - (Get-Date)).TotalSeconds
+    Start-Sleep -Seconds ([Math]::Min(15, [Math]::Max(1, $resta)))
+
+    if ((Get-Date) -ge $fim) { break }
+    if ($tentativa -gt 0) { continue }   # em falha, o recuo manda; nao insistir
+    if ($null -eq $ultima) { continue }
+
+    try {
+      # \`Out-Null\` e nao \`Registrar\`: um pulso por 15s encheria o log com linha
+      # que nao diz nada. O que interessa no log e a amostra e a falha.
+      Enviar -Amostras @($ultima) -Maquina $maquina | Out-Null
+    } catch {
+      # Silencio proposital. Falha de pulso nao e novidade: se a rede caiu, o
+      # ciclo seguinte vai registrar isso com o contexto todo.
+    }
+  }
 }
 
 Registrar 'INF' 'agente encerrado'
