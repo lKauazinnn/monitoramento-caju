@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.53-saude-no-cartao';
+const BUILD = '2026-08-12.54-smart-cru';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -3072,6 +3072,26 @@ function tomDesgaste(v) {
   return null;
 }
 
+/**
+ * Setor realocado ou pendente.
+ *
+ * Separada de `celulaDisco` porque a regra de cor é o oposto: aqui ZERO é a boa
+ * notícia. Reaproveitar a outra faria zero aparecer sem cor, e a informação mais
+ * tranquilizadora da tela — "nenhum setor ruim" — ficaria indistinguível de
+ * "não medido".
+ */
+function celulaSetores(rotulo, v) {
+  if (v === null || v === undefined) return celulaDisco(rotulo, null);
+
+  const n = Number(v);
+  const c = celulaDisco(rotulo, String(n), n > 0 ? 'var(--crit)' : 'var(--ok)');
+  c.title = n > 0
+    ? `${n} setor(es) ${rotulo}. Acima de zero significa disco em degradação — `
+      + 'programe a troca. Não espera melhorar sozinho.'
+    : 'Nenhum setor ruim. É o indicador que avisa antes, e ele está limpo.';
+  return c;
+}
+
 function celulaDisco(rotulo, valor, cor) {
   const d = el('div', 'disco-num');
   if (valor === null || valor === undefined) {
@@ -3110,7 +3130,7 @@ async function desenharDiscos(machineId) {
   }
 
   txt($('discos-medido'), 'Medido em ' + horaCurta(d.medido_em)
-    + '. Desgaste e horas exigem agente ps-1.7.1 e driver que informe o contador.');
+    + '. Desgaste e horas exigem agente ps-1.8.0 e driver que informe o contador.');
 
   for (const k of discos) {
     const linha = el('div', 'disco-linha');
@@ -3151,6 +3171,13 @@ async function desenharDiscos(machineId) {
         ? null : Math.round(k.desgaste_pct) + '%',
       tomDesgaste(k.desgaste_pct)));
     nums.appendChild(celulaDisco('ligado', idadeDisco(k.horas_ligado)));
+
+    // OS DOIS QUE DECIDEM TROCA. Zero é notícia BOA e aparece em verde; qualquer
+    // valor acima de zero é vermelho, sem faixa intermediária — um setor
+    // realocado não é "atenção", é disco em degradação. Não medido continua
+    // cinza e itálico.
+    nums.appendChild(celulaSetores('realocados', k.realocados));
+    nums.appendChild(celulaSetores('pendentes', k.pendentes));
     meio.appendChild(nums);
 
     linha.appendChild(meio);
@@ -3450,7 +3477,7 @@ async function pedirAcao(kind, params, confirmado) {
 // para responder algo que já se sabe.
 //
 // AO PUBLICAR UM AGENTE NOVO, SUBA ESTA LINHA JUNTO.
-const VERSAO_ALVO_AGENTE = 'ps-1.7.1';
+const VERSAO_ALVO_AGENTE = 'ps-1.8.0';
 
 async function atualizarAgentes() {
   // `opcoesCadastro` carrega o endereço de ingestão, e é dele que sai o comando

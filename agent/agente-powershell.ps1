@@ -49,7 +49,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.7.1'
+$VERSAO = 'ps-1.8.0'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -267,6 +267,75 @@ function NovaAmostra {
       $amostra.flags += 'smart_unavailable'
     }
 
+    # ---- SMART CRU, o que o CrystalDiskInfo le ---------------------------
+    # `MSStorageDriver_FailurePredictData` devolve o MESMO buffer de 512 bytes que
+    # o CrystalDiskInfo obtem mandando comando ATA ao disco. Formato:
+    #
+    #   offset 2 em diante: 30 atributos de 12 bytes cada
+    #     byte 0     id do atributo
+    #     byte 3     valor normalizado (100 = otimo, cai com o uso)
+    #     bytes 5-10 valor CRU, 6 bytes little-endian
+    #
+    # Exige privilegio elevado — e por isso o CrystalDiskInfo tambem pede. O
+    # agente roda como SYSTEM pela tarefa agendada, entao ele tem.
+    #
+    # O QUE DECIDE TROCA DE PECA:
+    #   5   setores realocados  -> QUALQUER valor > 0 e disco morrendo
+    #   197 setores pendentes   -> pior que o 5: setor falhando agora
+    #   9   horas ligado        -> idade real de uso
+    #   231/233 vida do SSD     -> % restante, o numero que responde "quando trocar"
+    #
+    # `InstanceName` do WMI nao e letra de volume; e caminho de dispositivo. O
+    # casamento com C:/D: e por ORDEM de disco fisico, que e a mesma ordem que
+    # Get-PhysicalDisk devolve — e por isso este bloco vem antes daquele.
+    $smartPorDisco = @{}
+    try {
+      $preditos = @(Cim MSStorageDriver_FailurePredictStatus -Prazo 6)
+      $brutos   = @(Get-CimInstance -Namespace 'root/wmi' `
+                      -ClassName MSStorageDriver_FailurePredictData `
+                      -OperationTimeoutSec 6 -ErrorAction Stop)
+
+      for ($n = 0; $n -lt $brutos.Count; $n++) {
+        $b = $brutos[$n].VendorSpecific
+        if ($null -eq $b -or $b.Length -lt 14) { continue }
+
+        $attrs = @{}
+        for ($i = 2; $i + 11 -lt $b.Length; $i += 12) {
+          $id = [int]$b[$i]
+          if ($id -eq 0) { continue }
+          $cru = 0L
+          for ($k = 5; $k -ge 0; $k--) { $cru = ($cru * 256) + [int]$b[$i + $k + 5] }
+          $attrs[$id] = @{ norm = [int]$b[$i + 3]; cru = $cru }
+        }
+
+        # Vida do SSD: fabricantes usam 231 ou 233, e o valor util e o
+        # NORMALIZADO (100 -> 0), nao o cru. Guardo o desgaste (100 - vida) porque
+        # e o que a coluna `smart_wear_pct` significa.
+        $vida = $null
+        foreach ($idVida in @(231, 233, 202, 173)) {
+          if ($attrs.ContainsKey($idVida)) { $vida = $attrs[$idVida].norm; break }
+        }
+
+        $smartPorDisco[$n] = @{
+          realocados = if ($attrs.ContainsKey(5))   { [int]$attrs[5].cru }   else { $null }
+          pendentes  = if ($attrs.ContainsKey(197)) { [int]$attrs[197].cru } else { $null }
+          horas      = if ($attrs.ContainsKey(9))   { [int]$attrs[9].cru }   else { $null }
+          # Desgaste = 100 - vida restante. So aceito faixa plausivel: fabricante
+          # que nao implementa o atributo devolve 0 ou 255, e os dois virariam
+          # desgaste absurdo.
+          desgaste   = if ($null -ne $vida -and $vida -ge 1 -and $vida -le 100) { 100 - $vida } else { $null }
+          vai_falhar = if ($n -lt $preditos.Count) { [bool]$preditos[$n].PredictFailure } else { $null }
+        }
+      }
+
+      if ($smartPorDisco.Count -gt 0) { $amostra.flags += 'smart_cru' }
+    } catch {
+      # Acesso negado (sem elevacao), maquina virtual (disco virtual nao tem
+      # SMART), driver RAID que nao repassa. Nos tres casos a amostra sai com o
+      # que o caminho anterior conseguir, sem inventar nada.
+      $amostra.flags += 'smart_cru_indisponivel'
+    }
+
     # ---- SAUDE POR VOLUME, medida de verdade -----------------------------
     # `HealthStatus` sozinho e binario e diz "OK" ate o disco estar morrendo:
     # ele nao avisa antes, que e a unica coisa que interessa em saude de disco.
@@ -295,8 +364,18 @@ function NovaAmostra {
                       ForEach-Object { "$($_.DriveLetter):" })
         } catch { }
 
+        # O SMART cru daquele disco fisico, pelo numero dele. `DeviceId` do
+        # Get-PhysicalDisk e o mesmo indice de ordem que a lista do WMI.
+        $sc = $smartPorDisco[[int]$pd.DeviceId]
+
         foreach ($l in $letras) {
           $saudeVol[$l] = @{
+            # SMART cru vence: ele traz o que decide troca de peca. O
+            # StorageReliabilityCounter fica como reserva porque em boa parte da
+            # frota ele nao devolve nada.
+            realocados = if ($sc) { $sc.realocados } else { $null }
+            pendentes  = if ($sc) { $sc.pendentes }  else { $null }
+            vai_falhar = if ($sc) { $sc.vai_falhar } else { $null }
             # `-eq 'Healthy'` e nao `-ne 0`: aqui HealthStatus vem como texto.
             ok    = ($pd.HealthStatus -eq 'Healthy')
             tipo  = if ($pd.MediaType -and "$($pd.MediaType)" -ne 'Unspecified') { "$($pd.MediaType)" } else { $null }
@@ -316,9 +395,19 @@ function NovaAmostra {
             # desgasta por escrita. E num SSD com anos de uso, zero e ausencia de
             # leitura, nao desgaste nulo. Nos dois casos o honesto e NULO, para a
             # tela dizer "nao medido".
-            wear  = if ($rc -and $null -ne $rc.Wear -and [int]$rc.Wear -gt 0 `
-                        -and "$($pd.MediaType)" -eq 'SSD') { [int]$rc.Wear } else { $null }
-            horas = if ($rc -and $null -ne $rc.PowerOnHours) { [int]$rc.PowerOnHours } else { $null }
+            #
+            # SMART CRU PRIMEIRO, contador do Windows depois. O SMART vem do
+            # proprio disco e responde em quase toda maquina fisica; o
+            # StorageReliabilityCounter dependeu do driver e veio nulo em quase
+            # toda a frota. A ordem e "melhor fonte primeiro, reserva depois", e
+            # nao "a que eu implementei primeiro".
+            wear  = if ($sc -and $null -ne $sc.desgaste) { $sc.desgaste }
+                    elseif ($rc -and $null -ne $rc.Wear -and [int]$rc.Wear -gt 0 `
+                            -and "$($pd.MediaType)" -eq 'SSD') { [int]$rc.Wear }
+                    else { $null }
+            horas = if ($sc -and $null -ne $sc.horas -and $sc.horas -gt 0) { $sc.horas }
+                    elseif ($rc -and $null -ne $rc.PowerOnHours) { [int]$rc.PowerOnHours }
+                    else { $null }
           }
         }
       }
@@ -346,8 +435,15 @@ function NovaAmostra {
         filesystem   = $v.FileSystem
         total_gb     = [Math]::Round([double]$v.Size / 1GB, 2)
         free_gb      = [Math]::Round([double]$v.FreeSpace / 1GB, 2)
-        smart_ok     = if ($sv) { $sv.ok } else { $saude }
+        # A PREDICAO DO WINDOWS vence o HealthStatus quando existe: ela diz "este
+        # disco VAI falhar", que e afirmacao com valor. O HealthStatus diz "OK"
+        # ate o disco estar morrendo.
+        smart_ok     = if ($sv -and $null -ne $sv.vai_falhar) { -not $sv.vai_falhar }
+                       elseif ($sv) { $sv.ok } else { $saude }
         smart_source = if ($sv -or $null -ne $saude) { 'wmi' } else { 'none' }
+        # Os dois atributos que DECIDEM troca: acima de zero, compre disco.
+        smart_reallocated = if ($sv) { $sv.realocados } else { $null }
+        smart_pending     = if ($sv) { $sv.pendentes }  else { $null }
         media_type   = if ($sv -and $sv.tipo) { $sv.tipo } else { $tipo }
         # Os dois campos que existiam no banco e nunca foram preenchidos.
         smart_wear_pct       = if ($sv) { $sv.wear }  else { $null }
@@ -1384,9 +1480,32 @@ while ($true) {
     if (-not $podePulsar) { continue }
 
     try {
-      # `Out-Null` e nao `Registrar`: um pulso por 15s encheria o log com linha
-      # que nao diz nada. O que interessa no log e a amostra e a falha.
-      Enviar -Amostras @($ultima) -Maquina $maquina -PrazoSegundos 8 | Out-Null
+      # O PULSO TEM QUE PROCESSAR OS COMANDOS QUE RECEBE.
+      #
+      # A primeira versao fazia `| Out-Null` e jogava a resposta fora. Mas a
+      # resposta e onde vem a fila: o servidor entrega o comando a QUALQUER envio,
+      # marca como `sent`, e espera o resultado. O pulso recebia e descartava, o
+      # ciclo seguinte pedia e nao vinha mais nada -- ja tinha sido entregue.
+      #
+      # Resultado: TODO comando remoto parou de funcionar em quem estava na 1.6.0
+      # ou mais nova. Reiniciar, ligar, suspender, atualizar. Vinte e quatro
+      # comandos ficaram em `sent` por 42 minutos com as maquinas saudaveis, e por
+      # fora parecia travamento -- quando era o pulso comendo a fila.
+      #
+      # Nao ha caminho leve possivel aqui: quem pede telemetria recebe comando, e
+      # quem recebe comando tem que executar. Se o pulso nao pode processar, ele
+      # nao pode enviar.
+      $rp = Enviar -Amostras @($ultima) -Maquina $maquina -PrazoSegundos 8
+      ResultadosLimpar
+
+      $cmds = @($rp.comandos)
+      if ($cmds.Count -gt 0) {
+        Registrar 'INF' "pulso recebeu $($cmds.Count) comando(s); executando"
+        ProcessarComandos -Comandos $cmds -Maquina $maquina
+        # Sai da espera: comando executado gera resultado para relatar, e o ciclo
+        # normal e quem faz isso com o contexto todo.
+        break
+      }
     } catch {
       # Silencio proposital, e o pulso PARA no primeiro erro deste ciclo. Insistir
       # numa rede que nao responde e o que transformava latencia em atraso de
