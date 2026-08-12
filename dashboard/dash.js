@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.46-honesto';
+const BUILD = '2026-08-10.47-comando';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -3193,6 +3193,13 @@ async function pedirAcao(kind, params, confirmado) {
 const VERSAO_ALVO_AGENTE = 'ps-1.5.0';
 
 async function atualizarAgentes() {
+  // `opcoesCadastro` carrega o endereço de ingestão, e é dele que sai o comando
+  // manual das máquinas velhas. Sem esta linha o modal só o tinha se a pessoa
+  // tivesse aberto o cadastro de PC antes — e ninguém sabia disso.
+  if (!opcoesCadastro) {
+    try { opcoesCadastro = await rpc('opcoes_cadastro'); } catch (_) { opcoesCadastro = null; }
+  }
+
   const r = await rpc('atualizar_frota', { p_versao_alvo: VERSAO_ALVO_AGENTE });
 
   const pulos = Array.isArray(r.pulos) ? r.pulos : [];
@@ -3211,6 +3218,12 @@ async function atualizarAgentes() {
   txt($('atualizar-resumo'),
     n === 0 && pulos.length === 0
       ? 'Toda a frota já está na ' + VERSAO_ALVO_AGENTE + '. Nada foi enviado.'
+      // n = 0 com pulos: nada foi para a fila, e explicar o funcionamento de uma
+      // fila vazia é o mesmo tipo de texto que dizia "vão se atualizar" sem nada
+      // para atualizar. A lista abaixo é que tem a resposta.
+      : n === 0
+      ? 'Nenhum pedido enviado: nenhuma máquina podia ser atualizada agora. '
+        + 'O motivo de cada uma está abaixo.'
       : n + ' pedido(s) de atualização para ' + VERSAO_ALVO_AGENTE + ' na fila. '
         + 'Cada agente responde no próximo ciclo (até 1 min) dizendo se trocou de '
         + 'versão ou se já estava nela — a máquina que acabou de trocar ainda '
@@ -3244,9 +3257,33 @@ async function atualizarAgentes() {
 
     const caixa = el('div', 'comando-caixa');
     // textContent, não innerHTML: o endereço vem do banco.
-    caixa.appendChild(el('pre', null,
-      "& ([scriptblock]::Create((irm '"
-      + String(CFG.ingestUrl || '').replace(/\/+$/, '') + "/atualizar.ps1')))"));
+    // O endereço vem de `opcoesCadastro.ingestao.ingest_url`, que é a MESMA fonte
+    // do comando de instalação — e a única que existe.
+    //
+    // Eu tinha escrito `CFG.ingestUrl`, que nunca existiu: o config.js do
+    // navegador não carrega endereço de ingestão de propósito (ele é servido antes
+    // de qualquer login). O resultado foi um comando com `irm '/atualizar.ps1'` —
+    // caminho relativo, sem host — que a pessoa copiou e colou num PowerShell que
+    // não tem a menor ideia de qual servidor é esse.
+    const ing = ingestaoConfigurada();
+    const alvo = ing && ing.ingest_url
+      ? String(ing.ingest_url).replace(/\/+$/, '')
+      : null;
+
+    if (alvo) {
+      caixa.appendChild(el('pre', null,
+        "& ([scriptblock]::Create((irm '" + alvo + "/atualizar.ps1')))"));
+    } else {
+      // Comando pela metade é pior que comando nenhum: ele é copiado, falha, e o
+      // tempo vai para descobrir por que — não para atualizar a máquina.
+      caixa.appendChild(el('pre', null,
+        'endereço de ingestão indisponível nesta sessão'));
+      const p = el('p', 'ed-nota',
+        'Só administrador recebe o endereço do servidor. Entre como admin, ou '
+        + 'pegue o comando no cadastro de um PC novo — é o mesmo endereço.');
+      caixa.appendChild(p);
+    }
+
     lista.appendChild(caixa);
   }
 
