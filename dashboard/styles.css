@@ -2404,3 +2404,17 @@ input::placeholder { color: var(--fg3); }
 }
 
 @media (prefers-reduced-motion: reduce) { .fs-ponto { animation: none; } }
+
+/* ------------------------------------------------------- o servidor da loja --- */
+/* Anel em volta do quadradinho, e nao cor diferente: a COR do quadradinho ja
+   carrega o estado (online, degradado, offline) e disputar esse canal apagaria
+   a informacao que mais importa. O anel e um segundo canal, livre. */
+.hq-servidor {
+  box-shadow: 0 0 0 1.5px var(--pnl), 0 0 0 3px currentColor;
+  margin: 1.5px;
+}
+
+/* currentColor herda a cor do proprio estado: servidor offline tem anel
+   vermelho, servidor saudavel tem anel verde. O anel diz QUEM e; a cor dele
+   continua dizendo COMO esta. */
+

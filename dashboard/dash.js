@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-10.47-comando';
+const BUILD = '2026-08-10.48-servidor-primeiro';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1924,13 +1924,43 @@ function cartaoLoja(loja) {
 
   // ------------------------------------------------------------- heatmap
   const mapa = el('div', 'mapa-hosts');
-  for (const m of [...loja.maquinas].sort((a, b) => (a.label || '').localeCompare(b.label || '', 'pt-BR'))) {
+  // O SERVIDOR VEM PRIMEIRO, sempre. Antes era ordem alfabética pura, e num
+  // cartão com treze quadradinhos o servidor da loja caía onde o nome dele
+  // mandasse — em CAJU-ASN, no meio dos KDS. Quem olha a TV procura primeiro o
+  // servidor: se ele cai, a loja para; se um KDS cai, um monitor de cozinha para.
+  // Posição fixa vale mais que ordem alfabética porque o olho aprende o lugar.
+  //
+  // A ordem sai de `role_code`, que é cadastro e não adivinhação por nome. Se um
+  // servidor estiver com o perfil errado, ele aparece fora do lugar — e isso é
+  // informação útil: o cadastro está errado, e agora dá para ver.
+  const PESO_PERFIL = { server: 0, admin: 1, pdv: 2 };
+
+  const ordenadas = [...loja.maquinas].sort((a, b) => {
+    const pa = PESO_PERFIL[a.role_code] ?? 3;
+    const pb = PESO_PERFIL[b.role_code] ?? 3;
+    if (pa !== pb) return pa - pb;
+    return (a.label || '').localeCompare(b.label || '', 'pt-BR');
+  });
+
+  for (const m of ordenadas) {
     const e = estadoDe(m);
     const q = el('button', `host-quad hq-${e}`);
     q.type = 'button';
     // O nome da máquina vem do banco: title e aria-label recebem TEXTO, nunca
     // markup — um hostname com < e > fica literal.
-    const desc = `${m.label} — ${rotuloStatus(e)}`;
+    // O servidor ganha um anel. Posição fixa sem marca visual não se verifica:
+    // quem olha não sabe se o primeiro quadradinho É o servidor ou se apenas
+    // caiu ali. Com o anel, a informação está no quadradinho e não na regra de
+    // ordenação — e uma loja SEM servidor cadastrado fica evidente, porque
+    // nenhum quadradinho tem anel.
+    if (m.role_code === 'server') q.classList.add('hq-servidor');
+
+    const perfil = m.role_code === 'server' ? 'servidor da loja'
+      : m.role_code === 'admin' ? 'estação administrativa'
+      : m.role_code === 'pdv' ? 'ponto de venda'
+      : m.role_code || 'sem perfil';
+
+    const desc = `${m.label} — ${perfil} — ${rotuloStatus(e)}`;
     q.title = desc;
     q.setAttribute('aria-label', desc);
     q.addEventListener('click', () => abrirPainel(m));
