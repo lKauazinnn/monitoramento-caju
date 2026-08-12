@@ -49,7 +49,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = 'ps-1.7.0'
+$VERSAO = 'ps-1.7.1'
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -303,7 +303,21 @@ function NovaAmostra {
             # NULO quando nao medido, NUNCA zero. Zero de desgaste num HDD de 2011
             # nao e leitura, e preenchimento -- e era o que o painel mostrava para
             # os 44 discos da frota.
-            wear  = if ($rc -and $null -ne $rc.Wear)         { [int]$rc.Wear }         else { $null }
+            # WEAR SO EM SSD, E SO ACIMA DE ZERO.
+            #
+            # `Get-StorageReliabilityCounter` devolve Wear = 0 LITERAL quando o
+            # disco nao reporta desgaste — nao nulo. Minha guarda anterior so
+            # rejeitava nulo, entao os 44 discos da frota voltaram com "0% de
+            # desgaste", incluindo um SSD com 5,1 anos de uso continuo. Era o
+            # mesmo zero falso que esta secao existe para eliminar, reintroduzido
+            # por mim.
+            #
+            # Em HDD o campo nao existe conceitualmente: disco magnetico nao se
+            # desgasta por escrita. E num SSD com anos de uso, zero e ausencia de
+            # leitura, nao desgaste nulo. Nos dois casos o honesto e NULO, para a
+            # tela dizer "nao medido".
+            wear  = if ($rc -and $null -ne $rc.Wear -and [int]$rc.Wear -gt 0 `
+                        -and "$($pd.MediaType)" -eq 'SSD') { [int]$rc.Wear } else { $null }
             horas = if ($rc -and $null -ne $rc.PowerOnHours) { [int]$rc.PowerOnHours } else { $null }
           }
         }

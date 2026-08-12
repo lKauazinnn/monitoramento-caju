@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.52-saude-disco';
+const BUILD = '2026-08-12.53-saude-no-cartao';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1874,6 +1874,86 @@ function acessarLoja(loja) {
   brinde(`Loja ${loja.code}: ${loja.maquinas.length} maquina(s).`);
 }
 
+/**
+ * A linha de saude do cartao de loja.
+ *
+ * Mostra o PIOR disco da loja, com nome da maquina. Media de desgaste seria
+ * inutil: quem decide troca precisa saber QUAL peca, e uma loja com nove discos
+ * novos e um acabado tem media boa e um problema real.
+ *
+ * Devolve null quando nao ha medida nenhuma — e ai a linha nao aparece, em vez
+ * de aparecer vazia ou com zero. Esta e a mesma regra da gaveta: o que nao foi
+ * medido nao ocupa espaco afirmando nada.
+ */
+function linhaSaudeDaLoja(loja) {
+  let piorWear = null;
+  let alvoWear = null;
+  let maisVelho = null;
+  let alvoVelho = null;
+  let ssd = 0;
+  let hdd = 0;
+
+  for (const m of loja.maquinas) {
+    const t = (m.disk_worst_media_type || '').toUpperCase();
+    if (t === 'SSD') ssd++;
+    else if (t === 'HDD') hdd++;
+
+    const w = m.disk_pior_wear_pct;
+    if (w !== null && w !== undefined && (piorWear === null || Number(w) > piorWear)) {
+      piorWear = Number(w);
+      alvoWear = m.label;
+    }
+
+    const h = m.disk_maior_horas;
+    if (h !== null && h !== undefined && (maisVelho === null || Number(h) > maisVelho)) {
+      maisVelho = Number(h);
+      alvoVelho = m.label;
+    }
+  }
+
+  if (piorWear === null && maisVelho === null && ssd === 0 && hdd === 0) return null;
+
+  const l = el('div', 'cl-saude');
+
+  if (ssd > 0 || hdd > 0) {
+    const partes = [];
+    if (ssd > 0) partes.push(ssd + ' SSD');
+    if (hdd > 0) partes.push(hdd + ' HDD');
+    l.appendChild(el('span', 'cs-rot', partes.join(' · ')));
+  }
+
+  if (piorWear !== null) {
+    const g = el('span');
+    g.appendChild(el('span', 'cs-rot', 'desgaste '));
+    const b = el('b', null, Math.round(piorWear) + '%');
+    const cor = tomDesgaste(piorWear);
+    if (cor) b.style.color = cor;
+    g.appendChild(b);
+    if (alvoWear) {
+      g.appendChild(document.createTextNode(' '));
+      g.appendChild(el('span', 'cs-alvo', alvoWear));
+    }
+    g.title = 'Pior desgaste de SSD da loja, em ' + (alvoWear || '?')
+      + '. Acima de 80% o SSD entra no fim da vida util.';
+    l.appendChild(g);
+  }
+
+  if (maisVelho !== null) {
+    const g = el('span');
+    g.appendChild(el('span', 'cs-rot', 'mais antigo '));
+    g.appendChild(el('b', null, idadeDisco(maisVelho) || '?'));
+    if (alvoVelho) {
+      g.appendChild(document.createTextNode(' '));
+      g.appendChild(el('span', 'cs-alvo', alvoVelho));
+    }
+    g.title = 'Maior tempo ligado entre os discos da loja, em ' + (alvoVelho || '?')
+      + '. E idade de USO, nao data de compra.';
+    l.appendChild(g);
+  }
+
+  return l;
+}
+
 function cartaoLoja(loja) {
   const estados = loja.maquinas.map(estadoDe);
   const offline = estados.filter((e) => e === 'offline').length;
@@ -2052,6 +2132,11 @@ function cartaoLoja(loja) {
         + 'Mede a rede DE DENTRO da loja, nao a internet.'));
 
   c.appendChild(cels);
+
+  // Saude do disco, quando houver medida. A funcao devolve null quando nao ha,
+  // e ai o cartao fica exatamente como era.
+  const saude = linhaSaudeDaLoja(loja);
+  if (saude) c.appendChild(saude);
 
   // Clique em qualquer lugar do cartao entra na loja.
   //
@@ -3025,7 +3110,7 @@ async function desenharDiscos(machineId) {
   }
 
   txt($('discos-medido'), 'Medido em ' + horaCurta(d.medido_em)
-    + '. Desgaste e horas exigem agente ps-1.7.0 e driver que informe o contador.');
+    + '. Desgaste e horas exigem agente ps-1.7.1 e driver que informe o contador.');
 
   for (const k of discos) {
     const linha = el('div', 'disco-linha');
@@ -3365,7 +3450,7 @@ async function pedirAcao(kind, params, confirmado) {
 // para responder algo que já se sabe.
 //
 // AO PUBLICAR UM AGENTE NOVO, SUBA ESTA LINHA JUNTO.
-const VERSAO_ALVO_AGENTE = 'ps-1.7.0';
+const VERSAO_ALVO_AGENTE = 'ps-1.7.1';
 
 async function atualizarAgentes() {
   // `opcoesCadastro` carrega o endereço de ingestão, e é dele que sai o comando
