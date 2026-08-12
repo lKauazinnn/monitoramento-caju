@@ -2545,7 +2545,13 @@ input::placeholder { color: var(--fg3); }
 
 /* Linha no lugar onde vai cair, e nao o cartao mudando de posicao ao vivo:
    reordenar a grade durante o arrasto faz o alvo fugir do cursor. */
-.cl-alvo { box-shadow: -3px 0 0 0 var(--info); }
+/* Contorno no cartao todo, nao barra na borda: barra diz "entra aqui e empurra a
+   fila"; contorno diz "este troca com aquele". A forma do realce tem que
+   descrever o que o gesto FAZ. */
+.cl-alvo {
+  box-shadow: 0 0 0 2px var(--info);
+  transform: scale(1.015);
+}
 
 .cl-ordem-aviso {
   display: flex;

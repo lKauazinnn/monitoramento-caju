@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.56-arrasta-de-qualquer-ponto';
+const BUILD = '2026-08-12.57-trocar-de-lugar';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -2026,6 +2026,23 @@ function iconeAlca() {
   return svg;
 }
 
+/**
+ * Troca dois cartoes de lugar.
+ *
+ * O marcador temporario e obrigatorio: mover A para a posicao de B faz A sair do
+ * DOM antes de B ser movido, e a posicao original de A deixa de existir. Sem
+ * marcador, o resultado e A e B lado a lado no lugar de B -- que e outra forma de
+ * empurrar a fila, o defeito que esta funcao existe para eliminar.
+ */
+function trocarDeLugar(a, b) {
+  const marca = document.createElement('div');
+  marca.hidden = true;
+  b.parentNode.insertBefore(marca, b);
+  a.parentNode.insertBefore(b, a);
+  marca.parentNode.insertBefore(a, marca);
+  marca.remove();
+}
+
 let arrastando = null;
 
 // Instante em que o ultimo arrasto terminou. Ver o comentario no guarda do clique.
@@ -2061,6 +2078,8 @@ function ligarArrastarCartoes(grade) {
     if (!sobre || sobre === arrastando) return;
 
     for (const x of grade.querySelectorAll('.cl-alvo')) x.classList.remove('cl-alvo');
+    // Realca o cartao INTEIRO, nao uma barra na borda: barra na lateral diz
+    // "entra aqui e empurra"; contorno no cartao diz "este troca com aquele".
     sobre.classList.add('cl-alvo');
   });
 
@@ -2071,14 +2090,12 @@ function ligarArrastarCartoes(grade) {
     for (const x of grade.querySelectorAll('.cl-alvo')) x.classList.remove('cl-alvo');
     if (!sobre || sobre === arrastando) return;
 
-    // Antes ou depois, decidido pela metade do cartao: soltar na esquerda insere
-    // antes, na direita depois. Sem isso nao ha como colocar algo no fim.
-    const r = sobre.getBoundingClientRect();
-    const depois = (ev.clientX - r.left) > (r.width / 2);
-    sobre.parentNode.insertBefore(arrastando, depois ? sobre.nextSibling : sobre);
+    const a = arrastando.dataset.loja;
+    const b = sobre.dataset.loja;
+    trocarDeLugar(arrastando, sobre);
 
     guardarOrdemDaTela(grade);
-    brinde('Ordem salva.');
+    brinde(`${a} e ${b} trocaram de lugar.`);
   });
 
   grade.addEventListener('dragend', () => {
@@ -2101,13 +2118,11 @@ function ligarArrastarCartoes(grade) {
     if (!c) return;
     ev.preventDefault();
 
-    if (ev.key === 'ArrowLeft' && c.previousElementSibling) {
-      c.parentNode.insertBefore(c, c.previousElementSibling);
-    } else if (ev.key === 'ArrowRight' && c.nextElementSibling) {
-      c.parentNode.insertBefore(c.nextElementSibling, c);
-    } else {
-      return;
-    }
+    // Troca com o vizinho, igual ao arrasto. Se o teclado inserisse e o mouse
+    // trocasse, a mesma tela teria duas regras de reordenacao.
+    const vizinho = ev.key === 'ArrowLeft' ? c.previousElementSibling : c.nextElementSibling;
+    if (!vizinho || !vizinho.classList.contains('cartao-loja')) return;
+    trocarDeLugar(c, vizinho);
 
     guardarOrdemDaTela(grade);
     alca.focus();
