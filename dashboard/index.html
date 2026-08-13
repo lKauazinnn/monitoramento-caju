@@ -333,7 +333,19 @@
     <section class="secao-frota">
       <header class="sf-topo">
         <h2 id="frota-titulo">Lojas</h2>
-        <span id="frota-sub" class="pc-sub">—</span>
+        <span id="frota-sub" class="pc-sub mono">—</span>
+        <!-- Densidade e selos ficam a direita e SO aparecem na vista de lojas:
+             contar estaveis nao faz sentido na tabela densa, que ja mostra o
+             estado de cada maquina numa coluna. -->
+        <div id="frota-direita" class="sf-direita" hidden>
+          <label class="sf-densidade" for="frota-largura">
+            <span class="sf-dens-rot">largura</span>
+            <input id="frota-largura" type="range" min="240" max="460" step="20"
+                   value="300" aria-label="Largura mínima do cartão de loja">
+            <output id="frota-largura-val" class="mono">300</output>
+          </label>
+          <div id="frota-selos" class="sf-selos"></div>
+        </div>
       </header>
       <div id="conteudo" aria-live="polite">
         <p class="vazio">Carregando&hellip;</p>

@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.60-abas-no-cartao';
+const BUILD = '2026-08-13.63-saude-na-metrica';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1383,8 +1383,11 @@ function desenharMaquinas() {
 
   const lista = filtrar();
 
+  const direitaTopo = $('frota-direita');
+  if (direitaTopo) direitaTopo.hidden = true;
+
   txt($('frota-titulo'),
-    Estado.modo === 'lojas' ? 'Lojas'
+    Estado.modo === 'lojas' ? 'Lojas monitoradas'
       : Estado.modo === 'tabela' ? 'Frota'
       : Estado.modo === 'heatmap' ? 'Parque inteiro' : 'Máquinas');
 
@@ -1411,8 +1414,11 @@ function desenharMaquinas() {
 
   const lojasVisiveis = new Set(lista.map((m) => m.site_code).filter(Boolean));
   const ruins = lista.filter((m) => ['offline', 'degradado'].includes(estadoDe(m))).length;
+  const cadencia = CFG.authMode === 'supabase' && CFG.realtime
+    ? 'leitura ao vivo'
+    : `leitura de ${Number(CFG.pollSeconds) || 20} s`;
   txt($('frota-sub'),
-    `${lojasVisiveis.size} loja(s) · ${lista.length} host(s)`
+    `${lojasVisiveis.size} loja(s) · ${lista.length} host(s) · ${cadencia}`
     + (ruins ? ` · ${ruins} pedindo atenção` : ''));
 
   if (Estado.modo === 'heatmap') {
@@ -1837,6 +1843,14 @@ function desenharCartoesDeLoja(conteudo, lista) {
   for (const l of aplicarOrdem(lojas)) grade.appendChild(cartaoLoja(l));
   ligarArrastarCartoes(grade);
   conteudo.appendChild(grade);
+
+  // Os selos contam TODAS as lojas desenhadas, inclusive as vazias, porque e
+  // isso que esta na tela. Contar a lista filtrada de maquinas daria outro
+  // numero e o cabecalho discordaria da grade.
+  const direita = $('frota-direita');
+  if (direita) direita.hidden = false;
+  desenharSelosDaFrota(lojas);
+  ligarDensidade();
 }
 
 /**
@@ -1886,6 +1900,46 @@ function acessarLoja(loja) {
  * de aparecer vazia ou com zero. Esta e a mesma regra da gaveta: o que nao foi
  * medido nao ocupa espaco afirmando nada.
  */
+/**
+ * A linha de SAUDE do disco, no formato das metricas do handoff.
+ *
+ * Devolve null quando NENHUMA maquina da loja tem vida restante medida. Isso e o
+ * caso normal hoje: a leitura exige agente ps-1.8.0 rodando como SYSTEM, e a
+ * maioria da frota ainda nao roda elevada. Uma linha "SAUDE —" em toda loja seria
+ * ruido constante prometendo um dado que nao existe.
+ */
+function linhaSaudeMetrica(loja) {
+  let pior = null;
+  let alvo = null;
+  for (const m of loja.maquinas) {
+    const w = m.disk_pior_wear_pct;
+    if (w === null || w === undefined) continue;
+    const vida = saudeDoDisco(Number(w));
+    if (pior === null || vida < pior) { pior = vida; alvo = m.label; }
+  }
+  if (pior === null) return null;
+
+  // A barra mostra o DESGASTE, nao a vida: barra cheia = disco no fim, que e a
+  // mesma logica do disco livre (valor = o que sobra, barra = o que foi gasto).
+  // Limiar 50 de desgaste = 50% de vida, o ponto em que a DS manda programar a
+  // troca -- o mesmo numero que ja pinta o texto de vermelho em tomSaude.
+  const desgaste = 100 - pior;
+
+  const linha = linhaMetrica({
+    rotulo: 'saúde',
+    nota: alvo || null,
+    valor: Math.round(pior) + '%',
+    sub: 'vida',
+    pct: desgaste,
+    limiar: 50,
+    corValor: tomSaude(pior),
+  });
+  linha.title = 'PIOR vida restante de disco da loja, em ' + (alvo || '?')
+    + '. É o que o próprio disco informa. Abaixo de 80% entre na fila de compra, '
+    + 'abaixo de 50% programe a troca. A barra mostra o desgaste.';
+  return linha;
+}
+
 function linhaSaudeDaLoja(loja) {
   let piorWear = null;
   let alvoWear = null;
@@ -2153,6 +2207,91 @@ const CHAVE_ABA = 'monitor.abaLojas';
  * Extraida para ca porque as abas e o cartao precisam concordar: se a aba disser
  * "atencao" e o cartao pintar "estavel", a tela se contradiz na cara de quem olha.
  */
+// ---------------------------------------------------------------------------
+// Densidade da grade de lojas (handoff: larguraMinima, default 300, 240..460)
+// ---------------------------------------------------------------------------
+// O operador escolhe entre ver mais lojas de uma vez ou ler numeros maiores. Fica
+// no localStorage do navegador junto com a ordem dos cartoes, porque e preferencia
+// de tela: quem olha numa TV de 55" quer outra densidade de quem olha num laptop,
+// e sao pessoas diferentes na MESMA conta.
+const CHAVE_LARGURA = 'monitor.larguraCartaoLoja';
+const LARGURA_MIN = 240;
+const LARGURA_MAX = 460;
+const LARGURA_PADRAO = 300;
+
+function larguraMinima() {
+  const n = Number(localStorage.getItem(CHAVE_LARGURA));
+  // Number('') e 0 e Number(null) e 0, entao o teste tem que ser a faixa, nao a
+  // existencia da chave. Um valor fora da faixa (mao no localStorage, ou uma
+  // versao futura com outros limites) volta para o padrao em vez de quebrar a
+  // grade com colunas de 0px.
+  if (!Number.isFinite(n) || n < LARGURA_MIN || n > LARGURA_MAX) return LARGURA_PADRAO;
+  return Math.round(n);
+}
+
+/** Aplica a largura na grade que ESTA na tela, sem redesenhar os cartoes. */
+function aplicarLargura(px) {
+  const grade = document.querySelector('.grade-lojas');
+  if (grade) grade.style.gridTemplateColumns = 'repeat(auto-fill, minmax(' + px + 'px, 1fr))';
+  const saida = $('frota-largura-val');
+  if (saida) txt(saida, String(px));
+}
+
+function ligarDensidade() {
+  const faixa = $('frota-largura');
+  if (!faixa) return;
+  faixa.value = String(larguraMinima());
+  // 'input' e nao 'change': o cartao acompanha o arraste do controle, que e como
+  // se escolhe densidade -- olhando o resultado, nao adivinhando o numero.
+  faixa.addEventListener('input', () => {
+    const px = Math.max(LARGURA_MIN, Math.min(LARGURA_MAX, Number(faixa.value) || LARGURA_PADRAO));
+    localStorage.setItem(CHAVE_LARGURA, String(px));
+    aplicarLargura(px);
+  });
+  aplicarLargura(larguraMinima());
+}
+
+/**
+ * Os tres contadores do cabecalho: estaveis, em atencao, incidentes.
+ *
+ * Usa situacaoDaLoja, a MESMA funcao que pinta a faixa lateral do cartao. Se eu
+ * contasse aqui por conta propria, o cabecalho poderia dizer "2 incidentes" com
+ * tres faixas vermelhas na tela -- o tipo de divergencia que faz o operador
+ * parar de acreditar no painel inteiro.
+ */
+function desenharSelosDaFrota(lojas) {
+  const caixa = $('frota-selos');
+  if (!caixa) return;
+  limpar(caixa);
+
+  const conta = { estavel: 0, atencao: 0, incidente: 0, parada: 0 };
+  for (const l of lojas) conta[situacaoDaLoja(l)] = (conta[situacaoDaLoja(l)] || 0) + 1;
+
+  const selos = [
+    ['ok', conta.estavel, 'estáveis', 'Lojas com todas as máquinas reportando e sem alerta.'],
+    ['alerta', conta.atencao, 'em atenção', 'Lojas com máquina online mas com algo errado.'],
+    ['ruim', conta.incidente, 'incidente', 'Lojas com pelo menos uma máquina sem contato.'],
+  ];
+
+  for (const [tom, n, rot, dica] of selos) {
+    // 'zero' apaga o selo quando o valor e 0: "0 incidente" em vermelho aceso
+    // grita um problema que nao existe.
+    const s = el('span', 'sf-selo sf-selo-' + tom + (n === 0 ? ' sf-selo-zero' : ''));
+    s.appendChild(el('strong', 'mono', String(n)));
+    s.appendChild(el('span', null, rot));
+    s.title = dica;
+    caixa.appendChild(s);
+  }
+
+  if (conta.parada > 0) {
+    const s = el('span', 'sf-selo sf-selo-parada');
+    s.appendChild(el('strong', 'mono', String(conta.parada)));
+    s.appendChild(el('span', null, conta.parada === 1 ? 'sem dados' : 'sem dados'));
+    s.title = 'Lojas sem máquina cadastrada, ou cujas máquinas nunca reportaram.';
+    caixa.appendChild(s);
+  }
+}
+
 function situacaoDaLoja(loja) {
   let online = 0; let offline = 0; let degradado = 0;
   for (const m of loja.maquinas) {
@@ -2294,6 +2433,56 @@ function ligarAbasDoCartao(c, loja, painelEstado, painelSaude) {
   mostrar(ativa);
 }
 
+// ---------------------------------------------------------------------------
+// Linha de metrica com barra no fundo (handoff: grade de lojas v3)
+// ---------------------------------------------------------------------------
+// A barra vive ATRAS do texto, nao abaixo dele. Isso e o que devolve espaco: o
+// mesmo pixel carrega o numero e a proporcao, em vez de empilhar dois elementos.
+//
+// A REGRA DE COR E OBRIGATORIA e vem da DS: vermelho so para offline e limiar
+// estourado. Loja saudavel nunca tem barra vermelha -- se tivesse, o vermelho
+// pararia de significar "olhe aqui".
+//
+// 'limiar' 101 = sem limiar efetivo. E o caso do ONLINE: 100% e a situacao boa e
+// tem que ficar neutra, entao nenhuma porcentagem alcanca o limiar.
+function linhaMetrica({ rotulo, nota, valor, sub, pct, limiar = 101, corValor = null }) {
+  const linha = el('div', 'cl-met');
+
+  const temBarra = pct !== null && pct !== undefined;
+  const estourou = temBarra && Number(pct) >= limiar;
+
+  if (temBarra) {
+    const p = Math.max(0, Math.min(100, Number(pct)));
+
+    const fundo = el('div', 'cl-met-fundo' + (estourou ? ' cl-met-fundo-ruim' : ''));
+    fundo.style.width = p + '%';
+    linha.appendChild(fundo);
+
+    // Marcador de ponta: 1px onde a barra termina. Sem ele, barras de 8% e 12%
+    // sao indistinguiveis num cartao de 300px.
+    const ponta = el('div', 'cl-met-ponta' + (estourou ? ' cl-met-ponta-ruim' : ''));
+    ponta.style.left = p + '%';
+    linha.appendChild(ponta);
+  }
+
+  const dentro = el('div', 'cl-met-dentro');
+
+  const esq = el('div', 'cl-met-esq');
+  esq.appendChild(el('span', 'cl-met-rot', rotulo));
+  if (nota) esq.appendChild(el('span', 'cl-met-nota mono', nota));
+  dentro.appendChild(esq);
+
+  const dir = el('div', 'cl-met-dir');
+  if (sub) dir.appendChild(el('span', 'cl-met-sub mono', sub));
+  const v = el('span', 'cl-met-val mono', valor);
+  if (corValor) v.style.color = corValor;
+  dir.appendChild(v);
+  dentro.appendChild(dir);
+
+  linha.appendChild(dentro);
+  return linha;
+}
+
 function cartaoLoja(loja) {
   const estados = loja.maquinas.map(estadoDe);
   const offline = estados.filter((e) => e === 'offline').length;
@@ -2365,7 +2554,6 @@ function cartaoLoja(loja) {
   acoes.appendChild(lixeira);
 
   cab.appendChild(acoes);
-  c.appendChild(cab);
 
   // ------------------------------------------------------------- heatmap
   const mapa = el('div', 'mapa-hosts');
@@ -2411,7 +2599,7 @@ function cartaoLoja(loja) {
     q.addEventListener('click', () => abrirPainel(m));
     mapa.appendChild(q);
   }
-  c.appendChild(mapa);
+
 
   // -------------------------------------------------------------- números
   const medias = (campo) => {
@@ -2447,73 +2635,105 @@ function cartaoLoja(loja) {
   const discoVelho = pior !== null
     && !['online', 'degradado'].includes(estadoDe(pior));
 
-  const cels = el('div', 'cl-celulas');
+  const cels = el('div', 'cl-metricas');
 
-  cels.appendChild(celula(
-    'online', `${online + degradado}/${loja.maquinas.length}`,
-    offline > 0 ? 'ruim' : null,
-    `${online + degradado} de ${loja.maquinas.length} maquina(s) reportando. `
-    + 'Conta as degradadas, que respondem mas tem algo errado.'));
+  const total = loja.maquinas.length;
+  const noAr = online + degradado;
 
-  cels.appendChild(celula(
-    'cpu', cpu === null ? '—' : `${Math.round(cpu)}%`,
-    cpu !== null && cpu >= TETO_CPU ? 'alerta' : null,
-    cpu === null
-      ? 'Nenhuma maquina online agora, entao nao ha uso de CPU para medir.'
-      : `Media de uso de CPU das maquinas online. Fica ambar a partir de ${TETO_CPU}%.`));
+  // ONLINE: barra = fracao no ar, SEM limiar efetivo (101). 100% e o caso bom e
+  // tem que ficar neutro -- barra cheia vermelha em loja saudavel seria absurdo.
+  const lOnline = linhaMetrica({
+    rotulo: 'online',
+    valor: `${noAr}/${total}`,
+    sub: total === 1 ? '1 máquina' : `${total} máquinas`,
+    pct: total > 0 ? (noAr / total) * 100 : null,
+    limiar: 101,
+    corValor: situacao === 'incidente' ? 'var(--crit)' : null,
+  });
+  lOnline.title = `${noAr} de ${total} máquina(s) reportando. `
+    + 'Conta as degradadas, que respondem mas têm algo errado.';
+  cels.appendChild(lOnline);
 
-  cels.appendChild(celula(
-    'disco livre',
-    // GB primeiro, porcentagem no title. "24 GB de 238" nao precisa de conta;
-    // "10%" precisa saber o tamanho do disco para significar alguma coisa.
-    discoMin === null ? '—' : (gb(pior.disk_worst_free_gb) ?? `${Math.round(discoMin)}%`),
-    discoMin === null ? null : discoMin <= PISO_DISCO ? 'ruim' : discoMin <= PISO_DISCO_ATENCAO ? 'alerta' : null,
-    discoMin === null
-      ? 'Nenhuma maquina desta loja reportou disco ainda.'
-      : `Espaco LIVRE no volume mais apertado da loja: ${pior.disk_worst_drive || 'volume'} `
-        + `de ${pior.label}, com ${gb(pior.disk_worst_free_gb) ?? '?'} livres `
-        + `de ${gbNu(pior.disk_worst_total_gb) ?? '?'} (${Math.round(discoMin)}%). `
-        + `Quanto MENOR, pior: ambar abaixo de ${PISO_DISCO_ATENCAO}%, vermelho abaixo de ${PISO_DISCO}%.`
-        // Um numero que muda sem explicacao e pior que um numero errado: se o
-        // servidor descartou um volume, a tela diz isso em vez de simplesmente
-        // mostrar outro numero do que mostrava ontem.
-        + (pior.disk_volumes_ignorados > 0
-            ? ` ${pior.disk_volumes_ignorados} volume(s) pequeno(s) fora da conta `
-              + '(recuperacao, EFI, reservada do sistema): vivem cheios por natureza.'
-            : '')
-        // `desdeQuando` ja devolve "ha 4h": juntar "de ... atras" em volta
-        // produzia "leitura de ha 4h atras".
-        + (discoVelho
-            ? ` Esta maquina parou de reportar: ultima leitura ${desdeQuando(pior.seconds_since_seen, estadoDe(pior))}, nao de agora.`
-            : ''),
-    discoVelho,
-    discoMin === null ? null : `de ${gbNu(pior.disk_worst_total_gb) ?? '?'}`));
+  // CPU: limiar 90 na barra; o VALOR fica ambar a partir de 80. Sao dois avisos
+  // diferentes de proposito -- o texto avisa antes da barra ficar vermelha.
+  const lCpu = linhaMetrica({
+    rotulo: 'cpu',
+    valor: cpu === null ? '—' : `${Math.round(cpu)}%`,
+    pct: cpu === null ? null : cpu,
+    limiar: 90,
+    corValor: cpu !== null && cpu >= TETO_CPU ? 'var(--warn)' : null,
+  });
+  lCpu.title = cpu === null
+    ? 'Nenhuma máquina online agora, então não há uso de CPU para medir.'
+    : `Média de uso de CPU das máquinas online. Âmbar a partir de ${TETO_CPU}%.`;
+  cels.appendChild(lCpu);
 
-  cels.appendChild(celula(
-    'rtt', rtt === null ? '—' : `${Math.round(rtt)}ms`, null,
-    rtt === null
-      ? 'Nenhuma maquina online agora, entao nao ha latencia para medir.'
-      : 'Tempo de ida e volta ate o roteador da loja, medido pelas maquinas online. '
-        + 'Mede a rede DE DENTRO da loja, nao a internet.'));
+  // DISCO LIVRE: valor = livre, barra = USO. Ver o comentario acima.
+  const usoDisco = discoMin === null ? null : 100 - discoMin;
+  const discoBaixo = discoMin !== null && discoMin < PISO_DISCO_ATENCAO;
 
-  // ESTADO fica no primeiro painel; SAUDE no segundo. Ver ligarAbasDoCartao.
-  const painelEstado = el('div', 'ca-painel');
-  painelEstado.appendChild(cels);
+  const lDisco = linhaMetrica({
+    rotulo: 'disco livre',
+    nota: usoDisco === null ? null : 'uso ' + Math.round(usoDisco) + '%',
+    valor: discoMin === null ? '—'
+      : (gb(pior.disk_worst_free_gb) ?? Math.round(discoMin) + '%'),
+    sub: discoMin === null ? null : (gbNu(pior.disk_worst_total_gb) ? 'de ' + gbNu(pior.disk_worst_total_gb) : null),
+    pct: usoDisco,
+    // Limiar em USO equivalente a 20% de livre: barra e texto viram vermelhos
+    // no MESMO ponto, como o handoff exige.
+    limiar: 100 - PISO_DISCO_ATENCAO,
+    corValor: discoMin === null ? null : tomDisco(discoMin),
+  });
 
-  const painelSaude = el('div', 'ca-painel');
-  const saude = linhaSaudeDaLoja(loja);
-  if (saude) {
-    painelSaude.appendChild(saude);
-  } else {
-    // Sem medida, a aba DIZ isso. Painel vazio faria a pessoa clicar de novo
-    // achando que nao carregou.
-    painelSaude.appendChild(el('p', 'ca-sem',
-      'Sem leitura de saude ainda. Exige agente ps-1.8.0 e privilegio de sistema.'));
+  if (discoMin !== null) {
+    lDisco.title = 'Espaço LIVRE no volume mais apertado da loja: '
+      + (pior.disk_worst_drive || 'volume') + ' de ' + pior.label
+      + '. A barra mostra o USO. Vermelho abaixo de ' + PISO_DISCO_ATENCAO + '% livre.'
+      + (discoVelho ? ' Esta máquina parou de reportar: leitura antiga.' : '');
   }
+  cels.appendChild(lDisco);
 
-  c.appendChild(painelEstado);
-  c.appendChild(painelSaude);
-  ligarAbasDoCartao(c, loja, painelEstado, painelSaude);
+  // RTT sem barra: latencia nao tem escala de 0 a 100. 1ms e 40ms sao ambos
+  // normais dependendo da loja, e barra sem escala honesta e decoracao.
+  const lRtt = linhaMetrica({
+    rotulo: 'rtt',
+    valor: rtt === null ? '—' : Math.round(rtt) + 'ms',
+    pct: null,
+  });
+  lRtt.title = rtt === null
+    ? 'Nenhuma máquina online agora, então não há latência para medir.'
+    : 'Ida e volta até o roteador da loja. Mede a rede DE DENTRO, não a internet.';
+  cels.appendChild(lRtt);
+
+  // SAUDE entra DEPOIS das quatro do handoff e so quando ha medida. Ver o
+  // comentario em linhaSaudeMetrica.
+  const lSaude = linhaSaudeMetrica(loja);
+  if (lSaude) cels.appendChild(lSaude);
+
+  // ------------------------------------------------ as duas colunas do cartao
+  // Handoff v3: 96px de estado a esquerda, dados a direita. As abas que eu tinha
+  // feito saem: elas davam espaco ESCONDENDO metade dos dados, e o layout de duas
+  // colunas da o mesmo espaco mostrando tudo.
+  const colEsq = el('div', 'cl-col-estado');
+  colEsq.appendChild(el('i', `cl-faixa cl-faixa-${situacao}`));
+  colEsq.appendChild(mapa);
+
+  const rodape = el('div', 'cl-fracao');
+  const fr = el('div', 'cl-fracao-n mono',
+    `${online + degradado}/${loja.maquinas.length}`);
+  // Vermelho no numero SO em incidente. Loja com 4/4 nao pode ter numero
+  // vermelho, senao o olho para de confiar na cor.
+  if (situacao === 'incidente') fr.style.color = 'var(--crit)';
+  rodape.appendChild(fr);
+  rodape.appendChild(el('div', 'cl-fracao-rot', 'ONLINE'));
+  colEsq.appendChild(rodape);
+
+  const colDir = el('div', 'cl-col-dados');
+  colDir.appendChild(cab);
+  colDir.appendChild(cels);
+
+  c.appendChild(colEsq);
+  c.appendChild(colDir);
 
   // Clique em qualquer lugar do cartao entra na loja.
   //
