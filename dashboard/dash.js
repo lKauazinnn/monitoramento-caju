@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.58-saude-em-porcento';
+const BUILD = '2026-08-12.59-duas-abas';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1834,7 +1834,10 @@ function desenharCartoesDeLoja(conteudo, lista) {
   lojas.sort((a, b) => peso(a) - peso(b) || a.code.localeCompare(b.code, 'pt-BR'));
 
   const grade = el('div', 'grade-lojas');
-  for (const l of aplicarOrdem(lojas)) grade.appendChild(cartaoLoja(l));
+  // A grade recebe SO a aba ativa. As abas sao desenhadas em 'conteudo', fora da
+  // grade, para nao serem apagadas quando a grade e redesenhada.
+  const daAba = desenharAbasDeLoja(conteudo, lojas);
+  for (const l of aplicarOrdem(daAba)) grade.appendChild(cartaoLoja(l));
   ligarArrastarCartoes(grade);
   conteudo.appendChild(grade);
 }
@@ -2129,6 +2132,121 @@ function ligarArrastarCartoes(grade) {
     guardarOrdemDaTela(grade);
     alca.focus();
   });
+}
+
+// ---------------------------------------------------------------------------
+// Duas abas: o que precisa de gente, e o resto
+// ---------------------------------------------------------------------------
+// Vinte cartoes na mesma tela disputam espaco, e o resultado e que o problema fica
+// do mesmo tamanho do que esta bem. Separando, a aba de atencao ganha a tela
+// inteira e cada cartao pode mostrar mais.
+//
+// A loja MUDA DE ABA SOZINHA quando piora: estavel que cai salta para atencao e o
+// contador acende. Numa tela de parede isso e o comportamento que importa -- a
+// pessoa nao precisa procurar, o problema vem para ela.
+//
+// A aba escolhida fica em localStorage: e preferencia de quem olha aquela tela.
+// Mas ela NAO trava a pessoa numa aba vazia -- ver abaixo.
+
+const CHAVE_ABA = 'monitor.abaLojas';
+
+/**
+ * A situacao da loja, na MESMA regra do cartao.
+ *
+ * Extraida para ca porque as abas e o cartao precisam concordar: se a aba disser
+ * "atencao" e o cartao pintar "estavel", a tela se contradiz na cara de quem olha.
+ */
+function situacaoDaLoja(loja) {
+  let online = 0; let offline = 0; let degradado = 0;
+  for (const m of loja.maquinas) {
+    const e = estadoDe(m);
+    if (e === 'offline' || e === 'never') offline++;
+    else if (e === 'degradado') { degradado++; online++; }
+    else if (e === 'online') online++;
+  }
+  if (loja.maquinas.length === 0) return 'vazia';
+  if (offline > 0) return 'incidente';
+  if (degradado > 0) return 'atencao';
+  if (online === 0) return 'parada';
+  return 'estavel';
+}
+
+/** Precisa de gente? E o unico critério que separa as duas abas. */
+function lojaPedeAtencao(loja) {
+  return !['estavel'].includes(situacaoDaLoja(loja));
+}
+
+// Marca que a aba atual veio de clique da pessoa, nao do padrao. Vive so na
+// sessao: reabrir o painel volta a ter o retorno automatico, que e o que faz a
+// tela abrir mostrando conteudo em vez de vazio.
+let abaPorClique = false;
+
+function abaEscolhida() {
+  try { return localStorage.getItem(CHAVE_ABA) || 'atencao'; } catch (_) { return 'atencao'; }
+}
+
+function salvarAba(a) {
+  try { localStorage.setItem(CHAVE_ABA, a); } catch (_) { /* modo privado */ }
+}
+
+/**
+ * Desenha as duas abas e devolve a lista que deve aparecer.
+ *
+ * Se a aba escolhida estiver VAZIA e a outra tiver conteudo, mostra a outra sem
+ * mudar a preferencia. Abrir o painel e ver tela branca porque "Atencao" esta
+ * (felizmente) vazia seria o pior primeiro quadro possivel -- e trocar a
+ * preferencia por causa disso faria a pessoa perder a escolha dela quando o
+ * problema fosse resolvido.
+ */
+function desenharAbasDeLoja(conteudo, lojas) {
+  const comProblema = lojas.filter(lojaPedeAtencao);
+  const estaveis = lojas.filter((l) => !lojaPedeAtencao(l));
+
+  let ativa = abaEscolhida();
+
+  // O retorno automatico vale SO na abertura. Depois de um clique explicito a
+  // escolha e respeitada mesmo com a aba vazia: clicar e nada acontecer e pior
+  // que ver aba vazia -- a vazia INFORMA, e o clique ignorado parece defeito.
+  if (!abaPorClique) {
+    if (ativa === 'atencao' && comProblema.length === 0 && estaveis.length > 0) ativa = 'estaveis';
+    if (ativa === 'estaveis' && estaveis.length === 0 && comProblema.length > 0) ativa = 'atencao';
+  }
+
+  const barra = el('div', 'abas-loja');
+  barra.setAttribute('role', 'tablist');
+
+  for (const [id, rot, lista] of [
+    ['atencao', 'Precisam de atenção', comProblema],
+    ['estaveis', 'Estáveis', estaveis],
+  ]) {
+    const b = el('button', 'aba' + (id === 'atencao' ? ' aba-atencao' : ''));
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(id === ativa));
+    if (id === 'atencao') b.dataset.tem = lista.length > 0 ? '1' : '0';
+    b.appendChild(el('span', null, rot));
+    b.appendChild(el('span', 'aba-n', String(lista.length)));
+    b.addEventListener('click', () => {
+      salvarAba(id);
+      abaPorClique = true;
+      aplicarFiltros();
+    });
+    barra.appendChild(b);
+  }
+
+  conteudo.appendChild(barra);
+
+  const daAba = ativa === 'atencao' ? comProblema : estaveis;
+
+  // Aba vazia DIZ que esta vazia. Grade em branco faria a pessoa achar que a tela
+  // quebrou -- e no caso da aba de atencao, vazia e a melhor noticia do dia.
+  if (daAba.length === 0) {
+    conteudo.appendChild(el('p', 'disco-vazio', ativa === 'atencao'
+      ? 'Nenhuma loja pedindo atenção agora. Todas estáveis.'
+      : 'Nenhuma loja estável neste momento — estão todas na outra aba.'));
+  }
+
+  return daAba;
 }
 
 function cartaoLoja(loja) {
