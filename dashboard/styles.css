@@ -2630,3 +2630,49 @@ input::placeholder { color: var(--fg3); }
 }
 
 @media (prefers-reduced-motion: reduce) { .aba { transition: none; } }
+
+/* --------------------------------------------- as duas abas dentro do cartao --- */
+.ca-abas {
+  display: flex;
+  gap: 2px;
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--bd2);
+}
+
+/* Abas pequenas e discretas: elas sao NAVEGACAO do cartao, nao conteudo. Se
+   competirem com os numeros, o cartao passa a mostrar o proprio menu em vez do
+   dado. */
+.ca-aba {
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--fg3);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ca-aba:hover { color: var(--fg2); background: var(--hov); }
+.ca-aba[aria-selected="true"] {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--info) 16%, transparent);
+}
+
+/* Altura minima igual nos dois paineis: sem isso o cartao pula de tamanho ao
+   trocar de aba, e numa grade isso reflui as linhas de baixo. */
+.ca-painel { min-height: 58px; }
+
+.ca-sem { margin: 8px 0 0; font-size: 10.5px; color: var(--fg3); line-height: 1.45; }
+
+/* A ordem visual muda: as abas ficam ABAIXO dos paineis no DOM por causa da
+   ordem de criacao, mas devem aparecer ANTES. */
+.cartao-loja { display: flex; flex-direction: column; }
+.cartao-loja .ca-abas { order: 8; }
+.cartao-loja .ca-painel { order: 9; }
+
+@media (min-width: 1600px) { .ca-aba { font-size: 11px; padding: 4px 12px; } }

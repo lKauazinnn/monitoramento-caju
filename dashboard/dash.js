@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.59-duas-abas';
+const BUILD = '2026-08-12.60-abas-no-cartao';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1834,10 +1834,7 @@ function desenharCartoesDeLoja(conteudo, lista) {
   lojas.sort((a, b) => peso(a) - peso(b) || a.code.localeCompare(b.code, 'pt-BR'));
 
   const grade = el('div', 'grade-lojas');
-  // A grade recebe SO a aba ativa. As abas sao desenhadas em 'conteudo', fora da
-  // grade, para nao serem apagadas quando a grade e redesenhada.
-  const daAba = desenharAbasDeLoja(conteudo, lojas);
-  for (const l of aplicarOrdem(daAba)) grade.appendChild(cartaoLoja(l));
+  for (const l of aplicarOrdem(lojas)) grade.appendChild(cartaoLoja(l));
   ligarArrastarCartoes(grade);
   conteudo.appendChild(grade);
 }
@@ -2249,6 +2246,54 @@ function desenharAbasDeLoja(conteudo, lojas) {
   return daAba;
 }
 
+// ---------------------------------------------------------------------------
+// As duas abas de dentro do cartao
+// ---------------------------------------------------------------------------
+// O cartao tem quatro numeros de ESTADO (online, cpu, disco livre, rtt) e um
+// bloco de SAUDE (tipo de disco, saude em %, idade, setores). Empilhar os dois
+// deixa o cartao alto, e cartao alto significa menos lojas na tela.
+//
+// Em duas abas, o mesmo espaco mostra o dobro: quem quer saber "esta no ar?" fica
+// em Estado; quem quer saber "quando troco a peca?" vai em Saude.
+//
+// A aba e POR CARTAO e vive em memoria, nao em localStorage: a pessoa abre Saude
+// de uma loja para decidir uma compra e nao quer que as outras dezenove troquem
+// junto. Some ao recarregar, e isso esta certo -- a tela deve abrir mostrando
+// estado, que e o que ela existe para vigiar.
+
+const abaDoCartao = new Map();
+
+function ligarAbasDoCartao(c, loja, painelEstado, painelSaude) {
+  const barra = el('div', 'ca-abas');
+  barra.setAttribute('role', 'tablist');
+
+  const ativa = abaDoCartao.get(loja.code) || 'estado';
+
+  const mostrar = (qual) => {
+    abaDoCartao.set(loja.code, qual);
+    painelEstado.hidden = qual !== 'estado';
+    painelSaude.hidden = qual !== 'saude';
+    for (const b of barra.querySelectorAll('.ca-aba')) {
+      b.setAttribute('aria-selected', String(b.dataset.aba === qual));
+    }
+  };
+
+  for (const [id, rot] of [['estado', 'Estado'], ['saude', 'Saúde']]) {
+    const b = el('button', 'ca-aba', rot);
+    b.type = 'button';
+    b.dataset.aba = id;
+    b.setAttribute('role', 'tab');
+    // stopPropagation: o cartao inteiro entra na loja ao ser clicado, e trocar de
+    // aba nao pode navegar. 'closest('button')' do guarda ja cobriria, mas aqui a
+    // intencao fica explicita para quem ler depois.
+    b.addEventListener('click', (ev) => { ev.stopPropagation(); mostrar(id); });
+    barra.appendChild(b);
+  }
+
+  c.appendChild(barra);
+  mostrar(ativa);
+}
+
 function cartaoLoja(loja) {
   const estados = loja.maquinas.map(estadoDe);
   const offline = estados.filter((e) => e === 'offline').length;
@@ -2451,12 +2496,24 @@ function cartaoLoja(loja) {
       : 'Tempo de ida e volta ate o roteador da loja, medido pelas maquinas online. '
         + 'Mede a rede DE DENTRO da loja, nao a internet.'));
 
-  c.appendChild(cels);
+  // ESTADO fica no primeiro painel; SAUDE no segundo. Ver ligarAbasDoCartao.
+  const painelEstado = el('div', 'ca-painel');
+  painelEstado.appendChild(cels);
 
-  // Saude do disco, quando houver medida. A funcao devolve null quando nao ha,
-  // e ai o cartao fica exatamente como era.
+  const painelSaude = el('div', 'ca-painel');
   const saude = linhaSaudeDaLoja(loja);
-  if (saude) c.appendChild(saude);
+  if (saude) {
+    painelSaude.appendChild(saude);
+  } else {
+    // Sem medida, a aba DIZ isso. Painel vazio faria a pessoa clicar de novo
+    // achando que nao carregou.
+    painelSaude.appendChild(el('p', 'ca-sem',
+      'Sem leitura de saude ainda. Exige agente ps-1.8.0 e privilegio de sistema.'));
+  }
+
+  c.appendChild(painelEstado);
+  c.appendChild(painelSaude);
+  ligarAbasDoCartao(c, loja, painelEstado, painelSaude);
 
   // Clique em qualquer lugar do cartao entra na loja.
   //
