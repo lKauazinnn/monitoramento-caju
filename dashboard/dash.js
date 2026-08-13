@@ -4397,7 +4397,19 @@ async function desenharDiscos(machineId) {
       pe.appendChild(el('span', 'disco-marca-peq',
         'pequeno demais para contar (abaixo do piso do sistema)'));
     }
-    if (Estado.ehAdmin === true) {
+    // `acompanhando` AUSENTE (undefined) é diferente de false: quer dizer que o
+    // servidor ainda não tem a 0044, e portanto não tem
+    // definir_volume_acompanhado. Mostrar o interruptor nesse caso seria oferecer
+    // um botão que só sabe dar erro — o painel pode ser publicado antes da
+    // migração, e essa ordem não pode virar um clique quebrado.
+    const temEscolha = k.acompanhando === true || k.acompanhando === false;
+
+    if (Estado.ehAdmin === true && !temEscolha) {
+      pe.appendChild(el('span', 'disco-marca-peq',
+        'escolha de volumes indisponível: falta a migração 0044 no servidor'));
+    }
+
+    if (Estado.ehAdmin === true && temEscolha) {
       pe.appendChild(interruptorDoVolume(machineId, k,
         // Redesenha a gaveta E a frota: o número do cartão muda na hora, senão a
         // pessoa desmarca um volume e a tela atrás continua com o número antigo

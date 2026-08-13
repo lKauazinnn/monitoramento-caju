@@ -274,6 +274,36 @@ try {
   ok(recusa.marcada === true && recusa.travada === false,
     `servidor recusou: a caixa voltou ao estado real e destravou (${JSON.stringify(recusa)})`);
 
+  // ---- 9: servidor SEM a 0044 -----------------------------------------------
+  // O painel pode ser publicado antes da migracao. Nessa ordem, o campo
+  // `acompanhando` nao vem, e um interruptor que so sabe dar erro e pior que
+  // nenhum. `undefined` e diferente de `false` -- e essa distincao que este caso
+  // protege.
+  await js(`
+    (() => {
+      window.__recusar = false;
+      window.__discos = window.__discos.map(d => {
+        const c = { ...d };
+        delete c.acompanhando;
+        return c;
+      });
+      return true;
+    })()
+  `);
+  await js(`Estado.ehAdmin = true; desenharDiscos(${JSON.stringify(idMaq)})`);
+  await dormir(900);
+  const semMig = JSON.parse(await js(`
+    JSON.stringify({
+      interruptores: document.querySelectorAll('.disco-acomp input').length,
+      linhas: document.querySelectorAll('.disco-linha').length,
+      avisa: [...document.querySelectorAll('.disco-marca-peq')]
+        .some(n => /0044/.test(n.textContent)),
+    })
+  `));
+  ok(semMig.interruptores === 0 && semMig.linhas === 3,
+    `servidor sem a 0044: nenhum interruptor (${semMig.interruptores}), discos ainda visiveis (${semMig.linhas})`);
+  ok(semMig.avisa, 'e a tela diz que falta a migracao, em vez de calar');
+
   const r2 = await cmd('Page.captureScreenshot', { format: 'png' });
   if (r2?.data) {
     writeFileSync(join(raiz, 'capturas', '18-escolha-de-discos.png'), Buffer.from(r2.data, 'base64'));
