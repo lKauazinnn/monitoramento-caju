@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-13.63-saude-na-metrica';
+const BUILD = '2026-08-13.64-gerenciar-alerta';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -93,6 +93,10 @@ const Estado = {
   primeiraCargaIncidentes: true,
   som: false,
   audio: null,
+  alerta: null,
+  timerRepeticao: null,
+  repeticaoMin: 0,
+  regrasDeAlerta: [],
   faviconAtual: null,
   relatorio: null,
   faixa: '24h',        // faixa do painel de detalhe
@@ -951,6 +955,53 @@ function abrirMaquinaDoIncidente() {
 }
 
 // -----------------------------------------------------------------------------
+// Gerenciamento de alerta: a configuracao do aviso
+// -----------------------------------------------------------------------------
+// Mora no localStorage, e nao no banco, porque e propriedade do LUGAR de onde se
+// olha: a TV da copa quer som alto e repetido, o laptop numa reuniao quer
+// silencio. As duas telas usam a mesma conta.
+//
+// Os tipos ligados por padrao sao os CRITICOS. Ligar tudo faria o som tocar por
+// CPU alta as tres da tarde, e um som que toca por coisa que nao exige ninguem
+// levantar da cadeira e desligado na primeira semana -- levando embora o aviso
+// de servidor caido junto.
+const CHAVE_ALERTA = 'monitor.alerta';
+
+const ALERTA_PADRAO = {
+  volume: 35,
+  repetirMin: 0,
+  falar: false,
+  tipos: ['offline', 'disk_low', 'service_down', 'smart_failing'],
+};
+
+function lerAlerta() {
+  let cru = null;
+  try { cru = JSON.parse(localStorage.getItem(CHAVE_ALERTA) || 'null'); } catch (_) { /* lixo */ }
+  const c = { ...ALERTA_PADRAO, ...(cru && typeof cru === 'object' ? cru : {}) };
+
+  // Cada campo conferido: este objeto vem do localStorage, que qualquer um pode
+  // editar, e um volume de 900 ou um 'tipos' que nao e lista quebraria o audio
+  // justamente na hora do incidente.
+  c.volume = Number.isFinite(Number(c.volume))
+    ? Math.max(5, Math.min(100, Math.round(Number(c.volume)))) : ALERTA_PADRAO.volume;
+  c.repetirMin = [0, 2, 5, 10, 30].includes(Number(c.repetirMin)) ? Number(c.repetirMin) : 0;
+  c.falar = c.falar === true;
+  c.tipos = Array.isArray(c.tipos) ? c.tipos.filter((t) => typeof t === 'string') : [];
+  return c;
+}
+
+function guardarAlerta(c) {
+  Estado.alerta = c;
+  try { localStorage.setItem(CHAVE_ALERTA, JSON.stringify(c)); } catch (_) { /* privado */ }
+}
+
+/** Este incidente merece som, segundo a configuracao desta tela? */
+function alertaSoa(inc) {
+  const c = Estado.alerta || (Estado.alerta = lerAlerta());
+  return c.tipos.includes(inc.kind);
+}
+
+// -----------------------------------------------------------------------------
 // Aviso sonoro
 // -----------------------------------------------------------------------------
 // Desligado por padrão, e toca UMA vez por incidente novo — nunca em laço.
@@ -961,16 +1012,112 @@ function abrirMaquinaDoIncidente() {
 function tocarSeNovo(criticos) {
   const idsAgora = new Set(criticos.map((a) => a.event_id));
 
-  const novos = [...idsAgora].filter((id) => !Estado.incidentesVistos.has(id));
+  const novos = criticos.filter((a) => !Estado.incidentesVistos.has(a.event_id));
   Estado.incidentesVistos = idsAgora;
 
-  if (novos.length === 0 || !Estado.som) return;
+  // A repetição é reavaliada SEMPRE, mesmo sem novidade e mesmo com o som
+  // desligado: é assim que ela para quando o último incidente é reconhecido ou
+  // se resolve, sem depender de um evento novo para desarmar.
+  ajustarRepeticao(criticos);
+
+  if (!Estado.som) return;
 
   // Primeira carga da página não toca: a tela abrindo com três incidentes
   // antigos não é novidade nenhuma, é o estado do mundo.
   if (Estado.primeiraCargaIncidentes) return;
 
-  apitar();
+  // Só os tipos escolhidos nesta tela. Um incidente de tipo não escolhido ainda
+  // acende a faixa e conta na fila -- ele só não faz barulho.
+  const paraSoar = novos.filter(alertaSoa);
+  if (paraSoar.length === 0) return;
+
+  // Offline tem toque próprio: três tons descendentes, mais graves. Numa sala
+  // onde o painel toca por disco cheio e por servidor caído, quem está de costas
+  // para a tela precisa distinguir os dois SEM olhar.
+  const temQueda = paraSoar.some((a) => a.kind === 'offline');
+  apitar(temQueda ? 'queda' : 'aviso');
+
+  anunciar(paraSoar);
+}
+
+/**
+ * Diz em voz alta qual maquina caiu.
+ *
+ * Desligado por padrao. O som resolve "aconteceu algo"; a voz resolve "onde" --
+ * e sem ela o operador tem de vir ate a tela para descobrir, o que anula o
+ * ganho de avisar de longe.
+ */
+function anunciar(incidentes) {
+  const c = Estado.alerta || (Estado.alerta = lerAlerta());
+  if (!c.falar) return;
+
+  try {
+    const fala = window.speechSynthesis;
+    if (!fala || typeof SpeechSynthesisUtterance !== 'function') return;
+
+    const quais = incidentes.slice(0, 3).map((a) => {
+      // Hifens e pontos viram pausa: "CAJU-ITAIM" lido como escrito sai
+      // "caju hifen itaim" em algumas vozes.
+      const nome = String(a.label || 'máquina').replace(/[-_.]+/g, ' ');
+      return a.kind === 'offline' ? nome + ' sem contato' : nome + ' com problema';
+    });
+
+    const resto = incidentes.length - quais.length;
+    const texto = 'Atenção. ' + quais.join('. ')
+      + (resto > 0 ? '. E mais ' + resto + '.' : '.');
+
+    // Fila limpa antes: dois incidentes em sequência enfileirariam as falas e a
+    // segunda sairia meio minuto depois, quando já não é notícia.
+    fala.cancel();
+
+    const u = new SpeechSynthesisUtterance(texto);
+    u.lang = 'pt-BR';
+    u.rate = 0.95;
+    u.volume = Math.max(0.05, Math.min(1, c.volume / 100));
+    fala.speak(u);
+  } catch (_) {
+    // Navegador sem síntese de voz: o toque já avisou.
+  }
+}
+
+/**
+ * Liga ou desliga a repeticao conforme AINDA houver incidente que soa.
+ *
+ * Idempotente de proposito: e chamada a cada leitura, e nao pode empilhar
+ * timers. Um timer por leitura, com poll de 10 s, seria um alarme por segundo em
+ * poucos minutos.
+ */
+function ajustarRepeticao(criticos) {
+  const c = Estado.alerta || (Estado.alerta = lerAlerta());
+  const pendentes = criticos.filter((a) => !a.reconhecido && alertaSoa(a));
+  const deveRepetir = Estado.som && c.repetirMin > 0 && pendentes.length > 0;
+
+  if (!deveRepetir) {
+    if (Estado.timerRepeticao) {
+      clearInterval(Estado.timerRepeticao);
+      Estado.timerRepeticao = null;
+    }
+    return;
+  }
+
+  if (Estado.timerRepeticao && Estado.repeticaoMin === c.repetirMin) return;
+
+  if (Estado.timerRepeticao) clearInterval(Estado.timerRepeticao);
+  Estado.repeticaoMin = c.repetirMin;
+  Estado.timerRepeticao = setInterval(() => {
+    // Relê a lista do estado atual em vez de fechar sobre a de agora: entre dois
+    // toques o incidente pode ter sido reconhecido, e insistir depois disso é
+    // exatamente o que faz alguém desligar o som para sempre.
+    const abertos = (Estado.incidentes?.lista || [])
+      .filter((a) => a.severity === 'critical' && !a.reconhecido && alertaSoa(a));
+    if (abertos.length === 0 || !Estado.som) {
+      clearInterval(Estado.timerRepeticao);
+      Estado.timerRepeticao = null;
+      return;
+    }
+    apitar(abertos.some((a) => a.kind === 'offline') ? 'queda' : 'aviso');
+    anunciar(abertos);
+  }, c.repetirMin * 60000);
 }
 
 /**
@@ -979,7 +1126,7 @@ function tocarSeNovo(criticos) {
  * Sem arquivo de áudio de propósito: um .mp3 seria mais um recurso para servir,
  * mais uma coisa para faltar, e a CSP teria de liberar media-src.
  */
-function apitar() {
+function apitar(perfil = 'aviso') {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
@@ -987,7 +1134,18 @@ function apitar() {
     const ctx = Estado.audio || (Estado.audio = new Ctx());
     if (ctx.state === 'suspended') ctx.resume();
 
-    for (const [quando, hz] of [[0, 880], [0.18, 660]]) {
+    const c = Estado.alerta || (Estado.alerta = lerAlerta());
+    // 0.30 de teto: acima disso o oscilador satura e o tom vira estalo no
+    // alto-falante de TV. O volume da tela é uma fração DISSO, não do máximo.
+    const pico = Math.max(0.01, Math.min(1, c.volume / 100)) * 0.30;
+
+    // Queda: três tons DESCENDENTES e graves — o desenho de som que se lê como
+    // "algo caiu". Aviso: dois tons agudos, o toque que já existia.
+    const tons = perfil === 'queda'
+      ? [[0, 660], [0.20, 520], [0.40, 392]]
+      : [[0, 880], [0.18, 660]];
+
+    for (const [quando, hz] of tons) {
       const osc = ctx.createOscillator();
       const vol = ctx.createGain();
       osc.type = 'sine';
@@ -996,12 +1154,12 @@ function apitar() {
       // Envelope: um tom que corta seco estala no alto-falante.
       const t = ctx.currentTime + quando;
       vol.gain.setValueAtTime(0, t);
-      vol.gain.linearRampToValueAtTime(0.13, t + 0.02);
-      vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+      vol.gain.linearRampToValueAtTime(pico, t + 0.02);
+      vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.20);
 
       osc.connect(vol).connect(ctx.destination);
       osc.start(t);
-      osc.stop(t + 0.16);
+      osc.stop(t + 0.21);
     }
   } catch (_) {
     // Navegador sem permissão de áudio: a faixa vermelha continua valendo.
@@ -1015,9 +1173,20 @@ function alternarSom() {
   txt($('btn-som-rot'), Estado.som ? 'Som: ligado' : 'Som: desligado');
   $('btn-som').setAttribute('aria-pressed', String(Estado.som));
 
+  // O painel pode estar aberto: a caixa mestre dele é o MESMO estado, e deixar
+  // as duas discordando faria a pessoa desconfiar de qual vale.
+  const caixa = $('al-ligado');
+  if (caixa) caixa.checked = Estado.som;
+
+  // Desligar o som tem de parar a repetição agora, e não na próxima leitura.
+  if (!Estado.som && Estado.timerRepeticao) {
+    clearInterval(Estado.timerRepeticao);
+    Estado.timerRepeticao = null;
+  }
+
   // Toca na hora de ligar: confirma que funciona, e o navegador exige um gesto
   // do usuário para liberar áudio — este clique é esse gesto.
-  if (Estado.som) apitar();
+  if (Estado.som) apitar('queda');
 }
 
 // -----------------------------------------------------------------------------
@@ -2235,6 +2404,286 @@ function aplicarLargura(px) {
   if (grade) grade.style.gridTemplateColumns = 'repeat(auto-fill, minmax(' + px + 'px, 1fr))';
   const saida = $('frota-largura-val');
   if (saida) txt(saida, String(px));
+}
+
+// -----------------------------------------------------------------------------
+// O painel de alertas
+// -----------------------------------------------------------------------------
+// Duas metades com donos diferentes: o SOM e deste navegador, as REGRAS sao do
+// servidor. A tela diz isso em texto, porque a consequencia e assimetrica --
+// mexer no som afeta quem esta olhando, mexer numa regra afeta a equipe inteira.
+async function abrirAlertas() {
+  $('modal-alertas-fundo').hidden = false;
+  $('modal-alertas').hidden = false;
+
+  const c = Estado.alerta || (Estado.alerta = lerAlerta());
+
+  $('al-ligado').checked = Estado.som;
+  $('al-volume').value = String(c.volume);
+  txt($('al-volume-val'), String(c.volume));
+  $('al-repetir').value = String(c.repetirMin);
+  $('al-falar').checked = c.falar;
+
+  // Aviso honesto: sem sintese de voz no navegador, a caixa fica desligada e
+  // dizendo por que. Um controle que nao faz nada e pior que controle nenhum.
+  const temVoz = !!(window.speechSynthesis && typeof SpeechSynthesisUtterance === 'function');
+  $('al-falar').disabled = !temVoz;
+  // textContent direto, e nao txt(): txt('') vira travessao de proposito nas
+  // metricas, e aqui um travessao solto ao lado do botao de teste nao quer dizer
+  // nada. Nota vazia tem de ficar vazia.
+  $('al-aviso-som').textContent = temVoz ? '' : 'Este navegador não fala em voz alta.';
+
+  // As regras vem do servidor ANTES de desenhar os tipos: a lista de tipos que
+  // podem soar e derivada delas, para nao existir na tela um tipo que o servidor
+  // nao avalia -- nem faltar um que ele avalia.
+  let regras = [];
+  try {
+    regras = await rpc('regras_de_alerta');
+  } catch (e) {
+    console.warn('[monitor] regras de alerta indisponíveis:', e.message);
+  }
+  Estado.regrasDeAlerta = Array.isArray(regras) ? regras : [];
+
+  desenharTiposDeAlerta();
+  desenharRegrasDeAlerta();
+}
+
+function fecharAlertas() {
+  $('modal-alertas').hidden = true;
+  $('modal-alertas-fundo').hidden = true;
+}
+
+/** As caixas de "tocar para", uma por tipo que o servidor avalia. */
+function desenharTiposDeAlerta() {
+  const caixa = $('al-tipos-lista');
+  limpar(caixa);
+
+  const c = Estado.alerta;
+  const regras = Estado.regrasDeAlerta;
+
+  if (regras.length === 0) {
+    // Diz o que fazer, e nao so que falhou. Este e o estado exato de um servidor
+    // que ainda nao recebeu a migracao 0043, e sem o nome dela na tela a pessoa
+    // nao tem como ligar uma coisa na outra.
+    caixa.appendChild(el('p', 'al-nota',
+      'O servidor não respondeu regras_de_alerta. O som continua valendo para os '
+      + 'tipos já escolhidos, mas escolher outros exige a migração 0043 aplicada.'));
+    return;
+  }
+
+  // Critico primeiro: e a ordem em que a pessoa quer decidir.
+  const ordenadas = [...regras].sort((a, b) =>
+    (a.severidade === 'critical' ? 0 : 1) - (b.severidade === 'critical' ? 0 : 1)
+    || String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
+
+  for (const r of ordenadas) {
+    const id = 'al-tipo-' + r.kind;
+    const rot = el('label', 'al-tipo' + (r.severidade === 'critical' ? ' al-tipo-crit' : ''));
+    rot.setAttribute('for', id);
+
+    const cx = el('input');
+    cx.type = 'checkbox';
+    cx.id = id;
+    cx.checked = c.tipos.includes(r.kind);
+    // Regra desativada no servidor nunca vai gerar alerta: a caixa fica
+    // desligada e o texto explica, em vez de prometer um som que nao vem.
+    cx.disabled = !r.ativa;
+    cx.addEventListener('change', () => {
+      const atual = new Set(Estado.alerta.tipos);
+      if (cx.checked) atual.add(r.kind); else atual.delete(r.kind);
+      guardarAlerta({ ...Estado.alerta, tipos: [...atual] });
+    });
+
+    rot.appendChild(cx);
+    const texto = el('span', 'al-tipo-txt');
+    texto.appendChild(el('span', 'al-tipo-nome', r.nome));
+    texto.appendChild(el('span', 'al-tipo-sub',
+      r.ativa ? (r.severidade === 'critical' ? 'crítico' : 'aviso') : 'regra desativada'));
+    rot.appendChild(texto);
+    rot.title = r.explicacao || r.nome;
+
+    caixa.appendChild(rot);
+  }
+}
+
+/** A tabela de regras do servidor. Somente admin pode salvar. */
+function desenharRegrasDeAlerta() {
+  const caixa = $('al-regras');
+  limpar(caixa);
+
+  // `Estado.ehAdmin`, e não um `Estado.papel` que eu supus existir: é o campo que
+  // o resto do painel usa (o botão de Usuários e a zona de perigo). Inventar um
+  // segundo nome deixaria o editor de regras cinza para o próprio admin.
+  const admin = Estado.ehAdmin === true;
+  const regras = Estado.regrasDeAlerta;
+
+  if (regras.length === 0) {
+    caixa.appendChild(el('p', 'al-nota',
+      'O servidor não respondeu regras_de_alerta. Falta aplicar a migração 0043 '
+      + '— e é ela que também agenda a avaliação dos alertas.'));
+    return;
+  }
+
+  if (!admin) {
+    caixa.appendChild(el('p', 'al-nota',
+      'Somente administradores alteram as regras. Abaixo, como elas estão hoje.'));
+  }
+
+  for (const r of regras) {
+    const linha = el('div', 'al-regra' + (r.ativa ? '' : ' al-regra-off'));
+
+    const topo = el('div', 'al-regra-topo');
+    const nome = el('div', 'al-regra-nome');
+    nome.appendChild(el('strong', null, r.nome));
+    nome.appendChild(el('span', 'al-regra-sev al-regra-sev-' + r.severidade,
+      r.severidade === 'critical' ? 'crítico' : r.severidade === 'warning' ? 'aviso' : 'info'));
+    topo.appendChild(nome);
+
+    const chave = el('label', 'al-chave');
+    chave.setAttribute('for', 'al-ativa-' + r.kind);
+    const cxA = el('input');
+    cxA.type = 'checkbox';
+    cxA.id = 'al-ativa-' + r.kind;
+    cxA.checked = !!r.ativa;
+    cxA.disabled = !admin;
+    chave.appendChild(cxA);
+    chave.appendChild(el('span', null, 'ativa'));
+    topo.appendChild(chave);
+    linha.appendChild(topo);
+
+    linha.appendChild(el('p', 'al-regra-exp', r.explicacao || ''));
+
+    const campos = el('div', 'al-campos');
+
+    // Limiar: ausente de propósito quando a regra não tem um. Um campo vazio e
+    // editável ali sugeriria que o tempo de offline se ajusta aqui, e ele vem de
+    // app_settings.offline_timeout_seconds.
+    let cLimiar = null;
+    if (!r.sem_limiar) {
+      cLimiar = campoDeRegra('limiar', r.limiar, r.unidade || '', admin);
+      campos.appendChild(cLimiar.caixa);
+    }
+
+    const cCiclos = campoDeRegra('amostras seguidas', r.ciclos, '', admin);
+    campos.appendChild(cCiclos.caixa);
+
+    const cCool = campoDeRegra('silêncio', r.cooldown_min, 'min', admin);
+    campos.appendChild(cCool.caixa);
+
+    linha.appendChild(campos);
+
+    if (admin) {
+      const acoes = el('div', 'al-regra-acoes');
+      const salvar = el('button', 'btn-secundario', 'Salvar');
+      salvar.type = 'button';
+      const nota = el('span', 'al-nota');
+
+      salvar.addEventListener('click', async () => {
+        salvar.disabled = true;
+        txt(nota, 'salvando…');
+        try {
+          const r2 = await rpc('editar_regra_de_alerta', {
+            p_rule_id: r.rule_id,
+            // null significa "não mexi": mandar o valor atual seria igual, mas
+            // um campo em branco viraria 0 e apagaria a configuração.
+            p_limiar: cLimiar ? numeroOuNulo(cLimiar.entrada.value) : null,
+            p_ciclos: numeroOuNulo(cCiclos.entrada.value),
+            p_cooldown_min: numeroOuNulo(cCool.entrada.value),
+            p_ativa: cxA.checked,
+          });
+          const mudou = Object.keys(r2?.mudou || {}).length;
+          txt(nota, mudou ? 'salvo' : 'nada mudou');
+          brinde(mudou ? 'Regra "' + r.nome + '" salva.' : 'Nada a mudar em "' + r.nome + '".');
+          // Relê do servidor: o que vale é o que ele gravou, não o que eu digitei.
+          Estado.regrasDeAlerta = await rpc('regras_de_alerta');
+          desenharTiposDeAlerta();
+          desenharRegrasDeAlerta();
+        } catch (e) {
+          nota.textContent = '';
+          brinde(e.message || 'não consegui salvar a regra', true);
+          salvar.disabled = false;
+        }
+      });
+
+      acoes.appendChild(salvar);
+      acoes.appendChild(nota);
+      linha.appendChild(acoes);
+    }
+
+    caixa.appendChild(linha);
+  }
+}
+
+/** Um campo numérico com rótulo e unidade. */
+function campoDeRegra(rotulo, valor, unidade, editavel) {
+  const caixa = el('label', 'al-campo');
+  caixa.appendChild(el('span', 'al-campo-rot', rotulo));
+
+  const linha = el('span', 'al-campo-linha');
+  const entrada = el('input');
+  entrada.type = 'number';
+  entrada.className = 'mono';
+  entrada.value = valor === null || valor === undefined ? '' : String(valor);
+  entrada.disabled = !editavel;
+  linha.appendChild(entrada);
+  if (unidade) linha.appendChild(el('span', 'al-campo-un', unidade));
+
+  caixa.appendChild(linha);
+  return { caixa, entrada };
+}
+
+/** '' vira null, e não 0 — a diferença entre "não mexi" e "zero". */
+function numeroOuNulo(v) {
+  const t = String(v).trim();
+  if (t === '') return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function ligarPainelDeAlertas() {
+  $('btn-alertas').addEventListener('click', abrirAlertas);
+  $('btn-fechar-alertas').addEventListener('click', fecharAlertas);
+  $('modal-alertas-fundo').addEventListener('click', fecharAlertas);
+
+  // A caixa mestre e o botão da lateral são o MESMO estado. Chamar alternarSom
+  // em vez de escrever Estado.som aqui garante que o rótulo do botão, o
+  // aria-pressed, o localStorage e a parada da repetição aconteçam nos dois
+  // caminhos — foi por caminhos duplicados assim que a ordem dos cartões e o
+  // filtro de loja já divergiram antes.
+  $('al-ligado').addEventListener('change', () => {
+    if ($('al-ligado').checked !== Estado.som) alternarSom();
+  });
+
+  $('al-volume').addEventListener('input', () => {
+    const v = Math.max(5, Math.min(100, Number($('al-volume').value) || 35));
+    txt($('al-volume-val'), String(v));
+    guardarAlerta({ ...Estado.alerta, volume: v });
+  });
+
+  // Toca ao SOLTAR o controle, não a cada pixel: seguir o arraste com um bipe
+  // por evento seria uma metralhadora.
+  $('al-volume').addEventListener('change', () => { if (Estado.som) apitar('aviso'); });
+
+  $('al-repetir').addEventListener('change', () => {
+    guardarAlerta({ ...Estado.alerta, repetirMin: Number($('al-repetir').value) || 0 });
+    // Aplica agora, sem esperar a próxima leitura.
+    ajustarRepeticao((Estado.incidentes?.lista || [])
+      .filter((a) => a.severity === 'critical' && !a.reconhecido));
+  });
+
+  $('al-falar').addEventListener('change', () => {
+    guardarAlerta({ ...Estado.alerta, falar: $('al-falar').checked });
+  });
+
+  // O teste usa o toque de QUEDA e um nome de exemplo: é o aviso que importa
+  // acertar, e é ele que a pessoa precisa reconhecer de longe.
+  $('btn-testar-som').addEventListener('click', () => {
+    if (!Estado.som) alternarSom();
+    else {
+      apitar('queda');
+      anunciar([{ kind: 'offline', label: 'Servidor de teste' }]);
+    }
+  });
 }
 
 function ligarDensidade() {
@@ -4963,6 +5412,7 @@ function ligarEventos() {
 
   $('btn-tema').addEventListener('click', () => trocarTema());
   $('btn-som').addEventListener('click', alternarSom);
+  ligarPainelDeAlertas();
 
   $('btn-relatorio').addEventListener('click', abrirRelatorio);
   $('btn-fechar-rel').addEventListener('click', fecharRelatorio);
@@ -5118,6 +5568,7 @@ function restaurarPreferencias() {
     tema = localStorage.getItem('monitor.tema') || 'dark';
     modo = localStorage.getItem('monitor.modo') || 'lojas';
     Estado.som = localStorage.getItem('monitor.som') === '1';
+    Estado.alerta = lerAlerta();
   } catch (_) { /* modo privado bloqueia storage */ }
 
   txt($('btn-som-rot'), Estado.som ? 'Som: ligado' : 'Som: desligado');

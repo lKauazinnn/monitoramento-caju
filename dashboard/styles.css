@@ -2906,3 +2906,131 @@ input::placeholder { color: var(--fg3); }
   .cartao-loja, .cl-met-fundo, .cl-met-ponta { transition: none; }
   .cartao-loja:hover { transform: none; }
 }
+
+/* =============================================================================
+   Painel de alertas
+   =============================================================================
+   Duas metades: som deste navegador, regras do servidor. O contorno separa as
+   duas porque a consequencia e diferente -- uma afeta quem olha, a outra afeta
+   a equipe inteira. */
+.al-bloco {
+  padding: 14px 16px;
+  border: 1px solid var(--bd);
+  border-radius: var(--r-m);
+  background: var(--pnl2);
+}
+
+.al-bloco + .al-bloco { margin-top: 14px; }
+
+.al-cabeca { margin-bottom: 12px; }
+.al-cabeca h3 { margin: 0; font-size: 13px; }
+.al-cabeca-sub { margin: 3px 0 0; font-size: 10.5px; color: var(--fg3); line-height: 1.45; }
+
+.al-linha {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  cursor: pointer;
+}
+
+.al-rot { font-size: 11.5px; color: var(--fg2); }
+
+/* A mestra em cima, com peso: e a chave que desliga tudo, e tem de se ler como
+   diferente das outras linhas. */
+.al-mestre { padding-bottom: 10px; border-bottom: 1px solid var(--bd2); margin-bottom: 4px; }
+.al-mestre .al-rot { color: var(--fg); font-weight: 600; }
+
+.al-linha input[type="range"] { flex: 1; max-width: 180px; accent-color: var(--info); }
+.al-linha output { font-size: 10.5px; color: var(--fg2); min-width: 24px; text-align: right; }
+.al-linha select { margin-left: auto; }
+
+/* Controle desativado nao pode parecer clicavel: sem sintese de voz, a caixa
+   fica apagada e o texto ao lado diz o motivo. */
+.al-linha input:disabled, .al-tipo input:disabled { cursor: not-allowed; opacity: .45; }
+.al-linha input:disabled ~ .al-rot { color: var(--fg3); }
+
+.al-tipos { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--bd2); }
+
+/* auto-fill em vez de contagem fixa: sao oito tipos hoje e podem ser dez
+   amanha, e a lista vem do servidor. */
+.al-tipos-caixa {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.al-tipo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-p);
+  background: var(--pnl);
+  cursor: pointer;
+}
+
+.al-tipo:hover { border-color: var(--bd); }
+.al-tipo input { margin-top: 2px; }
+.al-tipo-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.al-tipo-nome { font-size: 11px; color: var(--fg); line-height: 1.25; }
+.al-tipo-sub { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg3); }
+
+/* A borda esquerda marca o critico. Nao pinto o fundo de vermelho: a caixa e um
+   controle, nao um alarme, e vermelho de alarme aqui competiria com o vermelho
+   de incidente de verdade na mesma tela. */
+.al-tipo-crit { border-left: 2px solid color-mix(in srgb, var(--crit) 55%, transparent); }
+.al-tipo-crit .al-tipo-sub { color: var(--crit); }
+
+.al-acoes { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.al-nota { font-size: 10.5px; color: var(--fg3); }
+
+/* ------------------------------------------------------ regras do servidor --- */
+.al-regras { display: grid; gap: 10px; }
+
+.al-regra {
+  padding: 11px 13px;
+  border: 1px solid var(--bd2);
+  border-radius: var(--r-p);
+  background: var(--pnl);
+}
+
+/* Regra desativada fica visivelmente apagada: ela continua na lista porque
+   precisa ser religavel, mas nao pode parecer que esta vigiando algo. */
+.al-regra-off { opacity: .58; }
+
+.al-regra-topo { display: flex; align-items: center; gap: 10px; }
+.al-regra-nome { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.al-regra-nome strong { font-size: 12px; font-weight: 600; }
+
+.al-regra-sev {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+
+.al-regra-sev-critical { color: var(--crit); background: color-mix(in srgb, var(--crit) 13%, transparent); }
+.al-regra-sev-warning  { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+.al-regra-sev-info     { color: var(--fg3); background: var(--pnl2); }
+
+.al-chave { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 10.5px; color: var(--fg2); cursor: pointer; }
+
+.al-regra-exp { margin: 6px 0 0; font-size: 10.5px; color: var(--fg3); line-height: 1.5; }
+
+.al-campos { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+.al-campo { display: flex; flex-direction: column; gap: 4px; }
+.al-campo-rot { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--fg3); }
+.al-campo-linha { display: flex; align-items: center; gap: 5px; }
+
+/* 74px: caberia 10080 (o silencio maximo, sete dias) sem cortar. */
+.al-campo-linha input { width: 74px; }
+.al-campo-un { font-size: 10px; color: var(--fg3); }
+
+.al-regra-acoes { display: flex; align-items: center; gap: 10px; margin-top: 11px; }
