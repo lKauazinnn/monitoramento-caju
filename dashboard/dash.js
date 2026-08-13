@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.57-trocar-de-lugar';
+const BUILD = '2026-08-12.58-saude-em-porcento';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -1925,17 +1925,19 @@ function linhaSaudeDaLoja(loja) {
 
   if (piorWear !== null) {
     const g = el('span');
-    g.appendChild(el('span', 'cs-rot', 'desgaste '));
-    const b = el('b', null, Math.round(piorWear) + '%');
-    const cor = tomDesgaste(piorWear);
+    g.appendChild(el('span', 'cs-rot', 'saude '));
+    const pior = saudeDoDisco(piorWear);
+    const b = el('b', null, Math.round(pior) + '%');
+    const cor = tomSaude(pior);
     if (cor) b.style.color = cor;
     g.appendChild(b);
     if (alvoWear) {
       g.appendChild(document.createTextNode(' '));
       g.appendChild(el('span', 'cs-alvo', alvoWear));
     }
-    g.title = 'Pior desgaste de SSD da loja, em ' + (alvoWear || '?')
-      + '. Acima de 80% o SSD entra no fim da vida util.';
+    g.title = 'PIOR saude de disco da loja, em ' + (alvoWear || '?')
+      + '. E a vida restante que o proprio disco informa: abaixo de 80% entre na '
+      + 'fila de compra, abaixo de 50% programe a troca.';
     l.appendChild(g);
   }
 
@@ -3279,6 +3281,32 @@ function tomDesgaste(v) {
 }
 
 /**
+ * Saude em porcentagem, do jeito que o CrystalDiskInfo mostra.
+ *
+ * E o complemento do desgaste: o agente guarda 100 - vida_restante, entao a saude
+ * e 100 - desgaste. Mesmo fato, escala invertida -- e a invertida e a que se le
+ * sem pensar, porque MAIOR e MELHOR.
+ */
+function saudeDoDisco(desgaste) {
+  if (desgaste === null || desgaste === undefined) return null;
+  const s = 100 - Number(desgaste);
+  return Math.max(0, Math.min(100, s));
+}
+
+/**
+ * Cor da saude. Os limiares sao os do CrystalDiskInfo, invertidos:
+ *   >= 80  saudavel
+ *   50-79  atencao -- ainda funciona, mas entre na fila de compra
+ *   < 50   trocar
+ */
+function tomSaude(v) {
+  if (v === null || v === undefined) return null;
+  if (v < 50) return 'var(--crit)';
+  if (v < 80) return 'var(--warn)';
+  return 'var(--ok)';
+}
+
+/**
  * Setor realocado ou pendente.
  *
  * Separada de `celulaDisco` porque a regra de cor é o oposto: aqui ZERO é a boa
@@ -3372,10 +3400,18 @@ async function desenharDiscos(machineId) {
     const nums = el('div', 'disco-nums');
     nums.appendChild(celulaDisco('livre',
       pct === null ? null : Math.round(pct) + '%', tomDisco(pct)));
-    nums.appendChild(celulaDisco('desgaste',
-      k.desgaste_pct === null || k.desgaste_pct === undefined
-        ? null : Math.round(k.desgaste_pct) + '%',
-      tomDesgaste(k.desgaste_pct)));
+    // SAUDE, nao desgaste: mesmo numero, escala que se le sem inverter.
+    const saude = saudeDoDisco(k.desgaste_pct);
+    const celSaude = celulaDisco('saude',
+      saude === null ? null : Math.round(saude) + '%', tomSaude(saude));
+    if (saude !== null) {
+      celSaude.title = saude >= 80
+        ? 'Vida restante informada pelo proprio disco (SMART). Acima de 80% esta saudavel.'
+        : saude >= 50
+        ? 'Vida restante abaixo de 80%: ainda funciona, mas entre na fila de compra.'
+        : 'Vida restante abaixo de 50%: programe a troca deste disco.';
+    }
+    nums.appendChild(celSaude);
     nums.appendChild(celulaDisco('ligado', idadeDisco(k.horas_ligado)));
 
     // OS DOIS QUE DECIDEM TROCA. Zero é notícia BOA e aparece em verde; qualquer
@@ -3390,7 +3426,14 @@ async function desenharDiscos(machineId) {
 
     // O selo do Windows fica por ULTIMO e discreto de proposito: ele diz "OK"
     // ate o disco estar morrendo, entao nao pode ser a primeira coisa que se le.
-    const selo = k.saude_ok === true
+    // O selo prefere a SAUDE quando ela existe: "Saudavel" com um numero atras
+    // vale mais que "sem falha", que e o binario do Windows e avisa tarde.
+    const selo = saude !== null
+      ? el('span',
+          'etiqueta disco-selo ' + (saude >= 80 ? 'etiqueta-online'
+            : saude >= 50 ? 'etiqueta-degradado' : 'etiqueta-offline'),
+          saude >= 80 ? 'Saudavel' : saude >= 50 ? 'Atencao' : 'Trocar')
+      : k.saude_ok === true
       ? el('span', 'etiqueta etiqueta-online disco-selo', 'sem falha')
       : k.saude_ok === false
       ? el('span', 'etiqueta etiqueta-offline disco-selo', 'FALHA')
