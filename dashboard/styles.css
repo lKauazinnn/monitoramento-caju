@@ -3034,3 +3034,49 @@ input::placeholder { color: var(--fg3); }
 .al-campo-un { font-size: 10px; color: var(--fg3); }
 
 .al-regra-acoes { display: flex; align-items: center; gap: 10px; margin-top: 11px; }
+
+/* ------------------------------------ escolha de volumes acompanhados (0044) --- */
+/* Volume FORA do acompanhamento: apagado como o pequeno, mas com borda
+   tracejada. Sao dois estados diferentes -- pequeno e heuristica do sistema,
+   fora e escolha de alguem -- e a acao para mudar cada um e diferente, entao a
+   tela nao pode mostrar os dois igual. */
+.disco-fora { opacity: .55; border-left: 2px dashed var(--bd2); }
+
+.disco-pe {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--bd2);
+}
+
+.disco-marca-fora, .disco-marca-peq {
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--fg3);
+}
+
+/* A escolha do operador fica em ambar, nao em cinza: e informacao acionavel --
+   alguem decidiu isso e pode redecidir. "Pequeno" e so um fato do sistema. */
+.disco-marca-fora { color: var(--warn); }
+
+.disco-nota { font-size: 9.5px; color: var(--fg3); font-style: italic; }
+
+/* O interruptor vai para a direita: a linha se le da esquerda (qual disco, quanto
+   espaco, saude) e a acao fecha a leitura. */
+.disco-acomp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: .04em;
+  color: var(--fg2);
+  cursor: pointer;
+}
+
+.disco-acomp input { cursor: pointer; }
+.disco-acomp input:disabled { cursor: progress; opacity: .5; }

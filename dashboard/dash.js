@@ -2932,6 +2932,21 @@ function linhaMetrica({ rotulo, nota, valor, sub, pct, limiar = 101, corValor = 
   return linha;
 }
 
+/** Quantos volumes desta loja estao fora do acompanhamento, e quais. */
+function volumesForaDaLoja(loja) {
+  let quantos = 0;
+  const quais = [];
+  for (const m of loja.maquinas) {
+    const n = Number(m.disk_volumes_fora || 0);
+    if (!n) continue;
+    quantos += n;
+    // O nome da maquina junto: numa loja com quatro PCs, "D:" sozinho nao diz
+    // onde procurar.
+    if (m.disk_drives_fora) quais.push(m.label + ' ' + m.disk_drives_fora);
+  }
+  return { quantos, quais };
+}
+
 function cartaoLoja(loja) {
   const estados = loja.maquinas.map(estadoDe);
   const offline = estados.filter((e) => e === 'offline').length;
@@ -3121,9 +3136,23 @@ function cartaoLoja(loja) {
   const usoDisco = discoMin === null ? null : 100 - discoMin;
   const discoBaixo = discoMin !== null && discoMin < PISO_DISCO_ATENCAO;
 
+  // Volumes que alguem tirou da conta. Entra na nota da linha, junto do uso: e o
+  // lugar onde a pessoa esta olhando quando le o numero do disco.
+  const fora = volumesForaDaLoja(loja);
+
   const lDisco = linhaMetrica({
     rotulo: 'disco livre',
-    nota: usoDisco === null ? null : 'uso ' + Math.round(usoDisco) + '%',
+    // Montada por partes e unida no fim, e NÃO concatenada com `+`: em
+    // JavaScript `null + ''` é a string "null", e a primeira versão disto
+    // escreveu "DISCO LIVRE null" em todo cartão sem leitura de disco. Com
+    // partes, nota vazia continua null e a linha não mostra nota nenhuma.
+    //
+    // Sem leitura de disco E com volume fora, sobra só "1 fora" — que é o caso de
+    // quem desmarcou todos os volumes, e é justamente quando a explicação importa.
+    nota: [
+      usoDisco === null ? null : 'uso ' + Math.round(usoDisco) + '%',
+      fora.quantos > 0 ? fora.quantos + ' fora' : null,
+    ].filter(Boolean).join(' · ') || null,
     valor: discoMin === null ? '—'
       : (gb(pior.disk_worst_free_gb) ?? Math.round(discoMin) + '%'),
     sub: discoMin === null ? null : (gbNu(pior.disk_worst_total_gb) ? 'de ' + gbNu(pior.disk_worst_total_gb) : null),
@@ -3134,11 +3163,23 @@ function cartaoLoja(loja) {
     corValor: discoMin === null ? null : tomDisco(discoMin),
   });
 
+  const avisoFora = fora.quantos === 0 ? ''
+    : ' ' + fora.quantos + ' volume(s) FORA do acompanhamento, e portanto fora deste '
+      + 'número e dos alertas: ' + fora.quais.join('; ')
+      + '. Abra a máquina para rever.';
+
   if (discoMin !== null) {
     lDisco.title = 'Espaço LIVRE no volume mais apertado da loja: '
       + (pior.disk_worst_drive || 'volume') + ' de ' + pior.label
       + '. A barra mostra o USO. Vermelho abaixo de ' + PISO_DISCO_ATENCAO + '% livre.'
-      + (discoVelho ? ' Esta máquina parou de reportar: leitura antiga.' : '');
+      + (discoVelho ? ' Esta máquina parou de reportar: leitura antiga.' : '')
+      + avisoFora;
+  } else if (fora.quantos > 0) {
+    // O caso que me faria desconfiar da tela: nenhum número de disco E volumes
+    // desmarcados. Sem esta dica, o travessão pareceria falta de leitura do
+    // agente, e alguém iria caçar um problema que não existe.
+    lDisco.title = 'Sem número de disco porque TODOS os volumes acompanhados foram '
+      + 'desmarcados.' + avisoFora;
   }
   cels.appendChild(lDisco);
 
@@ -4183,6 +4224,59 @@ function celulaDisco(rotulo, valor, cor) {
   return d;
 }
 
+/**
+ * O interruptor de "acompanhar este volume".
+ *
+ * Fica na linha do disco, e nao num painel separado de configuracao: a decisao
+ * depende de olhar o numero do volume ("este D: vive em 4% porque e backup"), e
+ * uma tela de configuracao longe do numero obrigaria a pessoa a decidir de
+ * memoria.
+ *
+ * So aparece para admin. Para os outros, o estado ainda e visivel (a linha entra
+ * apagada, com a marca "fora do acompanhamento"), porque quem olha precisa saber
+ * que o cartao esta ignorando um volume mesmo sem poder mudar isso.
+ */
+function interruptorDoVolume(machineId, k, aoMudar) {
+  const cx = el('input');
+  cx.type = 'checkbox';
+  cx.checked = k.acompanhando !== false;
+  cx.id = 'vol-' + machineId + '-' + String(k.drive || '').replace(/[^A-Za-z0-9]/g, '');
+
+  const rot = el('label', 'disco-acomp');
+  rot.setAttribute('for', cx.id);
+  rot.appendChild(cx);
+  rot.appendChild(el('span', null, 'acompanhar'));
+  rot.title = 'Desmarcado, este volume sai do número do cartão E dos alertas de '
+    + 'disco. Serve para um volume que vive cheio de propósito, como um D: de '
+    + 'backup, que senão mantém a loja em atenção para sempre.';
+
+  cx.addEventListener('change', async () => {
+    cx.disabled = true;
+    const queria = cx.checked;
+    try {
+      const r = await rpc('definir_volume_acompanhado', {
+        p_machine_id: machineId,
+        p_drive: k.drive,
+        p_acompanhar: queria,
+      });
+      // O aviso do servidor vai para a tela como ele veio. É o caso de desmarcar
+      // o último volume: a máquina deixa de ter alerta de disco, e quem fez isso
+      // precisa saber -- o servidor não recusa, então a tela não pode calar.
+      if (r?.aviso) brinde(r.aviso, true);
+      else brinde((queria ? 'Acompanhando ' : 'Fora do acompanhamento: ') + (r?.drive || k.drive));
+      if (typeof aoMudar === 'function') await aoMudar();
+    } catch (e) {
+      // Volta a caixa ao que o servidor tem, e não ao que a pessoa clicou: sem
+      // isto a tela mostraria uma escolha que não foi gravada.
+      cx.checked = !queria;
+      cx.disabled = false;
+      brinde(e.message || 'não consegui mudar o acompanhamento', true);
+    }
+  });
+
+  return rot;
+}
+
 async function desenharDiscos(machineId) {
   const secao = $('secao-discos');
   const caixa = $('painel-discos');
@@ -4215,6 +4309,10 @@ async function desenharDiscos(machineId) {
     // Particao de servico entra apagada: ela nao decide nada, mas esconde-la
     // faria a soma dos discos nao fechar com o que o Windows mostra.
     if (k.pequeno) linha.classList.add('disco-pequeno');
+    // Volume DESMARCADO tambem entra apagado, mas por outro motivo e com outra
+    // marca: "pequeno" e heuristica do sistema, "fora" e escolha de alguem. A
+    // tela distingue os dois porque a acao para consertar cada um e diferente.
+    if (k.acompanhando === false) linha.classList.add('disco-fora');
 
     const ident = el('div', 'disco-id');
     ident.appendChild(el('div', 'disco-letra', k.drive || '?'));
@@ -4287,6 +4385,26 @@ async function desenharDiscos(machineId) {
         + 'quem avisa antes e o desgaste.';
     }
     linha.appendChild(selo);
+
+    // O rodapé da linha: por que este volume está fora, e o interruptor.
+    const pe = el('div', 'disco-pe');
+    if (k.acompanhando === false) {
+      pe.appendChild(el('span', 'disco-marca-fora', 'fora do acompanhamento'));
+      if (k.nota) pe.appendChild(el('span', 'disco-nota', k.nota));
+    } else if (k.pequeno) {
+      // Dito na tela: a pessoa que vê este volume apagado precisa saber que não
+      // foi alguém que o desmarcou, e que marcar/desmarcar não vai mudar nada.
+      pe.appendChild(el('span', 'disco-marca-peq',
+        'pequeno demais para contar (abaixo do piso do sistema)'));
+    }
+    if (Estado.ehAdmin === true) {
+      pe.appendChild(interruptorDoVolume(machineId, k,
+        // Redesenha a gaveta E a frota: o número do cartão muda na hora, senão a
+        // pessoa desmarca um volume e a tela atrás continua com o número antigo
+        // até a próxima leitura.
+        async () => { await desenharDiscos(machineId); await carregar(); }));
+    }
+    if (pe.childNodes.length > 0) linha.appendChild(pe);
 
     caixa.appendChild(linha);
   }
