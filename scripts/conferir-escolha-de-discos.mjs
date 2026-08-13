@@ -135,7 +135,11 @@ try {
   const idMaq = await js(`(Estado.maquinas[0] && Estado.maquinas[0].machine_id) || null`);
   if (!idMaq) throw new Error('a base local nao tem maquina para abrir a gaveta');
 
-  await js(`Estado.ehAdmin = true; desenharDiscos(${JSON.stringify(idMaq)})`);
+  // A gaveta (#painel) tem de estar VISIVEL, e nao so desenhada: elemento
+  // escondido tem largura zero, e a assercao de largura do fim mediria 0 de 0 e
+  // "passaria" sem olhar nada.
+  await js(`document.getElementById('painel').hidden = false;
+           Estado.ehAdmin = true; desenharDiscos(${JSON.stringify(idMaq)})`);
   await dormir(900);
 
   const g = JSON.parse(await js(`
@@ -169,7 +173,11 @@ try {
     `nao-admin ve os volumes (${semAdmin.linhas}) e nenhum interruptor (${semAdmin.interruptores})`);
 
   // ---- 3 e 5: desmarcar o D: -------------------------------------------------
-  await js(`Estado.ehAdmin = true; desenharDiscos(${JSON.stringify(idMaq)})`);
+  // A gaveta (#painel) tem de estar VISIVEL, e nao so desenhada: elemento
+  // escondido tem largura zero, e a assercao de largura do fim mediria 0 de 0 e
+  // "passaria" sem olhar nada.
+  await js(`document.getElementById('painel').hidden = false;
+           Estado.ehAdmin = true; desenharDiscos(${JSON.stringify(idMaq)})`);
   await dormir(700);
   await js(`
     (() => {
@@ -290,7 +298,11 @@ try {
       return true;
     })()
   `);
-  await js(`Estado.ehAdmin = true; desenharDiscos(${JSON.stringify(idMaq)})`);
+  // A gaveta (#painel) tem de estar VISIVEL, e nao so desenhada: elemento
+  // escondido tem largura zero, e a assercao de largura do fim mediria 0 de 0 e
+  // "passaria" sem olhar nada.
+  await js(`document.getElementById('painel').hidden = false;
+           Estado.ehAdmin = true; desenharDiscos(${JSON.stringify(idMaq)})`);
   await dormir(900);
   const semMig = JSON.parse(await js(`
     JSON.stringify({
@@ -303,6 +315,30 @@ try {
   ok(semMig.interruptores === 0 && semMig.linhas === 3,
     `servidor sem a 0044: nenhum interruptor (${semMig.interruptores}), discos ainda visiveis (${semMig.linhas})`);
   ok(semMig.avisa, 'e a tela diz que falta a migracao, em vez de calar');
+
+  // O rodape tem de ATRAVESSAR a linha. `.disco-linha` e uma grade de tres
+  // colunas (64px | 1fr | auto) e todo filho novo cai numa celula: sem
+  // `grid-column: 1 / -1` o rodape foi para a coluna de 64px e a mensagem virou
+  // uma tira vertical de uma palavra por linha. Nenhuma assercao de conteudo pega
+  // isso -- o texto estava certo, a largura estava errada --, entao aqui eu meco
+  // a largura.
+  const larg = JSON.parse(await js(`
+    (() => {
+      const l = document.querySelector('.disco-linha');
+      const pe = l.querySelector('.disco-pe');
+      return JSON.stringify({
+        linha: Math.round(l.getBoundingClientRect().width),
+        pe: Math.round(pe.getBoundingClientRect().width),
+        alturaPe: Math.round(pe.getBoundingClientRect().height),
+      });
+    })()
+  `));
+  ok(larg.pe > larg.linha * 0.9,
+    `o rodape ocupa a linha inteira (${larg.pe} de ${larg.linha}px)`);
+  // Uma tira vertical de seis palavras passava de 100px de altura. Duas linhas de
+  // texto de 9.5px cabem folgadas em 60.
+  ok(larg.alturaPe > 8 && larg.alturaPe < 60,
+    `e nao empilha em coluna estreita (${larg.alturaPe}px de altura)`);
 
   const r2 = await cmd('Page.captureScreenshot', { format: 'png' });
   if (r2?.data) {

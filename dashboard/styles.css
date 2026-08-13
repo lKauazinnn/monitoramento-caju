@@ -3042,12 +3042,17 @@ input::placeholder { color: var(--fg3); }
    tela nao pode mostrar os dois igual. */
 .disco-fora { opacity: .55; border-left: 2px dashed var(--bd2); }
 
+/* Atravessa as tres colunas da linha. Sem isto o rodape caiu na PRIMEIRA
+   coluna, que tem 64px, e a mensagem virou uma tira vertical de uma palavra por
+   linha -- foi assim que o Kaua viu na tela. .disco-linha e grade, e todo filho
+   novo cai numa celula; um flex solto nao herda largura nenhuma. */
 .disco-pe {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 7px;
+  margin-top: 4px;
   padding-top: 7px;
   border-top: 1px solid var(--bd2);
 }
@@ -3057,6 +3062,10 @@ input::placeholder { color: var(--fg3); }
   letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--fg3);
+  /* min-width: 0 e o par de flex-wrap: sem ele o item nao encolhe e o texto
+     estoura para fora da linha em vez de quebrar onde deve. */
+  min-width: 0;
+  line-height: 1.5;
 }
 
 /* A escolha do operador fica em ambar, nao em cinza: e informacao acionavel --
