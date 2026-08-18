@@ -47,7 +47,9 @@ $migracoes = @(
   @{ nome = '0043 — agendar a avaliacao de alertas';
      arq  = 'supabase\migrations\20260813170000_0043_o_avaliador_precisa_rodar.sql' },
   @{ nome = '0044 — escolher os discos acompanhados';
-     arq  = 'supabase\migrations\20260813190000_0044_escolher_os_discos_acompanhados.sql' }
+     arq  = 'supabase\migrations\20260813190000_0044_escolher_os_discos_acompanhados.sql' },
+  @{ nome = '0045 — todos os volumes no cartao';
+     arq  = 'supabase\migrations\20260813210000_0045_todos_os_volumes_no_cartao.sql' }
 )
 
 foreach ($m in $migracoes) {
@@ -188,6 +190,11 @@ Conferir 'definir_volume_acompanhado existe' `
   "select count(*) from pg_proc where proname = 'definir_volume_acompanhado';" `
   '^1$' `
   'o interruptor da gaveta vai dar erro no clique.'
+
+Conferir 'disk_volumes preenchido na frota' `
+  "select count(*) || ' maquina(s) com volumes' from public.machines_status where disk_volumes is not null;" `
+  '^[1-9]' `
+  'a coluna existe mas veio vazia em todas: o cartao cai na linha agregada de reserva. Confira se ha leitura de disco recente.'
 
 # A primeira avaliacao feita agora, para nao esperar um minuto para saber.
 Write-Host ''

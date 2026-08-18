@@ -15,6 +15,9 @@
 --   9. não-admin não escolhe
 --  10. a mudança deixa trilha em events
 --  11. o alerta de disco respeita a escolha: um D: cheio e desmarcado não abre
+--  12. disk_volumes traz TODOS os volumes acompanhados, do pior para o melhor
+--  13. e NÃO traz o desmarcado nem o pequeno
+--  14. desmarcar tudo deixa disk_volumes nulo, e não uma lista vazia
 --
 -- O caso 5 é o coração. `disk_ignore_below_gb` (0036) tem escape de propósito --
 -- quando não sobra volume grande, o maior pequeno volta, para uma máquina nunca
@@ -247,6 +250,68 @@ begin
     raise exception 'FALHOU 10: a trilha nao diz qual volume';
   end if;
   raise notice 'ok 10  a mudanca deixa trilha (% evento(s))', v_n;
+
+  -- =========================================================== 12
+  -- A coluna que faz os dois discos aparecerem no cartao. Antes dela o cartao
+  -- mostrava um numero so, do volume mais apertado, e o outro disco era invisivel
+  -- sem abrir a maquina.
+  select disk_volumes into v_r
+  from public.machines_status where machine_id = v_maq;
+
+  if v_r is null or jsonb_array_length(v_r) <> 2 then
+    raise exception 'FALHOU 12: esperava 2 volumes acompanhados em disk_volumes, veio %',
+      coalesce(jsonb_array_length(v_r)::text, 'nulo');
+  end if;
+
+  -- O PIOR primeiro: e a ordem em que o operador le, e e a mesma que decide o
+  -- resumo da maquina. Duas ordens para a mesma coisa fariam o cartao contradizer
+  -- a gaveta.
+  if v_r->0->>'drive' <> 'D:' or v_r->1->>'drive' <> 'C:' then
+    raise exception 'FALHOU 12: ordem errada -- veio % depois %',
+      v_r->0->>'drive', v_r->1->>'drive';
+  end if;
+
+  -- Os campos que o cartao le, um por um: sem eles a linha do disco fica vazia e
+  -- nada reclama.
+  if (v_r->0->>'free_gb') is null or (v_r->0->>'total_gb') is null
+     or (v_r->0->>'free_pct') is null then
+    raise exception 'FALHOU 12: volume sem free_gb/total_gb/free_pct (%)', v_r->0;
+  end if;
+  raise notice 'ok 12  disk_volumes traz os 2, do pior para o melhor (%, %)',
+    v_r->0->>'drive', v_r->1->>'drive';
+
+  -- =========================================================== 13
+  -- O E: (1 GB) nunca entra: ficaria uma linha de particao de boot no cartao.
+  if exists (select 1 from jsonb_array_elements(v_r) x where x->>'drive' = 'E:') then
+    raise exception 'FALHOU 13: o volume pequeno entrou no cartao';
+  end if;
+
+  perform public.definir_volume_acompanhado(v_maq, 'D:', false);
+
+  select disk_volumes into v_r
+  from public.machines_status where machine_id = v_maq;
+
+  if jsonb_array_length(v_r) <> 1 or v_r->0->>'drive' <> 'C:' then
+    raise exception 'FALHOU 13: com D: fora esperava so o C:, veio %', v_r;
+  end if;
+  raise notice 'ok 13  nem o desmarcado nem o pequeno aparecem';
+
+  -- =========================================================== 14
+  -- Nulo, e nao lista vazia: o painel distingue "nao ha volume acompanhado" de
+  -- "nao ha leitura", e uma lista vazia obrigaria o cliente a tratar os dois
+  -- casos como o mesmo.
+  perform public.definir_volume_acompanhado(v_maq, 'C:', false);
+
+  select disk_volumes into v_r
+  from public.machines_status where machine_id = v_maq;
+
+  if v_r is not null then
+    raise exception 'FALHOU 14: com tudo desmarcado disk_volumes devia ser nulo, veio %', v_r;
+  end if;
+  raise notice 'ok 14  tudo desmarcado deixa disk_volumes nulo';
+
+  perform public.definir_volume_acompanhado(v_maq, 'C:', true);
+  perform public.definir_volume_acompanhado(v_maq, 'D:', true);
 
   raise notice '';
   raise notice 'Teste 15: a escolha de volumes vale, e nao tem escape.';

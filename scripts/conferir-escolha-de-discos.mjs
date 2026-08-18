@@ -212,14 +212,21 @@ try {
   // A view do servidor e que decide o numero; aqui eu injeto o estado que ela
   // devolveria (D: fora) e confiro que o CARTAO le isso -- que e a parte que mora
   // no cliente e que eu escrevi.
+  // Silencia carregar() antes de injetar estado.
+  //
+  // O clique do interruptor chama carregar() para o cartao atualizar na hora --
+  // que e o comportamento certo do produto. No teste isso e uma CORRIDA: a busca
+  // termina depois e sobrescreve com os valores reais do servidor os que eu acabei
+  // de injetar, e a assercao le "—" achando que o cartao quebrou.
+  await js(`carregar = async () => {}; true`);
+
   const cart = JSON.parse(await js(`
     (() => {
-      // A maquina que o CARTAO usa e a que tem leitura de disco, nao a primeira
-      // da lista -- Estado.maquinas[0] aqui e uma never_seen, e mutar ela nao
-      // muda cartao nenhum. Foi essa suposicao que fez o teste falhar mostrando
-      // 115 GB, o valor real da outra maquina.
-      const m = Estado.maquinas.find(x => x.disk_min_free_pct !== null
-                                       && x.disk_min_free_pct !== undefined)
+      // A maquina que tem disco DE VERDADE, testada pelo valor que o cartao usa.
+      // Testar disk_min_free_pct pegou PC-Rodrigo, que nunca reportou: a ordenacao
+      // do PostgREST e insensivel a maiuscula, entao 'admin-rodrigo' vem antes de
+      // 'LOCAL-PC', e o find caiu na primeira maquina sem dado nenhum.
+      const m = Estado.maquinas.find(x => Number.isFinite(Number(x.disk_worst_free_gb)))
              || Estado.maquinas[0];
       m.disk_worst_drive = 'C:';
       m.disk_min_free_pct = 40;
@@ -227,10 +234,19 @@ try {
       m.disk_worst_total_gb = 240;
       m.disk_volumes_fora = 1;
       m.disk_drives_fora = 'D:';
+      // Sem disk_volumes: este caso mede a linha AGREGADA, que e a reserva para
+      // servidor sem a 0045. A linha por volume tem casos proprios adiante.
+      m.disk_volumes = null;
       desenharMaquinas();
-      const met = [...document.querySelectorAll('.cl-met')]
+
+      // O cartao DESTA loja, achado pelo codigo dela: pegar a primeira linha
+      // 'disco livre' da pagina leria o cartao de outra loja.
+      const cartao = [...document.querySelectorAll('.cartao-loja')]
+        .find(c => (c.querySelector('.cl-meta')?.textContent || '').includes(m.site_code));
+      const met = cartao && [...cartao.querySelectorAll('.cl-met')]
         .find(x => x.querySelector('.cl-met-rot')?.textContent === 'disco livre');
       return JSON.stringify({
+        loja: m.site_code,
         nota: met?.querySelector('.cl-met-nota')?.textContent || '',
         valor: met?.querySelector('.cl-met-val')?.textContent || '',
         dica: met?.title || '',
@@ -339,6 +355,86 @@ try {
   // texto de 9.5px cabem folgadas em 60.
   ok(larg.alturaPe > 8 && larg.alturaPe < 60,
     `e nao empilha em coluna estreita (${larg.alturaPe}px de altura)`);
+
+  // ---- 10 a 13: os DOIS discos no cartao -------------------------------------
+  // O pedido do Kaua, literal: "os dois discos devem ser exibidos aqui". Antes o
+  // cartao mostrava uma linha so, do volume mais apertado, e o outro disco era
+  // invisivel sem abrir a maquina.
+  const duas = JSON.parse(await js(`
+    (() => {
+      const m = Estado.maquinas.find(x => x.disk_min_free_pct !== null
+                                       && x.disk_min_free_pct !== undefined)
+             || Estado.maquinas[0];
+      m.disk_volumes = [
+        { drive: 'D:', etiqueta: 'Backup',  total_gb: 238, free_gb: 24, free_pct: 10, tipo: 'SSD' },
+        { drive: 'C:', etiqueta: 'Sistema', total_gb: 238, free_gb: 91, free_pct: 38, tipo: 'SSD' },
+      ];
+      desenharMaquinas();
+      // O cartao DESTA maquina, e nao a pagina toda: as outras lojas nao tem
+      // disk_volumes e seguem com a linha agregada 'disco livre', que e o
+      // comportamento certo delas e nao pode entrar nesta contagem.
+      const cartao = [...document.querySelectorAll('.cartao-loja')]
+        .find(c => [...c.querySelectorAll('.cl-met-rot')]
+          .some(r => /^disco [A-Z]:/.test(r.textContent)));
+      const met = [...cartao.querySelectorAll('.cl-met')]
+        .filter(x => /^disco /.test(x.querySelector('.cl-met-rot')?.textContent || ''));
+      return JSON.stringify({
+        n: met.length,
+        rotulos: met.map(x => x.querySelector('.cl-met-rot').textContent),
+        valores: met.map(x => x.querySelector('.cl-met-val').textContent),
+        notas: met.map(x => x.querySelector('.cl-met-nota')?.textContent || ''),
+        barras: met.map(x => !!x.querySelector('.cl-met-fundo')),
+        // O D: com 10% livre estoura o piso de 20: barra vermelha.
+        ruins: met.filter(x => x.querySelector('.cl-met-fundo-ruim')).length,
+        sobra: cartao.querySelectorAll('.cl-mais').length,
+      });
+    })()
+  `));
+
+  ok(duas.n === 2, `duas linhas de disco no cartao (${duas.rotulos.join(', ')})`);
+  ok(duas.rotulos[0] === 'disco D:' && duas.rotulos[1] === 'disco C:',
+    `o mais apertado primeiro (${duas.rotulos.join(' -> ')})`);
+  ok(duas.valores[0] === '24 GB' && duas.valores[1] === '91 GB',
+    `cada linha com o SEU espaco livre (${duas.valores.join(' | ')})`);
+  ok(/uso 90%/.test(duas.notas[0]) && /uso 62%/.test(duas.notas[1]),
+    `e o SEU uso (${duas.notas.join(' | ')})`);
+  ok(duas.barras[0] === true && duas.barras[1] === true, 'as duas com barra');
+  ok(duas.ruins === 1,
+    `so o volume abaixo do piso fica vermelho (${duas.ruins} de 2)`);
+  ok(duas.sobra === 0, 'sem linha de sobra com dois volumes');
+
+  // ---- o teto -----------------------------------------------------------------
+  // Oito volumes numa loja de quatro maquinas nao pode empurrar o cartao para
+  // fora da grade. Corta em seis e CONTA o resto.
+  const teto = JSON.parse(await js(`
+    (() => {
+      const m = Estado.maquinas.find(x => x.disk_volumes) || Estado.maquinas[0];
+      m.disk_volumes = Array.from({ length: 9 }, (_, i) => ({
+        drive: String.fromCharCode(67 + i) + ':', etiqueta: 'V' + i,
+        total_gb: 100, free_gb: 50 - i, free_pct: 50 - i, tipo: 'SSD',
+      }));
+      desenharMaquinas();
+      // O cartao DESTA maquina, e nao a pagina toda: as outras lojas nao tem
+      // disk_volumes e seguem com a linha agregada 'disco livre', que e o
+      // comportamento certo delas e nao pode entrar nesta contagem.
+      const cartao = [...document.querySelectorAll('.cartao-loja')]
+        .find(c => [...c.querySelectorAll('.cl-met-rot')]
+          .some(r => /^disco [A-Z]:/.test(r.textContent)));
+      const met = [...cartao.querySelectorAll('.cl-met')]
+        .filter(x => /^disco /.test(x.querySelector('.cl-met-rot')?.textContent || ''));
+      const mais = cartao.querySelector('.cl-mais');
+      return JSON.stringify({
+        n: met.length,
+        sobra: mais ? mais.textContent : '',
+        dica: mais ? mais.title : '',
+      });
+    })()
+  `));
+
+  ok(teto.n === 6, `o teto de 6 linhas e respeitado (${teto.n})`);
+  ok(teto.sobra.includes('+3 outros'), `a sobra e CONTADA ("${teto.sobra}")`);
+  ok(teto.dica.includes('50% livre') && teto.dica.includes('49% livre'),
+    'e a dica nomeia os que ficaram fora, que sao os MENOS apertados');
 
   const r2 = await cmd('Page.captureScreenshot', { format: 'png' });
   if (r2?.data) {

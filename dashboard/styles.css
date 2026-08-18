@@ -3089,3 +3089,14 @@ input::placeholder { color: var(--fg3); }
 
 .disco-acomp input { cursor: pointer; }
 .disco-acomp input:disabled { cursor: progress; opacity: .5; }
+
+/* A sobra de volumes que nao cabe no cartao. Contada, nunca escondida em
+   silencio: um volume cheio pode estar justamente ali, e um cartao que parece
+   completo sem estar e pior que um cartao que admite o corte. */
+.cl-mais {
+  padding: 4px 9px;
+  font-size: 9.5px;
+  letter-spacing: .04em;
+  color: var(--fg3);
+  cursor: help;
+}

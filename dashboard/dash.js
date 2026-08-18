@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-13.64-gerenciar-alerta';
+const BUILD = '2026-08-13.65-volumes-no-cartao';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -2947,6 +2947,92 @@ function volumesForaDaLoja(loja) {
   return { quantos, quais };
 }
 
+// Teto de linhas de disco por cartao.
+//
+// Uma loja com quatro maquinas de dois volumes daria oito linhas, e o cartao
+// deixaria de caber na grade -- o proposito da grade e achar a loja com problema
+// de relance, nao ler um inventario. Seis cobre o caso real desta frota (servidor
+// com C: e D:, mais os PDVs) e as sobras aparecem contadas, nunca escondidas em
+// silencio.
+const TETO_LINHAS_DISCO = 6;
+
+/**
+ * Todos os volumes acompanhados da loja, achatados e do pior para o melhor.
+ *
+ * A coluna disk_volumes chega da view por maquina; aqui as maquinas viram uma
+ * lista so, porque o cartao e da LOJA. O rotulo da maquina viaja junto para a
+ * linha poder dizer de quem e o disco quando a loja tem mais de uma.
+ */
+function volumesDaLoja(loja) {
+  const todos = [];
+  for (const m of loja.maquinas) {
+    const vs = Array.isArray(m.disk_volumes) ? m.disk_volumes : null;
+    if (!vs) continue;
+    for (const v of vs) todos.push({ ...v, maquina: m.label, machine_id: m.machine_id });
+  }
+  // Reordena a lista JUNTA: cada maquina ja vem ordenada de dentro do banco, mas
+  // duas maquinas concatenadas nao ficam ordenadas entre si.
+  todos.sort((a, b) => (a.free_pct ?? 100) - (b.free_pct ?? 100)
+    || String(a.maquina).localeCompare(String(b.maquina), 'pt-BR')
+    || String(a.drive).localeCompare(String(b.drive), 'pt-BR'));
+  return todos;
+}
+
+/**
+ * Uma linha de metrica por volume.
+ *
+ * Mesmas regras da linha agregada que ela substitui: o VALOR mostra o livre, a
+ * BARRA mostra o uso, e as duas viram vermelhas no MESMO ponto.
+ */
+function linhasDeDisco(loja, volumes, discoVelho) {
+  // O nome da maquina so entra quando a loja tem disco de mais de uma: numa loja
+  // de um servidor so, repetir o nome em cada linha e ruido.
+  const varias = new Set(volumes.map((v) => v.machine_id)).size > 1;
+
+  const linhas = [];
+  for (const v of volumes.slice(0, TETO_LINHAS_DISCO)) {
+    const livre = v.free_pct === null || v.free_pct === undefined ? null : Number(v.free_pct);
+    const uso = livre === null ? null : 100 - livre;
+
+    const l = linhaMetrica({
+      rotulo: 'disco ' + (v.drive || '?'),
+      nota: [
+        uso === null ? null : 'uso ' + Math.round(uso) + '%',
+        varias ? v.maquina : null,
+      ].filter(Boolean).join(' · ') || null,
+      valor: livre === null ? '—' : (gb(v.free_gb) ?? Math.round(livre) + '%'),
+      sub: gbNu(v.total_gb) ? 'de ' + gbNu(v.total_gb) : null,
+      pct: uso,
+      limiar: 100 - PISO_DISCO_ATENCAO,
+      corValor: livre === null ? null : tomDisco(livre),
+    });
+
+    l.title = 'Espaço LIVRE em ' + (v.drive || 'volume') + ' de ' + v.maquina
+      + (v.etiqueta ? ' (' + v.etiqueta + ')' : '')
+      + '. A barra mostra o USO. Vermelho abaixo de ' + PISO_DISCO_ATENCAO + '% livre.'
+      + (discoVelho ? ' Esta máquina parou de reportar: leitura antiga.' : '');
+    linhas.push(l);
+  }
+
+  // O que nao caber e CONTADO. Cortar em silencio faria o cartao parecer completo
+  // quando nao esta -- e um volume cheio poderia estar justamente na sobra.
+  const resto = volumes.length - linhas.length;
+  if (resto > 0) {
+    const mais = el('div', 'cl-mais',
+      '+' + resto + (resto === 1 ? ' outro volume' : ' outros volumes'));
+    mais.title = 'Não couberam no cartão: '
+      + volumes.slice(TETO_LINHAS_DISCO)
+          .map((v) => v.maquina + ' ' + v.drive
+            + (v.free_pct === null || v.free_pct === undefined
+                ? '' : ' (' + Math.round(Number(v.free_pct)) + '% livre)'))
+          .join('; ')
+      + '. Abra a máquina para ver todos.';
+    linhas.push(mais);
+  }
+
+  return linhas;
+}
+
 function cartaoLoja(loja) {
   const estados = loja.maquinas.map(estadoDe);
   const offline = estados.filter((e) => e === 'offline').length;
@@ -3168,6 +3254,11 @@ function cartaoLoja(loja) {
       + 'número e dos alertas: ' + fora.quais.join('; ')
       + '. Abra a máquina para rever.';
 
+  // UMA LINHA POR VOLUME quando a view mandou os volumes; a linha agregada abaixo
+  // continua existindo como reserva, para o servidor que ainda nao tem a 0045 --
+  // publicar o painel antes da migracao nao pode apagar o disco da tela.
+  const volumes = volumesDaLoja(loja);
+
   if (discoMin !== null) {
     lDisco.title = 'Espaço LIVRE no volume mais apertado da loja: '
       + (pior.disk_worst_drive || 'volume') + ' de ' + pior.label
@@ -3181,7 +3272,11 @@ function cartaoLoja(loja) {
     lDisco.title = 'Sem número de disco porque TODOS os volumes acompanhados foram '
       + 'desmarcados.' + avisoFora;
   }
-  cels.appendChild(lDisco);
+  if (volumes.length > 0) {
+    for (const l of linhasDeDisco(loja, volumes, discoVelho)) cels.appendChild(l);
+  } else {
+    cels.appendChild(lDisco);
+  }
 
   // RTT sem barra: latencia nao tem escala de 0 a 100. 1ms e 40ms sao ambos
   // normais dependendo da loja, e barra sem escala honesta e decoracao.
