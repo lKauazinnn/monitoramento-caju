@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Aplica as migracoes 0043 e 0044 em producao e CONFERE que cada uma passou a
   valer -- nao so que o arquivo rodou.
@@ -82,22 +82,42 @@ if ($viaDocker) {
   Write-Host 'psql nao esta no PATH: usando o do contentor monitor-db.' -ForegroundColor DarkGray
 }
 
+# ARMADILHA DO POWERSHELL 5.1, e ela derrubou este script na primeira vez que o
+# Kaua rodou: o psql escreve os NOTICE no STDERR, e o PowerShell embrulha cada
+# linha de stderr de programa nativo num ErrorRecord. Com ErrorActionPreference
+# 'Stop', o proprio aviso de SUCESSO ("job agendado a cada minuto") abortou o
+# script antes de aplicar a 0044.
+#
+# Por isso 'Continue' em volta das chamadas nativas: a decisao de sucesso passa a
+# ser o $LASTEXITCODE, que e o unico sinal confiavel aqui.
 function Aplicar([string] $caminho) {
-  if ($viaDocker) {
-    docker cp $caminho monitor-db:/tmp/mig.sql | Out-Null
-    docker exec -e PGPASSWORD=$senhaNua monitor-db psql $UrlBanco -v ON_ERROR_STOP=1 -f /tmp/mig.sql
-  } else {
-    $env:PGPASSWORD = $senhaNua
-    & $psql.Source $UrlBanco -v ON_ERROR_STOP=1 -f $caminho
+  $antes = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    if ($viaDocker) {
+      docker cp $caminho monitor-db:/tmp/mig.sql | Out-Null
+      docker exec -e PGPASSWORD=$senhaNua monitor-db psql $UrlBanco -v ON_ERROR_STOP=1 -f /tmp/mig.sql
+    } else {
+      $env:PGPASSWORD = $senhaNua
+      & $psql.Source $UrlBanco -v ON_ERROR_STOP=1 -f $caminho
+    }
+  } finally {
+    $ErrorActionPreference = $antes
   }
 }
 
 function Perguntar([string] $sql) {
-  if ($viaDocker) {
-    docker exec -e PGPASSWORD=$senhaNua monitor-db psql $UrlBanco -A -t -c $sql
-  } else {
-    $env:PGPASSWORD = $senhaNua
-    & $psql.Source $UrlBanco -A -t -c $sql
+  $antes = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    if ($viaDocker) {
+      docker exec -e PGPASSWORD=$senhaNua monitor-db psql $UrlBanco -A -t -c $sql
+    } else {
+      $env:PGPASSWORD = $senhaNua
+      & $psql.Source $UrlBanco -A -t -c $sql
+    }
+  } finally {
+    $ErrorActionPreference = $antes
   }
 }
 
@@ -109,8 +129,9 @@ Write-Host '============================================================'
 foreach ($m in $migracoes) {
   Write-Host ''
   Write-Host "== $($m.nome) ==" -ForegroundColor Cyan
-  $saida = Aplicar (Join-Path $raiz $m.arq) 2>&1
-  $saida | ForEach-Object { Write-Host "   $_" }
+  # Sem 2>&1: redirecionar o stderr de um programa nativo e justamente o que
+  # transforma cada NOTICE em erro. Deixo o psql escrever direto no console.
+  Aplicar (Join-Path $raiz $m.arq)
   if ($LASTEXITCODE -ne 0) {
     Write-Host ''
     Write-Host "FALHOU: $($m.nome). Parei aqui." -ForegroundColor Red

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Log de quedas de uma maquina: hora a hora, e cada queda com hora de inicio,
   hora de volta e duracao.

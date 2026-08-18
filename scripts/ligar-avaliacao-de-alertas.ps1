@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Aplica a migracao 0043 em producao e CONFERE que o avaliador de alertas ficou
   agendado.
