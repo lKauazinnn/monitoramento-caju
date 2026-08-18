@@ -180,9 +180,9 @@ Conferir 'machines_status tem disk_volumes_fora' `
   'a view nao foi recriada: o cartao nao vai avisar sobre volume fora.'
 
 Conferir 'discos_da_maquina mantem a forma' `
-  "select case when public.discos_da_maquina((select machine_id from public.machines_status where disk_worst_drive is not null limit 1)) ? 'discos' then 'ok (objeto com discos)' else 'FORMA ERRADA' end;" `
+  "select case when d like '%''medido_em''%' and d like '%''discos''%' and d like '%''free_gb''%' and d like '%''acompanhando''%' then 'ok (medido_em, discos, free_gb, acompanhando)' else 'FORMA ERRADA' end from (select pg_get_functiondef('public.discos_da_maquina(uuid)'::regprocedure) as d) x;" `
   'ok' `
-  'a gaveta de discos vai ficar VAZIA no painel. Confira o retorno da funcao.'
+  'a gaveta de discos vai ficar VAZIA no painel: falta um dos campos que o painel le.'
 
 Conferir 'definir_volume_acompanhado existe' `
   "select count(*) from pg_proc where proname = 'definir_volume_acompanhado';" `
