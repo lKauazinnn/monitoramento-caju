@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-13.65-volumes-no-cartao';
+const BUILD = '2026-08-13.66-menos-varredura';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -5254,7 +5254,22 @@ function iniciarAtualizacao() {
   // O polling é o caminho garantido. Realtime, quando funciona, só antecipa.
   // Sem esse fallback, um WebSocket bloqueado pelo firewall da loja congelaria o
   // dashboard sem nenhum sinal visível.
-  const ms = Math.max(5, Number(CFG.pollSeconds) || 20) * 1000;
+  // COM REALTIME, A VARREDURA E REDE DE SEGURANCA -- e rede de seguranca nao
+  // precisa de 10 segundos.
+  //
+  // Com realtime ligado o servidor EMPURRA a mudanca; a varredura existe para o
+  // caso de o WebSocket morrer no firewall da loja. A cada 10 s ela custava 6
+  // varreduras completas por minuto (machines_status inteiro, resumo e lojas) --
+  // 24 requisicoes por minuto de uma TV que fica aberta o dia todo. A cada 60 s
+  // sao 4, e a tela nao fica mais velha do que isso nem no pior caso.
+  //
+  // Isto nao atrasa a DETECCAO de nada: quem decide offline e o banco, pelo
+  // relogio do servidor, e quem abre alerta e o cron de um minuto. O que muda e
+  // so quando a tela desenha, se o realtime tiver falhado.
+  const seg = Math.max(5, Number(CFG.pollSeconds) || 20);
+  const ms = (CFG.authMode === 'supabase' && CFG.realtime
+    ? Math.max(seg, 60)
+    : seg) * 1000;
   if (Estado.timerPoll) clearInterval(Estado.timerPoll);
   Estado.timerPoll = setInterval(() => {
     // A RENOVACAO ACONTECE MESMO COM A ABA ESCONDIDA. Carregar dado numa aba que
