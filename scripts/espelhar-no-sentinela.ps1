@@ -261,7 +261,7 @@ Write-Host "$($linhas.Count) maquina(s)"
 $repetidos = [System.Collections.Generic.HashSet[string]]::new()
 $vistos = @{}
 foreach ($l in $linhas) {
-  $n = ($l -split '|', 4)[1]
+  $n = ($l -split '\|', 4)[1]
   if ($vistos.ContainsKey($n)) { [void]$repetidos.Add($n) } else { $vistos[$n] = 1 }
 }
 if ($repetidos.Count -gt 0) {
@@ -275,9 +275,16 @@ Write-Host '== Enviando ==' -ForegroundColor Cyan
 $ok = 0; $erro = 0; $semToken = 0
 
 foreach ($l in $linhas) {
-  # Divido no maximo 3 vezes: o corpo e JSON e pode conter '|' dentro.
-  $p = $l -split '\|', 3
-  $nome = $p[0]; $estado = $p[1]; $corpo = $p[2]
+  # Divido no maximo 4 vezes: o corpo e JSON e pode conter '|' dentro.
+  $p = $l -split '\|', 4
+  $chave = $p[0]; $nome = $p[1]; $estado = $p[2]; $corpo = $p[3]
+
+  # A chave e LOJA/MAQUINA. Aceito tambem o nome puro, para o arquivo nao ficar
+  # verboso nas maquinas de nome unico -- mas so quando ele NAO se repete na
+  # frota, senao voltaria a colisao que a chave composta existe para evitar.
+  $usar = $null
+  if ($tokens.ContainsKey($chave)) { $usar = $chave }
+  elseif ($tokens.ContainsKey($nome) -and -not $repetidos.Contains($nome)) { $usar = $nome }
 
   if (-not $usar) {
     $semToken++
