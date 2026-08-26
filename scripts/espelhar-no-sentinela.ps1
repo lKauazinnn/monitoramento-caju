@@ -43,6 +43,11 @@
 .PARAMETER Simular
   Mostra exatamente o que seria enviado, e NAO envia. Use na primeira vez.
 
+.PARAMETER GerarModelo
+  Escreve o arquivo de tokens com uma chave por maquina e valor vazio, para
+  preencher. MESCLA com o que ja existe: token preenchido nao e perdido, e chave de
+  maquina que esta offline agora tambem nao.
+
 .PARAMETER IncluirOffline
   Envia tambem as offline. Leia o aviso acima antes.
 
@@ -58,6 +63,7 @@ param(
   [string] $Url = 'https://bieknqhxbecmakxgaspe.supabase.co/functions/v1/sentinela-ingest',
   [string] $Maquina = '%',
   [switch] $Simular,
+  [switch] $GerarModelo,
   [switch] $IncluirOffline,
   [string] $UrlBanco,
   [System.Security.SecureString] $Senha
@@ -73,9 +79,13 @@ if (Test-Path $ArquivoTokens) {
     ForEach-Object { $tokens[$_.Name] = $_.Value }
 }
 
-if ($Simular) {
-  Write-Host 'SIMULACAO: nada sera enviado.' -ForegroundColor Yellow
-} elseif ($tokens.Count -eq 0) {
+if ($Simular -or $GerarModelo) {
+  if ($GerarModelo) {
+    Write-Host 'MODELO: vou escrever o arquivo de tokens com as chaves da frota.' -ForegroundColor Yellow
+  } else {
+    Write-Host 'SIMULACAO: nada sera enviado.' -ForegroundColor Yellow
+  }
+} elseif (($tokens.Values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -eq 0) {
   Write-Host ''
   Write-Host "Nenhum token em: $ArquivoTokens" -ForegroundColor Red
   Write-Host ''
@@ -269,6 +279,37 @@ if ($repetidos.Count -gt 0) {
     ($repetidos -join ', ')) -ForegroundColor Yellow
   Write-Host '   Para esses, a chave do token TEM de ser LOJA/MAQUINA.' -ForegroundColor DarkGray
 }
+if ($GerarModelo) {
+  # MESCLA, nao sobrescreve: token ja preenchido tem de sobreviver a uma segunda
+  # geracao, senao rodar isto de novo depois de uma maquina nova apagaria tudo.
+  $novo = [ordered]@{}
+  $mantidos = 0
+  foreach ($l in $linhas) {
+    $k = ($l -split '\|', 4)[0]
+    $v = if ($tokens.ContainsKey($k)) { $tokens[$k] } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($v)) { $mantidos++ }
+    $novo[$k] = $v
+  }
+  # As chaves que ja tinham token e nao apareceram nesta leitura (maquina offline
+  # agora) ficam: apagar seria perder credencial por causa de um PC desligado.
+  foreach ($k in $tokens.Keys) {
+    if (-not $novo.Contains($k)) { $novo[$k] = $tokens[$k]; $mantidos++ }
+  }
+
+  $pasta = Split-Path -Parent $ArquivoTokens
+  if (-not (Test-Path $pasta)) { New-Item -ItemType Directory -Path $pasta -Force | Out-Null }
+  ($novo | ConvertTo-Json) | Set-Content -Path $ArquivoTokens -Encoding utf8
+
+  Write-Host ''
+  Write-Host "Arquivo escrito: $ArquivoTokens" -ForegroundColor Green
+  Write-Host "  $($novo.Count) chave(s), $mantidos com token, $($novo.Count - $mantidos) em branco"
+  Write-Host ''
+  Write-Host 'Abra o arquivo e cole o token de cada maquina entre as aspas vazias.'
+  Write-Host 'Chave em branco e simplesmente ignorada -- da para preencher aos poucos.'
+  Write-Host ''
+  exit 0
+}
+
 Write-Host ''
 Write-Host '== Enviando ==' -ForegroundColor Cyan
 
@@ -283,8 +324,8 @@ foreach ($l in $linhas) {
   # verboso nas maquinas de nome unico -- mas so quando ele NAO se repete na
   # frota, senao voltaria a colisao que a chave composta existe para evitar.
   $usar = $null
-  if ($tokens.ContainsKey($chave)) { $usar = $chave }
-  elseif ($tokens.ContainsKey($nome) -and -not $repetidos.Contains($nome)) { $usar = $nome }
+  if (-not [string]::IsNullOrWhiteSpace($tokens[$chave])) { $usar = $chave }
+  elseif (-not [string]::IsNullOrWhiteSpace($tokens[$nome]) -and -not $repetidos.Contains($nome)) { $usar = $nome }
 
   if (-not $usar) {
     $semToken++
