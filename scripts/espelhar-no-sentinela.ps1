@@ -83,11 +83,11 @@ if ($Simular) {
   Write-Host 'Sentinela > Cadastros > Gerar token. Crie o arquivo assim:'
   Write-Host ''
   Write-Host '  {' -ForegroundColor DarkGray
-  Write-Host '    "CAJU-ASN": "eyJhbGciOi...",' -ForegroundColor DarkGray
-  Write-Host '    "SERVIDOR-NAZO-SUL": "eyJhbGciOi..."' -ForegroundColor DarkGray
+  Write-Host '    "CAJU-ASN/CAJU-ASN": "eyJhbGciOi...",' -ForegroundColor DarkGray
+  Write-Host '    "NAZO-ASA-SUL/SERVIDOR-NAZO-SUL": "eyJhbGciOi..."' -ForegroundColor DarkGray
   Write-Host '  }' -ForegroundColor DarkGray
   Write-Host ''
-  Write-Host 'A chave e o NOME DA MAQUINA como aparece neste painel.'
+  Write-Host 'A chave e LOJA/MAQUINA, como o -Simular imprime.'
   Write-Host 'Rode com -Simular para ver os nomes exatos e o que seria enviado.'
   exit 1
 } else {
@@ -142,6 +142,8 @@ with alvo as (
     and (:incluir_offline or ms.status in ('online', 'degradado'))
 )
 select
+  -- LOJA/MAQUINA, e nao so o nome: quatro nomes se repetem nesta frota.
+  a.site_code || '/' || a.label as chave,
   a.label,
   a.status,
   jsonb_strip_nulls(jsonb_build_object(
@@ -182,6 +184,12 @@ select
         -- Respeita a escolha feita NESTE painel: volume desmarcado aqui nao vai
         -- para la reintroduzir o alerta que a gente acabou de calar.
         and coalesce(mv.acompanhar, true)
+        -- E o piso de tamanho, a MESMA regra da 0036 que o painel usa. Sem ele a
+        -- particao de reserva do Windows viaja: a simulacao pegou um E: com 0 GB
+        -- livres de 1 GB, que do outro lado seria um alerta critico de disco
+        -- cheio por um volume que nao e disco.
+        and (d.total_gb is null
+             or d.total_gb >= public.app_setting_int('disk_ignore_below_gb'))
     ),
     'servicos', (
       select jsonb_agg(jsonb_build_object(
@@ -194,7 +202,7 @@ select
     )
   ))::text as corpo
 from alvo a
-order by a.label;
+order by a.site_code, a.label;
 '@
 
 $tmp = Join-Path $env:TEMP 'espelho-sentinela.sql'
@@ -248,6 +256,19 @@ if ($linhas.Count -eq 0) {
 }
 
 Write-Host "$($linhas.Count) maquina(s)"
+
+# Quais nomes se repetem: decide se o nome puro pode servir de chave.
+$repetidos = [System.Collections.Generic.HashSet[string]]::new()
+$vistos = @{}
+foreach ($l in $linhas) {
+  $n = ($l -split '|', 4)[1]
+  if ($vistos.ContainsKey($n)) { [void]$repetidos.Add($n) } else { $vistos[$n] = 1 }
+}
+if ($repetidos.Count -gt 0) {
+  Write-Host ("   ATENCAO: $($repetidos.Count) nome(s) repetido(s) na frota: " +
+    ($repetidos -join ', ')) -ForegroundColor Yellow
+  Write-Host '   Para esses, a chave do token TEM de ser LOJA/MAQUINA.' -ForegroundColor DarkGray
+}
 Write-Host ''
 Write-Host '== Enviando ==' -ForegroundColor Cyan
 
@@ -258,15 +279,17 @@ foreach ($l in $linhas) {
   $p = $l -split '\|', 3
   $nome = $p[0]; $estado = $p[1]; $corpo = $p[2]
 
-  if (-not $tokens.ContainsKey($nome)) {
+  if (-not $usar) {
     $semToken++
-    Write-Host ("  {0,-28} SEM TOKEN" -f $nome) -ForegroundColor DarkYellow
+    # Mostra a CHAVE que falta, nao so o nome: e o texto exato que vai no arquivo.
+    $aviso = if ($repetidos.Contains($nome)) { ' (nome repetido na frota!)' } else { '' }
+    Write-Host ("  {0,-34} SEM TOKEN{1}" -f $chave, $aviso) -ForegroundColor DarkYellow
     if ($Simular) { Write-Host "      $corpo" -ForegroundColor DarkGray }
     continue
   }
 
   if ($Simular) {
-    Write-Host ("  {0,-28} [{1}] enviaria:" -f $nome, $estado) -ForegroundColor DarkGray
+    Write-Host ("  {0,-34} [{1}] enviaria:" -f $chave, $estado) -ForegroundColor DarkGray
     Write-Host "      $corpo" -ForegroundColor DarkGray
     $ok++
     continue
@@ -274,22 +297,22 @@ foreach ($l in $linhas) {
 
   try {
     $r = Invoke-RestMethod -Method Post -Uri $Url -TimeoutSec 25 `
-      -Headers @{ Authorization = "Bearer $($tokens[$nome])" } `
+      -Headers @{ Authorization = "Bearer $($tokens[$usar])" } `
       -ContentType 'application/json' -Body $corpo
 
     # A API documenta { "sucesso": true }. HTTP 200 com sucesso=false e RECUSA, e
     # tratar isso como sucesso esconderia o problema exatamente onde ele importa.
     if ($r.sucesso -eq $true) {
       $ok++
-      Write-Host ("  {0,-28} ok" -f $nome) -ForegroundColor Green
+      Write-Host ("  {0,-34} ok" -f $chave) -ForegroundColor Green
     } else {
       $erro++
-      Write-Host ("  {0,-28} RECUSADO: {1}" -f $nome, ($r | ConvertTo-Json -Compress -Depth 4)) -ForegroundColor Red
+      Write-Host ("  {0,-34} RECUSADO: {1}" -f $chave, ($r | ConvertTo-Json -Compress -Depth 4)) -ForegroundColor Red
     }
   } catch {
     $erro++
     $st = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
-    Write-Host ("  {0,-28} ERRO HTTP {1}: {2}" -f $nome, $st, $_.Exception.Message) -ForegroundColor Red
+    Write-Host ("  {0,-34} ERRO HTTP {1}: {2}" -f $chave, $st, $_.Exception.Message) -ForegroundColor Red
   }
 }
 
