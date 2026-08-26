@@ -82,12 +82,14 @@ $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Senha)
 try { $senhaNua = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 
+# O psql sai de dentro do contentor, e o Docker Desktop caiu tres vezes num dia
+# de trabalho. Em vez de morrer com "npipe: cannot find the file", sobe o Docker e
+# espera -- e se nao subir, diz o que fazer.
+. (Join-Path $PSScriptRoot '_docker.ps1')
+
 $psql = Get-Command psql -ErrorAction SilentlyContinue
 $viaDocker = $null -eq $psql
-if ($viaDocker -and $null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
-  Write-Host 'Nem psql no PATH nem docker.' -ForegroundColor Red
-  exit 1
-}
+if (-not (Assert-PsqlDisponivel)) { exit 1 }
 
 # A consulta num arquivo, e nao em -c: assim a senha e o SQL nunca aparecem juntos
 # numa linha de comando, e o SQL pode ter quebras de linha e comentarios.

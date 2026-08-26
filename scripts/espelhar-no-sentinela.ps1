@@ -109,12 +109,14 @@ $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Senha)
 try { $senhaNua = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 
+# O psql sai de dentro do contentor, e o Docker Desktop caiu tres vezes num dia
+# de trabalho. Em vez de morrer com "npipe: cannot find the file", sobe o Docker e
+# espera -- e se nao subir, diz o que fazer.
+. (Join-Path $PSScriptRoot '_docker.ps1')
+
 $psql = Get-Command psql -ErrorAction SilentlyContinue
 $viaDocker = $null -eq $psql
-if ($viaDocker -and $null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
-  Write-Host 'Nem psql no PATH nem docker (suba o Docker Desktop).' -ForegroundColor Red
-  exit 1
-}
+if (-not (Assert-PsqlDisponivel)) { exit 1 }
 
 # =============================================================================
 # A traducao mora no SQL
@@ -219,11 +221,26 @@ function Consultar {
 
 Write-Host ''
 Write-Host '== Lendo a frota ==' -ForegroundColor Cyan
-$linhas = @(Consultar | Where-Object { $_ -match '\|\{' })
+$bruto = Consultar
+$saiu = $LASTEXITCODE
+$linhas = @($bruto | Where-Object { $_ -match '\|\{' })
 Remove-Item $tmp -ErrorAction SilentlyContinue
 
+# FALHA e VAZIO sao coisas diferentes, e confundir as duas chegou na tela: com o
+# Docker parado o psql nunca rodou, e o script anunciou "nenhuma maquina para
+# espelhar" -- que se le como "esta tudo bem, so nao ha nada". O codigo de saida e
+# o unico sinal confiavel aqui.
+if ($saiu -ne 0) {
+  Write-Host ''
+  Write-Host "A CONSULTA FALHOU (codigo $saiu). Nada foi lido, nada foi enviado." -ForegroundColor Red
+  ($bruto | Select-Object -Last 6) | ForEach-Object { Write-Host "   $_" -ForegroundColor DarkGray }
+  Write-Host ''
+  Write-Host 'Causas comuns: senha errada, monitor-db fora do ar, ou rede.' -ForegroundColor Yellow
+  exit 1
+}
+
 if ($linhas.Count -eq 0) {
-  Write-Host 'Nenhuma maquina para espelhar.' -ForegroundColor Yellow
+  Write-Host 'A consulta funcionou e nao devolveu maquina nenhuma.' -ForegroundColor Yellow
   if (-not $IncluirOffline) {
     Write-Host 'Sem -IncluirOffline so vao as online -- talvez seja isso.' -ForegroundColor DarkGray
   }
