@@ -10,65 +10,60 @@
 --     condição")                                                          ✓
 --   incidentes_abertos(), a faixa vermelha e tocarSeNovo() no painel       ✓
 --
--- E `avaliar_alertas()` NUNCA era chamada em produção. Só nos testes. O único
--- job agendado (0011) é a manutenção diária de partições. Então:
---   nenhum alerta formal jamais foi aberto
---   -> incidentes_abertos() sempre devolveu lista vazia
---   -> a faixa vermelha nunca acendeu
---   -> tocarSeNovo() nunca tinha o que tocar
---   -> o botão "Som" existia e não tinha efeito nenhum
+-- E eu concluí que ninguém chamava avaliar_alertas() em produção. ESTAVA ERRADO:
+-- a 0020 já a agendava a cada 5 minutos. Leia o bloco 1, que conta o erro e o
+-- desfaz -- o parágrafo original ficaria aqui mentindo para quem abrisse o arquivo
+-- daqui a seis meses.
 --
--- É o sintoma visível na tela: PC-Brayan está sem contato há SETE DIAS e não há
--- faixa vermelha nem alerta. Só a "Fila de atenção", que é derivada do estado
--- atual na hora de desenhar e nunca passou pelo avaliador.
---
--- Esta migração agenda a avaliação a cada minuto. Não é ajuste de desempenho: é
--- o que faz o sistema de alerta existir.
+-- O que esta migração entrega, e que continua válido: regras_de_alerta() e
+-- editar_regra_de_alerta(), o gerenciamento de alerta do painel.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- 1. O agendamento
+-- 1. CORRECAO: nao havia agendamento a fazer
 -- -----------------------------------------------------------------------------
--- A cada MINUTO, e não a cada cinco. O tempo até o operador saber é a soma de
--- duas esperas: a detecção de offline (~130 s, desde a 0032) e a espera pelo
--- avaliador. Com cinco minutos, a segunda espera dominaria a primeira e todo o
--- trabalho de acelerar a detecção teria sido jogado fora.
+-- A versao original desta migracao agendava avaliar_alertas() a cada minuto,
+-- com o nome 'monitor_avaliar_alertas', porque eu concluí que o avaliador nunca
+-- rodava em producao.
 --
--- Não falha em ambiente sem pg_cron, pelo mesmo motivo da 0011: a stack local de
--- desenvolvimento não tem a extensão, e uma migração que quebra lá deixa de ser
--- aplicada em todo lugar. Mas aqui o aviso é mais grave que o de partições, e o
--- texto diz isso.
+-- ESTAVA ERRADO. A migracao 0020 JA agendava, com o nome 'avaliar-alertas', a
+-- cada 5 minutos ('2-59/5 * * * *'). Eu nao vi porque truncei um grep truncado
+-- e a linha da 0020 ficou fora da saida.
+--
+-- A prova estava na primeira execucao: ela devolveu abertos=0 com
+-- em_aberto_total=10. Dez alertas ja estavam abertos. Se ninguem avaliasse, a
+-- primeira execucao teria aberto os dez -- o zero era a resposta, e eu li como
+-- confirmacao em vez de contradicao.
+--
+-- Consequencia: por algumas horas existiram DOIS jobs fazendo o mesmo trabalho, e
+-- o meu rodava 5x mais vezes, cada execucao percorrendo machines_status (uma view
+-- com cinco laterais por maquina). Nao enche disco, mas queima CPU e conexao --
+-- e entrou na conta do limite que estourou.
+--
+-- Este bloco agora REMOVE o duplicado, em vez de cria-lo. Reaplicar esta migracao
+-- passa a consertar o estrago, e nao a repeti-lo.
 do $do$
 begin
   if not exists (select 1 from pg_extension where extname = 'pg_cron') then
-    begin
-      create extension if not exists pg_cron;
-    exception when others then
-      raise notice 'pg_cron não pôde ser criado (%).', sqlerrm;
-    end;
-  end if;
-
-  if not exists (select 1 from pg_extension where extname = 'pg_cron') then
-    raise warning '%',
-      'pg_cron AUSENTE: os alertas NAO serao avaliados. Nenhuma maquina offline '
-      'vai abrir alerta, a faixa vermelha nunca acende e o aviso sonoro nunca '
-      'toca. Em producao isto tem de ser resolvido; num ambiente de teste, chame '
-      'select public.avaliar_alertas() a mao.';
+    raise notice 'pg_cron ausente: nada a desagendar.';
     return;
   end if;
 
-  -- Reagendamento idempotente: remove pelo nome antes de criar, como na 0011.
-  perform cron.unschedule(j.jobid)
-  from cron.job j
-  where j.jobname in ('monitor_avaliar_alertas');
+  if exists (select 1 from cron.job where jobname = 'monitor_avaliar_alertas') then
+    perform cron.unschedule('monitor_avaliar_alertas');
+    raise notice 'job duplicado monitor_avaliar_alertas removido.';
+  end if;
 
-  perform cron.schedule(
-    'monitor_avaliar_alertas',
-    '* * * * *',
-    'select public.avaliar_alertas();'
-  );
-
-  raise notice 'pg_cron: job monitor_avaliar_alertas agendado a cada minuto.';
+  -- O agendamento CERTO e o da 0020. Aviso se ele nao estiver de pe, em vez de
+  -- criar um terceiro: quem cria o job de alerta e a 0020, e um so lugar tem de
+  -- ser o dono disso.
+  if not exists (select 1 from cron.job where jobname = 'avaliar-alertas' and active) then
+    raise warning '%',
+      'o job avaliar-alertas (0020) NAO esta ativo: os alertas nao serao '
+      'avaliados. Reaplique a 0020 em vez de criar outro job aqui.';
+  else
+    raise notice 'avaliar-alertas (0020) ativo -- correto.';
+  end if;
 end
 $do$;
 

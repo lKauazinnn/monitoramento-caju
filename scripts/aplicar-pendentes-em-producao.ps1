@@ -159,10 +159,19 @@ function Conferir([string] $rotulo, [string] $sql, [string] $esperado, [string] 
 }
 
 # 0043 — o agendamento. E o unico caso que a stack local nao consegue conferir.
-Conferir 'job monitor_avaliar_alertas' `
-  "select coalesce((select schedule || ' ativo=' || active from cron.job where jobname = 'monitor_avaliar_alertas'), 'AUSENTE');" `
-  '\* \* \* \* \* ativo=t' `
-  'pg_cron pode estar desabilitado no projeto (Database > Extensions). Sem o job, nenhum alerta e avaliado.'
+# O job CERTO e o 'avaliar-alertas' da 0020, a cada 5 minutos. A versao anterior
+# conferia o 'monitor_avaliar_alertas', que era o DUPLICADO que eu criei por
+# engano e que a 0043 agora REMOVE -- a conferencia passaria a falhar sempre, e
+# conferencia que falha por estar errada treina a ignorar conferencia.
+Conferir 'job avaliar-alertas (0020)' `
+  "select coalesce((select schedule || ' ativo=' || active from cron.job where jobname = 'avaliar-alertas'), 'AUSENTE');" `
+  'ativo=t' `
+  'sem esse job nenhum alerta e avaliado. Reaplique a 0020.'
+
+Conferir 'job duplicado removido' `
+  "select case when exists (select 1 from cron.job where jobname = 'monitor_avaliar_alertas') then 'AINDA EXISTE' else 'removido' end;" `
+  'removido' `
+  'o duplicado de um minuto ainda esta agendado. Rode: select cron.unschedule(''monitor_avaliar_alertas'');'
 
 # As RPC CHAMADAS, e nao procuradas em pg_proc: e a chamada que prova que o
 # PostgREST recarregou o cache e que o painel vai encontra-las.
