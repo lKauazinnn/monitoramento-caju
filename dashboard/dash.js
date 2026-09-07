@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-13.66-menos-varredura';
+const BUILD = '2026-08-26.67-freio-do-realtime';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -314,6 +314,7 @@ function sair() {
   descartarToken();
 
   if (Estado.timerPoll) { clearInterval(Estado.timerPoll); Estado.timerPoll = null; }
+  if (realtimeTimer) { clearTimeout(realtimeTimer); realtimeTimer = null; }
   if (Estado.canalRealtime) {
     try { Estado.canalRealtime.close(); } catch (_) { /* ja fechado */ }
     Estado.canalRealtime = null;
@@ -364,6 +365,7 @@ function insistirNaSessao() {
 
 function tokenRecusado(mensagem) {
   if (Estado.timerPoll) { clearInterval(Estado.timerPoll); Estado.timerPoll = null; }
+  if (realtimeTimer) { clearTimeout(realtimeTimer); realtimeTimer = null; }
   if (Estado.canalRealtime) {
     try { Estado.canalRealtime.close(); } catch (_) { /* ja fechado */ }
     Estado.canalRealtime = null;
@@ -5287,6 +5289,48 @@ function iniciarAtualizacao() {
   if (CFG.authMode === 'supabase' && CFG.realtime) conectarRealtime();
 }
 
+// -----------------------------------------------------------------------------
+// O freio do realtime
+// -----------------------------------------------------------------------------
+// SEM ISTO A COTA DO SUPABASE MORRE, e foi o que aconteceu.
+//
+// O realtime assina UPDATE de `machines`, e `register_metrics` atualiza `machines`
+// em TODA ingestao. Com 45 maquinas -- e o pulso do agente mandando ate 4 vezes
+// por minuto cada -- sao ~180 UPDATEs por minuto. A versao anterior chamava
+// carregar() em cada mensagem, e carregar() faz TRES requisicoes com a frota
+// inteira: ~540 requisicoes por minuto, por aba aberta. Numa TV ligada o dia todo,
+// isso e a cota do plano gratuito inteira em poucos dias.
+//
+// O freio junta as mensagens: no maximo uma recarga a cada 10 s. A primeira sai
+// NA HORA (borda de subida), entao uma mudanca de verdade continua parecendo
+// instantanea -- o que se perde e a repeticao, nao a reacao.
+//
+// 180 mensagens/min viram no maximo 6 recargas/min: 30 vezes menos.
+const REALTIME_FREIO_MS = 10000;
+let realtimeUltimaCarga = 0;
+let realtimeTimer = null;
+
+function recarregarPeloRealtime() {
+  // Aba escondida nao recarrega, igual ao polling: TV com a aba em segundo plano
+  // gastava cota para desenhar o que ninguem ve. Ao voltar, o polling cobre.
+  if (document.hidden) return;
+
+  // Ja ha recarga agendada: esta mensagem entra nela em vez de criar outra.
+  if (realtimeTimer) return;
+
+  const desde = Date.now() - realtimeUltimaCarga;
+  if (desde >= REALTIME_FREIO_MS) {
+    realtimeUltimaCarga = Date.now();
+    carregar();
+    return;
+  }
+
+  realtimeTimer = setTimeout(() => {
+    realtimeTimer = null;
+    realtimeUltimaCarga = Date.now();
+    carregar();
+  }, REALTIME_FREIO_MS - desde);
+}
 function conectarRealtime() {
   try {
     const url = CFG.restUrl.replace(/\/rest\/v1\/?$/, '').replace(/^http/, 'ws');
@@ -5307,7 +5351,8 @@ function conectarRealtime() {
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.event === 'postgres_changes') carregar();
+        // Pelo FREIO, nunca direto em carregar(). Ver recarregarPeloRealtime.
+        if (msg.event === 'postgres_changes') recarregarPeloRealtime();
       } catch (_) { /* keepalive */ }
     };
 
