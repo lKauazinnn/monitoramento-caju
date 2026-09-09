@@ -49,7 +49,9 @@ $migracoes = @(
   @{ nome = '0044 — escolher os discos acompanhados';
      arq  = 'supabase\migrations\20260813190000_0044_escolher_os_discos_acompanhados.sql' },
   @{ nome = '0045 — todos os volumes no cartao';
-     arq  = 'supabase\migrations\20260813210000_0045_todos_os_volumes_no_cartao.sql' }
+     arq  = 'supabase\migrations\20260813210000_0045_todos_os_volumes_no_cartao.sql' },
+  @{ nome = '0046 — liberar espaco (cota de tamanho estourada)';
+     arq  = 'supabase\migrations\20260909120000_0046_liberar_espaco.sql' }
 )
 
 foreach ($m in $migracoes) {
@@ -204,6 +206,16 @@ Conferir 'disk_volumes preenchido na frota' `
   "select count(*) || ' maquina(s) com volumes' from public.machines_status where disk_volumes is not null;" `
   '^[1-9]' `
   'a coluna existe mas veio vazia em todas: o cartao cai na linha agregada de reserva. Confira se ha leitura de disco recente.'
+
+Conferir 'retencao do bruto em 7 dias' `
+  "select value from public.app_settings where key = 'metrics_retention_days';" `
+  '^7$' `
+  'a 0046 nao gravou a retencao curta: o banco volta a encher.'
+
+Conferir 'tamanho do banco' `
+  "select pg_size_pretty(pg_database_size(current_database()));" `
+  '.' `
+  ''
 
 # A primeira avaliacao feita agora, para nao esperar um minuto para saber.
 Write-Host ''
