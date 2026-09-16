@@ -407,6 +407,25 @@ function tokenRecusado(mensagem) {
 async function descobrirApiLocal() {
   let d;
 
+  // CONFIG EXPLÍCITA VENCE, e isto não reabre o defeito que o bloco abaixo
+  // corrigiu. O problema de antes era cair num PADRÃO chutado
+  // ('http://127.0.0.1:3000') quando o dev-config.json faltava — e conversar com
+  // o serviço de outro projeto. Uma restUrl escrita à mão no config.js não é
+  // chute: é alguém dizendo onde a API está.
+  //
+  // É o que torna possível a instalação self-hosted. Lá o nginx serve o painel e
+  // faz proxy de /rest/v1 na MESMA origem, então a configuração é o caminho
+  // relativo '/rest/v1' — que funciona em qualquer endereço, do túnel temporário
+  // ao domínio definitivo, sem reeditar arquivo a cada troca.
+  //
+  // E o dev-config.json continua obrigatório no desenvolvimento, porque lá o
+  // config.js deixa restUrl VAZIO de propósito: a porta muda a cada dev-up.
+  if (CFG.restUrl) {
+    CFG.devToken = null;
+    CFG.devUsuario = null;
+    return;
+  }
+
   try {
     const resp = await fetch('dev-config.json', { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

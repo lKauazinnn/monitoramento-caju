@@ -747,22 +747,29 @@
   <div id="add-passo2" class="modal-corpo" hidden>
     <p class="ok-msg" id="add-resumo"></p>
 
-    <h3>No outro PC, abra o PowerShell e cole isto:</h3>
+    <h3>No outro PC, abra o PowerShell <strong>como Administrador</strong> e cole isto:</h3>
     <div class="comando-caixa">
-      <pre id="add-comando"></pre>
-      <button id="btn-copiar-cmd" class="btn-primario" type="button">Copiar comando</button>
+      <pre id="add-comando-tarefa"></pre>
+      <button id="btn-copiar-tarefa" class="btn-primario" type="button">Copiar comando</button>
     </div>
+    <p class="dica">
+      O <code>-ComTarefa</code> no fim é o que faz o agente <strong>voltar sozinho
+      depois que o Windows reinicia</strong>. Rodando como SYSTEM, temperatura e
+      SMART também passam a ser coletados.
+    </p>
 
     <details class="detalhes">
-      <summary>Para o agente voltar sozinho depois de reiniciar o Windows</summary>
+      <summary>Não consigo abrir como administrador agora</summary>
       <p class="dica">
-        Rode o mesmo comando com <code>-ComTarefa</code> no fim, num PowerShell
-        <strong>como administrador</strong>. Ele cria uma tarefa agendada que roda
-        como SYSTEM &mdash; e aí temperatura e SMART também passam a ser coletados.
+        Este instala igual, mas <strong>sem tarefa agendada</strong>: o agente roda
+        até a máquina desligar, e não volta. No painel isso não parece defeito
+        &mdash; parece máquina offline, sem nenhum erro registrado, e só se
+        descobre quando alguém vai procurar. Use para um teste rápido e volte
+        depois com o comando de cima, elevado.
       </p>
       <div class="comando-caixa">
-        <pre id="add-comando-tarefa"></pre>
-        <button id="btn-copiar-tarefa" class="btn-secundario" type="button">Copiar</button>
+        <pre id="add-comando"></pre>
+        <button id="btn-copiar-cmd" class="btn-secundario" type="button">Copiar assim mesmo</button>
       </div>
     </details>
 

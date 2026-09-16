@@ -633,6 +633,40 @@ try {
   verificar('variante com -ComTarefa oferecida', /-ComTarefa$/.test((gerado.tarefa || '').trim()),
     gerado.tarefa.slice(-40));
 
+  // O -ComTarefa TEM DE SER O COMANDO PRINCIPAL, e isto nao e preferencia de
+  // layout: durante meses ele ficou dentro de um <details> fechado, enquanto o
+  // comando sem tarefa ficava no topo com o botao primario. Quem instalava
+  // copiava o de cima, a maquina monitorava ate o primeiro desligamento e nao
+  // voltava mais -- 27 maquinas sumiram no mesmo minuto, num fim de expediente,
+  // sem um unico erro no servidor. A falha era invisivel porque nada falhava.
+  //
+  // A guarda e ESTRUTURAL, e nao de texto: o que enganava nao era a palavra, era
+  // a hierarquia da tela.
+  const hierarquia = await pagina.evaluate(`
+    (() => {
+      const dentroDeDetails = (id) => !!document.getElementById(id)?.closest('details');
+      const botaoDe = (id) => document.getElementById(id)
+        ?.parentElement?.querySelector('button')?.className || '';
+      return {
+        tarefaEscondida: dentroDeDetails('add-comando-tarefa'),
+        semTarefaEscondido: dentroDeDetails('add-comando'),
+        classeTarefa: botaoDe('add-comando-tarefa'),
+      };
+    })()
+  `);
+
+  verificar('o comando com -ComTarefa NAO esta escondido num <details>',
+    hierarquia.tarefaEscondida === false,
+    'ele voltou para dentro do acordeao -- foi assim que 27 maquinas sumiram');
+
+  verificar('o comando SEM tarefa esta rebaixado para o <details>',
+    hierarquia.semTarefaEscondido === true,
+    'o comando que nao sobrevive a reinicio voltou ao topo');
+
+  verificar('o botao do -ComTarefa e o primario',
+    /btn-primario/.test(hierarquia.classeTarefa),
+    `classe do botao: ${hierarquia.classeTarefa || '(nenhuma)'}`);
+
   verificar('nenhuma exceção no fluxo de adicionar', erros.length === 0, erros.join('\n        '));
 
   // A máquina nova deve aparecer no banco como nunca vista.
