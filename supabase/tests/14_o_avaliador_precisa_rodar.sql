@@ -268,19 +268,36 @@ begin
   -- O que realmente faltava. Sem este caso, todos os anteriores passam num
   -- sistema que nunca avalia nada -- foi assim por semanas.
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    -- O job certo se chama 'avaliar-alertas' e quem o cria e a 0020.
+    --
+    -- Esta guarda ja apontou para o job ERRADO. A primeira versao exigia
+    -- 'monitor_avaliar_alertas' a cada minuto -- o duplicado que a 0043 apagou
+    -- justamente por rodar 5x mais sobre machines_status e entrar na conta do
+    -- limite que estourou. Como a stack local nao tem pg_cron, o bloco inteiro
+    -- era pulado e ninguem via: o teste so falharia em producao, que e onde ele
+    -- precisava passar.
     if not exists (
-      select 1 from cron.job
-      where jobname = 'monitor_avaliar_alertas' and active
+      select 1 from cron.job where jobname = 'avaliar-alertas' and active
     ) then
-      raise exception 'FALHOU 13: o job monitor_avaliar_alertas NAO esta agendado. '
-        'A logica de alerta funciona e ninguem a executa.';
+      raise exception 'FALHOU 13: o job avaliar-alertas NAO esta agendado. '
+        'A logica de alerta funciona e ninguem a executa. Reaplique a 0020.';
     end if;
 
-    select schedule into v_txt from cron.job where jobname = 'monitor_avaliar_alertas';
+    select schedule into v_txt from cron.job where jobname = 'avaliar-alertas';
     if v_txt <> '* * * * *' then
-      raise exception 'FALHOU 13: agendado em "%" -- esperava a cada minuto', v_txt;
+      raise exception 'FALHOU 13: agendado em "%" -- esperava * * * * * (1 min). '
+        'O pior caso do alerta e offline_timeout_seconds + este intervalo.', v_txt;
     end if;
     raise notice 'ok 13  o avaliador esta agendado (%)', v_txt;
+
+    -- 13b. O duplicado tem de continuar morto. Sem esta guarda, rodar de novo o
+    -- ligar-avaliacao-de-alertas.ps1 antigo recriaria os dois jobs em paralelo e
+    -- o sintoma voltaria sem nenhum teste reclamando.
+    if exists (select 1 from cron.job where jobname = 'monitor_avaliar_alertas') then
+      raise exception 'FALHOU 13b: o job duplicado monitor_avaliar_alertas voltou. '
+        'Dois avaliadores em paralelo queimam CPU e conexao -- reaplique a 0043.';
+    end if;
+    raise notice 'ok 13b o duplicado monitor_avaliar_alertas continua ausente';
   else
     raise notice '--  13  sem pg_cron nesta base: o agendamento NAO foi conferido '
       '(em producao ele e obrigatorio)';

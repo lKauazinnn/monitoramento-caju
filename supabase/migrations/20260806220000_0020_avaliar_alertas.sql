@@ -342,14 +342,43 @@ begin
     return;
   end if;
 
-  -- Minuto 2 de cada intervalo de 5, e não 0: o minuto redondo é quando todo
-  -- job de todo mundo dispara, inclusive os nossos de rollup e particao.
+  -- A CADA 1 MINUTO, e o motivo e o orcamento de latencia ponta a ponta.
+  --
+  -- O que a operacao sente nao e o timeout de offline sozinho: e a soma. A
+  -- maquina cala, last_contact_at envelhece ate offline_timeout_seconds (180 s),
+  -- e so entao a PROXIMA execucao deste job abre o alerta -- a faixa vermelha, o
+  -- som, o registro. Com 5 minutos o pior caso era 180 + 300 = 480 s. Oito
+  -- minutos entre a loja cair e a operacao ser avisada, e a maior parte disso
+  -- era espera de cron, nao deteccao.
+  --
+  -- A 1 minuto o pior caso cai para 180 + 60 = 240 s. O elo dominante volta a
+  -- ser o timeout, que e onde ele deve estar: ele mede um fato do mundo (ha
+  -- quanto tempo a maquina esta calada), enquanto o cron so media a propria
+  -- preguica.
+  --
+  -- 1 MINUTO FOI MEDIDO, nao chutado. A 0043 registra que o avaliador de 1
+  -- minuto "entrou na conta do limite que estourou", e por isso esta funcao
+  -- passou por 2 minutos primeiro. Ai os blocos 6 e 7 de
+  -- diagnosticar-frota-offline.ps1 mediram cron.job_run_details em producao:
+  --
+  --   24 execucoes em 2 h, media 0,4 s, pior caso 0,6 s, zero falhas.
+  --
+  -- Seis decimos de segundo por ciclo de 60 s e 1% de ocupacao. O que queimou
+  -- CPU e conexao no incidente foi haver DOIS jobs varrendo machines_status ao
+  -- mesmo tempo, num banco ja sem disco -- nao o custo deste job sozinho.
+  --
+  -- Se um dia a frota crescer a ponto da execucao passar de alguns segundos,
+  -- meca de novo pelos mesmos blocos antes de manter este intervalo.
+  --
+  -- Aqui o minuto redondo nao tem como ser evitado, e nao faz diferenca: a
+  -- 0,4 s de execucao, coincidir com o rollup ou com a criacao de particao nao
+  -- disputa nada.
   perform cron.unschedule('avaliar-alertas') where exists (
     select 1 from cron.job where jobname = 'avaliar-alertas');
 
-  perform cron.schedule('avaliar-alertas', '2-59/5 * * * *',
+  perform cron.schedule('avaliar-alertas', '* * * * *',
                         'select public.avaliar_alertas();');
 
-  raise notice 'avaliar_alertas() agendada a cada 5 minutos';
+  raise notice 'avaliar_alertas() agendada a cada 1 minuto (pior caso do alerta: ~4 min)';
 end
 $$;

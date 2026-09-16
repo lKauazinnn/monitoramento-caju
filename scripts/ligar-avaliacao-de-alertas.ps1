@@ -21,7 +21,7 @@
        ficou de pe.
 
   Nao altera dado de maquina nenhuma. Cria duas funcoes, estende uma constraint e
-  agenda um job de um minuto.
+  confere o job 'avaliar-alertas' (criado pela 0020, a cada 2 minutos).
 
 .PARAMETER UrlBanco
   URL do Postgres de producao. Sem senha: ela e pedida a parte.
@@ -109,8 +109,8 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ''
 Write-Host '== Conferindo o que a stack local NAO consegue conferir ==' -ForegroundColor Cyan
 
-# 1. O job existe, esta ativo e e de um minuto.
-$job = Invocar "select coalesce((select jobname || ' | ' || schedule || ' | ativo=' || active from cron.job where jobname = 'monitor_avaliar_alertas'), 'AUSENTE');" $null
+# 1. O job existe, esta ativo e e o da 0020 -- NAO o duplicado que a 0043 apagou.
+$job = Invocar "select coalesce((select jobname || ' | ' || schedule || ' | ativo=' || active from cron.job where jobname = 'avaliar-alertas'), 'AUSENTE');" $null
 $job = ($job | Out-String).Trim()
 Write-Host "   job: $job"
 
@@ -128,7 +128,7 @@ if ($job -eq 'AUSENTE' -or $job -notmatch 'ativo=t') {
 $n = (Invocar "select jsonb_array_length(public.regras_de_alerta());" $null | Out-String).Trim()
 Write-Host "   regras_de_alerta responde: $n regra(s)"
 
-# 3. A primeira avaliacao, feita agora, para nao esperar um minuto para saber.
+# 3. A primeira avaliacao, feita agora, para nao esperar o ciclo para saber.
 $r = (Invocar "select public.avaliar_alertas()::text;" $null | Out-String).Trim()
 Write-Host "   primeira avaliacao: $r"
 
@@ -140,9 +140,9 @@ Write-Host '============================================================'
 Write-Host ' AVALIACAO DE ALERTAS LIGADA' -ForegroundColor Green
 Write-Host '============================================================'
 Write-Host ''
-Write-Host "  A partir de agora a avaliacao roda a cada minuto. Uma maquina que"
-Write-Host "  desligar abre alerta critico em ate ~1 min depois de ser considerada"
-Write-Host "  offline (~130 s de silencio), e o painel toca."
+Write-Host "  A partir de agora a avaliacao roda a cada 2 minutos. Uma maquina que"
+Write-Host "  desligar abre alerta critico em ate ~2 min depois de ser considerada"
+Write-Host "  offline (180 s de silencio), e o painel toca. Pior caso ponta a ponta: ~5 min."
 Write-Host ''
 if ([int]$abertos -gt 0) {
   Write-Host "  Os $abertos alerta(s) acima sao de maquinas que JA estavam offline." -ForegroundColor Yellow

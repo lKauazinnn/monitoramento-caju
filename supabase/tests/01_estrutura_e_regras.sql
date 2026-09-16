@@ -99,7 +99,24 @@ begin
     ' [cmd=' || pol.polcmd::text || ']' order by pol.polname
   ) into v_ruins
   from pg_policy pol
+  join pg_class c on c.oid = pol.polrelid
+  join pg_namespace n on n.oid = c.relnamespace
   where pol.polcmd <> 'r'  -- 'r' = SELECT
+    -- SÓ O SCHEMA DA APLICAÇÃO. A regra 3 fala dos NOSSOS dados: anon não pode
+    -- escrever no que é nosso. Varrer o banco inteiro parecia mais rigoroso e
+    -- na prática era mais frouxo, porque produzia ruído que convida a ignorar a
+    -- guarda.
+    --
+    -- Apareceu na primeira instalação self-hosted: o pg_cron cria policies
+    -- próprias em cron.job e cron.job_run_details, com PUBLIC e cmd=*, e elas
+    -- são da extensão -- não dá para removê-las sem quebrar o agendador. No
+    -- Supabase isso nunca surgiu porque lá a extensão já vem instalada e fechada.
+    --
+    -- O risco real daquele schema está coberto em outro lugar, e por privilégio
+    -- em vez de policy: a 0047 revoga USAGE e todos os GRANTs de cron para
+    -- public, anon e authenticated, e falha se sobrar algum. Policy sem
+    -- privilégio não dá acesso a ninguém.
+    and n.nspname = 'public'
     and (
       -- polroles = {0} significa PUBLIC
       0 = any (pol.polroles)
@@ -188,7 +205,16 @@ $t$;
 do $t$
 declare
   v_parent  text;
-  v_esperado integer := public.app_setting_int('partition_months_ahead') + 2; -- -1 .. +N
+  -- Mes corrente + N futuros. NAO conta o mes anterior, e isso mudou na 0046:
+  -- com retencao de 7 dias o corte de drop_old_partitions cai em
+  -- date_trunc('month', now() - 7 dias), ou seja, a partir do dia 8 de cada mes
+  -- ele aponta para o dia 1 do mes CORRENTE e a particao do mes anterior sai na
+  -- faxina seguinte. Exigir "-1" aqui fazia esta guarda acusar falha durante tres
+  -- semanas de cada mes com o sistema perfeitamente saudavel.
+  --
+  -- O que esta guarda continua pegando e o que importa: a folga FUTURA acabando.
+  -- Sem particao futura a ingestao para, e foi por isso que ela nasceu.
+  v_esperado integer := public.app_setting_int('partition_months_ahead') + 1; -- mes atual .. +N
   v_qtd     integer;
   v_mes_atual text;
 begin

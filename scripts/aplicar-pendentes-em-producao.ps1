@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-  Aplica as migracoes 0043 e 0044 em producao e CONFERE que cada uma passou a
+  Aplica as migracoes pendentes em producao e CONFERE que cada uma passou a
   valer -- nao so que o arquivo rodou.
 
 .DESCRIPTION
@@ -44,6 +44,14 @@ $ErrorActionPreference = 'Stop'
 $raiz = Split-Path -Parent $PSScriptRoot
 
 $migracoes = @(
+  # A 0020 entra PRIMEIRO, e nao e reaplicacao gratuita: ela e a unica dona do
+  # job 'avaliar-alertas' (a 0043 diz isso com todas as letras) e o agendamento
+  # dela mudou de 5 para 2 minutos. Sem esta linha a mudanca fica so no arquivo.
+  # Reaplicar e barato e seguro: ela so faz create or replace de funcao e
+  # reagenda o job pelo nome -- nao semeia nem sobrescreve alert_rules, que e
+  # editavel pelo painel.
+  @{ nome = '0020 - reagendar o avaliador para 2 minutos';
+     arq  = 'supabase\migrations\20260806220000_0020_avaliar_alertas.sql' },
   @{ nome = '0043 — agendar a avaliacao de alertas';
      arq  = 'supabase\migrations\20260813170000_0043_o_avaliador_precisa_rodar.sql' },
   @{ nome = '0044 — escolher os discos acompanhados';
