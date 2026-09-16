@@ -105,6 +105,29 @@ select pg_size_pretty(pg_database_size(current_database())) as tamanho,
        current_setting('default_transaction_read_only') as somente_leitura;
 
 \echo ''
+\echo '=== DISCO x BANCO: onde mais o espaco pode estar ==='
+\echo '(pg_database_size mede UM banco. A cota do provedor mede o DISCO inteiro,'
+\echo ' e disco que cresceu sozinho normalmente NAO encolhe quando o dado sai.)'
+select (select pg_size_pretty(sum(pg_database_size(datname))) from pg_database)
+         as todos_os_bancos,
+       (select pg_size_pretty(coalesce(sum(size), 0)) from pg_ls_waldir())
+         as wal_em_disco,
+       (select count(*) from pg_ls_waldir()) as arquivos_de_wal;
+
+\echo ''
+\echo '=== SLOT DE REPLICACAO SEGURANDO WAL ==='
+\echo '(slot INATIVO impede o WAL de ser reciclado: o disco enche sem parar e'
+\echo ' apagar dado do banco nao devolve nada. Causa classica de "cota cheia"'
+\echo ' com o banco pequeno -- que e exatamente o sintoma de banco em 120 MB'
+\echo ' e provedor dizendo que nao ha espaco.)'
+select slot_name,
+       coalesce(plugin, '-') as plugin,
+       active,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) as wal_retido
+from pg_replication_slots
+order by pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) desc nulls last;
+
+\echo ''
 \echo '=== ONDE O ESPACO ESTA (por tabela) ==='
 select c.relname as tabela, pg_size_pretty(pg_total_relation_size(c.oid)) as tamanho
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -115,14 +138,24 @@ limit 6;
 \echo ''
 \echo '=== AS PARTICOES DE METRICS, POR MES ==='
 \echo '(o expurgo remove MES INTEIRO: so o que estiver em mes anterior sai)'
+-- O rotulo sai dos SEIS DIGITOS FINAIS do nome, nao de comparacao de texto.
+-- A versao anterior comparava com to_char(now(), 'YYYY_MM') -- com underscore --,
+-- mas a particao se chama metrics_202609. A comparacao nunca casava, e a saida
+-- marcava a particao do MES CORRENTE como "mes anterior", ou seja, como se ela
+-- fosse sair na faxina. Um relatorio que parece prometer apagar o mes corrente
+-- assusta em vez de informar. Mesmo defeito que a 0046 corrigiu na migracao e
+-- que tinha ficado para tras aqui.
 select c.relname as particao,
        pg_size_pretty(pg_total_relation_size(c.oid)) as tamanho,
-       case when c.relname ~ to_char(now(), 'YYYY_MM') then 'MES CORRENTE (nao sai)'
+       case when to_date(substring(c.relname from '[0-9]{6}$'), 'YYYYMM')
+                 >= date_trunc('month', now())::date
+            then 'MES CORRENTE OU FUTURO (nao sai)'
             else 'mes anterior' end as situacao
 from pg_class c
 join pg_inherits i on i.inhrelid = c.oid
 join pg_class pai on pai.oid = i.inhparent
 where pai.relname in ('metrics', 'metrics_disks', 'metrics_services')
+  and c.relname ~ '[0-9]{6}$'
 order by pg_total_relation_size(c.oid) desc
 limit 12;
 
@@ -133,15 +166,25 @@ where key like '%retention%' order by key;
 
 \echo ''
 \echo '=== O AVALIADOR ==='
-select coalesce((select schedule from cron.job where jobname = 'monitor_avaliar_alertas'),
+-- Duas correcoes aqui, e as duas doiam:
+--
+--   1. o job se chama 'avaliar-alertas' (criado pela 0020). O nome que estava
+--      aqui, 'monitor_avaliar_alertas', era o DUPLICADO que a 0043 apagou.
+--   2. cron.job_run_details NAO tem coluna jobname, so jobid -- entao o bloco
+--      inteiro morria com "column jobname does not exist" e o operador ficava
+--      sem a medicao justamente durante o incidente.
+--
+-- O historico e filtrado pelo COMANDO, que sobrevive ao reagendamento: o jobid
+-- muda a cada unschedule/schedule.
+select coalesce((select schedule from cron.job where jobname = 'avaliar-alertas'),
                 'AUSENTE') as agendamento,
-       (select round(avg(extract(epoch from (end_time - start_time)))::numeric, 1)
-        from cron.job_run_details
-        where jobname = 'monitor_avaliar_alertas'
-          and start_time > now() - interval '2 hours') as media_segundos,
-       (select count(*) from cron.job_run_details
-        where jobname = 'monitor_avaliar_alertas'
-          and start_time > now() - interval '2 hours' and status <> 'succeeded') as falhas_2h;
+       (select round(avg(extract(epoch from (d.end_time - d.start_time)))::numeric, 1)
+        from cron.job_run_details d
+        where d.command like '%avaliar_alertas%'
+          and d.start_time > now() - interval '2 hours') as media_segundos,
+       (select count(*) from cron.job_run_details d
+        where d.command like '%avaliar_alertas%'
+          and d.start_time > now() - interval '2 hours' and d.status <> 'succeeded') as falhas_2h;
 '@
 
 $tmp = Join-Path $env:TEMP 'lim-medir.sql'
@@ -176,8 +219,12 @@ if (-not $EspacarAvaliador -and $PurgarMetricas -eq 0) {
 $acoes = @()
 
 if ($EspacarAvaliador) {
-  # cron.schedule com o MESMO nome reagenda no lugar; nao cria um segundo job.
-  $acoes += "select cron.schedule('monitor_avaliar_alertas', '*/$MinutosDoAvaliador * * * *', 'select public.avaliar_alertas();');"
+  # O NOME TEM DE SER 'avaliar-alertas', e isto ja causou estrago: com o nome
+  # antigo ('monitor_avaliar_alertas') esta alavanca CRIAVA um segundo job em vez
+  # de reagendar o existente. Dois avaliadores varrendo machines_status em
+  # paralelo foi o que a 0043 teve de desfazer, e entrou na conta do limite que
+  # estourou. Com o nome certo, cron.schedule reagenda no lugar.
+  $acoes += "select cron.schedule('avaliar-alertas', '*/$MinutosDoAvaliador * * * *', 'select public.avaliar_alertas();');"
   $acoes += "\echo 'avaliador reagendado'"
 }
 

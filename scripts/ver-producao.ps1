@@ -81,7 +81,13 @@ $cab = @{ apikey = $ChaveServiceRole; Authorization = "Bearer $ChaveServiceRole"
 # Refazer essa conta aqui produziria duas verdades sobre "esta offline?".
 $campos = 'site_code,label,status,seconds_since_seen,cpu_pct,mem_pct,disk_min_free_pct,services_down,agent_version'
 $consulta = "$urlRest/machines_status?select=$campos&order=site_code,label"
-if ($Loja) { $consulta += "&site_code=eq.$($Loja.ToUpperInvariant())" }
+# `ilike` e nao `eq` com ToUpperInvariant, e o motivo veio da producao: os
+# codigos de loja NAO sao todos maiusculos -- ha `Infra-ASN` e `Pc-Rodrigo-alfa`
+# cadastrados. Forcar maiuscula transformava `-Loja Infra-ASN` em `INFRA-ASN`,
+# que nao casa com nada, e a saida era uma lista VAZIA: identica ao que aparece
+# quando a loja existe e nao tem maquina. Um filtro que erra em silencio e pior
+# que um filtro que falha.
+if ($Loja) { $consulta += "&site_code=ilike.$([uri]::EscapeDataString($Loja))" }
 
 <#
   Normaliza a resposta do PostgREST numa lista de verdade.

@@ -70,7 +70,13 @@ supabase/config.toml
 dashboard/config.producao.js
 
 # CLI do Supabase baixada por scripts/publicar-supabase.ps1 (~116 MB)
-tools/
+#
+# A BARRA INICIAL E OBRIGATORIA. Sem ela o padrao casa em QUALQUER nivel, e
+# esta linha tambem ignorava agent/tools/ -- onde moram as ferramentas de
+# implantacao do agente. As quatro que ja estavam la sobreviviam por ja
+# serem rastreadas (arquivo rastreado ignora o .gitignore), entao nada
+# quebrava: so arquivo NOVO sumia em silencio, sem aparecer nem no status.
+/tools/
 
 # --- design-sync ---
 # Scripts encenados, saida regenerada e estado de maquina. O que E versionado

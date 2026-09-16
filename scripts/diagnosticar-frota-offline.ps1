@@ -72,6 +72,64 @@ group by status
 order by 2 desc;
 
 \echo ''
+\echo '=== 2b. QUEM CAIU: POR LOJA E POR VERSAO DO AGENTE ==='
+\echo '(concentrado numa loja = link dela; espalhado e casado com a versao = atualizacao)'
+select coalesce(site_code, '(sem loja)') as loja,
+       coalesce(agent_version, '(nunca reportou)') as versao,
+       count(*) filter (where status = 'online')  as online,
+       count(*) filter (where status <> 'online') as fora,
+       to_char(max(last_contact_at) at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as ultimo_contato
+from public.machines_status
+where is_active
+group by 1, 2
+order by fora desc, loja;
+
+\echo ''
+\echo '=== 2c. O MINUTO EXATO EM QUE CADA UMA CALOU ==='
+\echo '(se todas param no mesmo minuto, a causa e comum e externa a elas)'
+select to_char(date_trunc('minute', last_contact_at) at time zone 'America/Sao_Paulo',
+               'DD/MM HH24:MI') as minuto,
+       count(*) as maquinas
+from public.machines_status
+where is_active
+  and status <> 'online'
+  and last_contact_at is not null
+group by 1
+order by 2 desc, 1 desc
+limit 12;
+
+\echo ''
+\echo '=== 2d. O QUE ACONTECEU NO MINUTO DA MAIOR QUEDA ==='
+\echo '(queda simultanea tem causa comum; o que a causou deixou rastro nessa janela)'
+with pico as (
+  select date_trunc('minute', last_contact_at) as minuto, count(*) as quantas
+  from public.machines_status
+  where is_active and status <> 'online' and last_contact_at is not null
+  group by 1
+  order by 2 desc
+  limit 1
+)
+select 'evento' as origem,
+       to_char(e.opened_at at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as quando,
+       e.kind,
+       left(coalesce(e.message, ''), 60) as detalhe,
+       count(*) over (partition by e.kind) as vezes_no_periodo
+from public.events e, pico
+where e.opened_at between pico.minuto - interval '30 minutes'
+                      and pico.minuto + interval '30 minutes'
+union all
+select 'comando' as origem,
+       to_char(c.created_at at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI'),
+       c.kind,
+       left(coalesce(c.result_text, c.status), 60),
+       count(*) over (partition by c.kind)
+from public.agent_commands c, pico
+where c.created_at between pico.minuto - interval '30 minutes'
+                       and pico.minuto + interval '30 minutes'
+order by quando
+limit 25;
+
+\echo ''
 \echo '=== 3. O BANCO ESTA EM SOMENTE-LEITURA? ==='
 \echo '(limite de disco estourado deixa a leitura funcionando e mata a gravacao)'
 select current_setting('default_transaction_read_only') as transacao_somente_leitura,
@@ -100,26 +158,30 @@ select (select setting::int from pg_settings where name = 'max_connections') as 
 from pg_stat_activity;
 
 \echo ''
-\echo '=== 6. O JOB QUE EU AGENDEI (cada minuto) ==='
+\echo '=== 6. O AVALIADOR DE ALERTAS (avaliar-alertas, cada 1 min) ==='
 \echo '(se ele demora mais que 60 s, as execucoes se empilham)'
-select to_char(start_time at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') as inicio,
-       status,
-       round(extract(epoch from (end_time - start_time))::numeric, 1) as segundos,
-       left(coalesce(return_message, ''), 60) as mensagem
-from cron.job_run_details
-where jobname = 'monitor_avaliar_alertas'
-order by start_time desc
+select to_char(d.start_time at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') as inicio,
+       d.status,
+       round(extract(epoch from (d.end_time - d.start_time))::numeric, 1) as segundos,
+       left(coalesce(d.return_message, ''), 60) as mensagem
+-- Filtro pelo COMANDO, e nao pelo nome do job: cron.job_run_details nao tem
+-- coluna jobname (so jobid), e o jobid MUDA a cada unschedule/schedule. Juntar
+-- por nome perderia justamente o historico de antes do reagendamento, que e o
+-- que se quer olhar depois de mexer no intervalo.
+from cron.job_run_details d
+where d.command like '%avaliar_alertas%'
+order by d.start_time desc
 limit 10;
 
 \echo ''
 \echo '=== 7. QUANTO TEMPO O AVALIADOR LEVA, EM MEDIA ==='
 select count(*) as execucoes,
-       round(avg(extract(epoch from (end_time - start_time)))::numeric, 1) as media_s,
-       round(max(extract(epoch from (end_time - start_time)))::numeric, 1) as pior_s,
-       count(*) filter (where status <> 'succeeded') as falhas
-from cron.job_run_details
-where jobname = 'monitor_avaliar_alertas'
-  and start_time > now() - interval '2 hours';
+       round(avg(extract(epoch from (d.end_time - d.start_time)))::numeric, 1) as media_s,
+       round(max(extract(epoch from (d.end_time - d.start_time)))::numeric, 1) as pior_s,
+       count(*) filter (where d.status <> 'succeeded') as falhas
+from cron.job_run_details d
+where d.command like '%avaliar_alertas%'
+  and d.start_time > now() - interval '2 hours';
 
 \echo ''
 \echo '=== 8. ERROS QUE AS MAQUINAS REPORTARAM ==='
