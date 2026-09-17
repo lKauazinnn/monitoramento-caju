@@ -1,0 +1,33 @@
+# =============================================================================
+# HTTPS automatico para o endereco publico
+# =============================================================================
+# Esta camada existe por uma exigencia do agente, nao por gosto: ele RECUSA
+# endereco que nao seja HTTPS (AgentConfig.cs valida o esquema antes de mandar
+# qualquer coisa). O nginx da stack fala HTTP puro na porta 80 interna, entao
+# alguem tem de terminar o TLS -- e com endereco proprio, e o Let's Encrypt.
+#
+# POR QUE CADDY E NAO CERTBOT NO WINDOWS
+#
+# O Caddy pede o certificado sozinho, RENOVA sozinho e guarda em volume proprio.
+# Nao ha tarefa agendada de renovacao para alguem esquecer -- e esquecer
+# renovacao e como se descobre, 90 dias depois e fora do ar, que existia uma.
+#
+# O DESAFIO E HTTP-01, E ISSO TEM CONSEQUENCIA NO ROTEADOR
+#
+# Para emitir o certificado, o Let's Encrypt precisa alcancar a porta 80 DESTA
+# maquina, vindo da internet. Por isso o encaminhamento do roteador tem de ser
+# 80 E 443, nao so a 443. Faltando a 80, o certificado simplesmente nunca sai, e
+# a mensagem de erro nao aponta para o roteador -- fica parecendo problema de
+# configuracao aqui dentro.
+#
+# O dominio vem do ambiente (.env.selfhost), para existir num lugar so.
+# =============================================================================
+
+{$DOMINIO_PUBLICO} {
+	encode gzip
+
+	# `web` e o nome do servico no docker-compose.producao.yml, resolvido pela
+	# rede interna do compose. NAO e 127.0.0.1: dentro do contentor, 127.0.0.1
+	# seria o proprio Caddy, e o sintoma seria um 502 sem causa aparente.
+	reverse_proxy web:80
+}

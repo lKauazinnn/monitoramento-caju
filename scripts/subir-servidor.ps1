@@ -66,8 +66,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrWhiteSpace($Raiz)) { $Raiz = Split-Path -Parent $PSScriptRoot }
-$compose = Join-Path $Raiz 'docker-compose.producao.yml'
-$envPath = Join-Path $Raiz $ArquivoEnv
+$compose    = Join-Path $Raiz 'docker-compose.producao.yml'
+$composeTls = Join-Path $Raiz 'docker-compose.tls.yml'
+$envPath    = Join-Path $Raiz $ArquivoEnv
 $logDir  = Join-Path $Raiz 'logs'
 $log     = Join-Path $logDir 'subir-servidor.log'
 
@@ -140,11 +141,20 @@ foreach ($f in @($compose, $envPath)) {
   }
 }
 
-$porta = 8080
+$porta   = 8080
+$dominio = $null
 foreach ($linha in (Get-Content $envPath)) {
-  if ($linha -match '^\s*WEB_PORT\s*=\s*(\d+)') { $porta = [int]$Matches[1] }
+  if ($linha -match '^\s*WEB_PORT\s*=\s*(\d+)')          { $porta   = [int]$Matches[1] }
+  if ($linha -match '^\s*DOMINIO_PUBLICO\s*=\s*(.+?)\s*$') { $dominio = $Matches[1] }
 }
 Registrar 'INF' "porta do painel: $porta"
+
+# A camada de HTTPS so entra se as DUAS coisas existirem: o arquivo e o dominio.
+# Com o arquivo e sem o dominio, o compose aborta inteiro na variavel obrigatoria
+# -- e levaria a stack junto, que nao tem nada a ver com isso.
+$usarTls = (Test-Path $composeTls) -and -not [string]::IsNullOrWhiteSpace($dominio)
+if ($usarTls) { Registrar 'INF' "camada de HTTPS ligada para $dominio" }
+elseif (Test-Path $composeTls) { Registrar 'AVI' 'docker-compose.tls.yml existe mas falta DOMINIO_PUBLICO no ambiente: subindo SEM HTTPS.' }
 
 # ---------------------------------------------------------------------------
 # 2. Esperar o Docker
@@ -181,7 +191,10 @@ Registrar 'OK' 'Docker respondendo.'
 # ---------------------------------------------------------------------------
 Push-Location $Raiz
 try {
-  $saida = docker compose -f $compose --env-file $envPath up -d
+  $argsCompose = @('compose', '-f', $compose)
+  if ($usarTls) { $argsCompose += @('-f', $composeTls) }
+  $argsCompose += @('--env-file', $envPath, 'up', '-d')
+  $saida = docker @argsCompose
   foreach ($l in @($saida)) { if ($l) { Registrar 'INF' $l } }
   if ($LASTEXITCODE -ne 0) {
     Registrar 'ERRO' "compose up falhou (codigo $LASTEXITCODE)."
@@ -223,53 +236,47 @@ foreach ($a in $faltando) { Registrar 'ERRO' ("{0} NAO respondeu: {1}" -f $a.nom
 # ---------------------------------------------------------------------------
 # 5. O tunel
 # ---------------------------------------------------------------------------
-# Em 17/09 o tunel passou a ser o Funnel do Tailscale, e nao mais a Cloudflare.
-# O motivo nao foi preferencia: tunel rapido (trycloudflare) sorteia hostname
-# novo a cada partida, e tunel NOMEADO exige um dominio dentro da conta
-# Cloudflare -- comprar dominio e mexer no DNS do cajupar.com foram os dois
-# recusados. Ver scripts\tunel-tailscale.ps1.
+# Em 17/09 o caminho deixou de ser tunel. O endereco publico virou um hostname
+# do DuckDNS apontando para o IP desta rede, com o roteador encaminhando 80 e
+# 443 para esta maquina, e o Caddy terminando o HTTPS (docker-compose.tls.yml).
 #
-# A diferenca que importa aqui: o tailscaled e servico de verdade e sobe ANTES
-# do login, entao o ENDERECO volta sozinho depois do reboot. A stack atras dele
-# nao -- o Docker Desktop continua sendo aplicativo de usuario. Enquanto for
-# assim, reboot sem ninguem logar = endereco de pe respondendo 502.
-$svc = Get-Service -Name 'Tailscale' -ErrorAction SilentlyContinue
-if ($null -eq $svc) { $svc = Get-Service -Name 'tailscaled' -ErrorAction SilentlyContinue }
-
-if ($null -eq $svc) {
-  Registrar 'AVI' 'Tailscale NAO esta instalado como servico: o endereco publico NAO volta sozinho.'
-  Registrar 'AVI' 'Rode uma vez:  .\scripts\tunel-tailscale.ps1 -Instalar'
-} elseif ($svc.Status -ne 'Running') {
-  Registrar 'AVI' "servico $($svc.Name) existe mas esta $($svc.Status). Tentando iniciar."
-  try { Start-Service $svc.Name; Registrar 'OK' 'Tailscale iniciado.' }
-  catch { Registrar 'ERRO' "nao consegui iniciar o Tailscale: $($_.Exception.Message)" }
+# Por que nao tunel: o rapido da Cloudflare sorteia hostname a cada partida; o
+# nomeado exige dominio dentro da conta Cloudflare, que foi recusado; e o Funnel
+# do Tailscale so segue gratuito num plano que a propria Tailscale descreve como
+# de uso pessoal. Ver scripts\duckdns.ps1.
+#
+# Quem mantem o DNS em dia e a tarefa MonitorDuckDNS, rodando como SYSTEM: ela
+# volta sozinha na partida, sem ninguem logar. Aqui so se CONFERE.
+if ([string]::IsNullOrWhiteSpace($dominio)) {
+  Registrar 'AVI' 'sem DOMINIO_PUBLICO no ambiente: a stack esta so em 127.0.0.1.'
+  Registrar 'AVI' 'Rode uma vez:  .\scripts\duckdns.ps1 -Instalar'
 } else {
-  Registrar 'OK' 'Tailscale rodando como servico.'
-}
-
-# Servico de pe nao quer dizer endereco publicado: o Funnel e configuracao
-# separada, e ja aconteceu neste projeto de "container Up" nao significar
-# "aplicacao servindo". Aqui a conferencia e a mesma ideia.
-$ts = (Get-Command tailscale -ErrorAction SilentlyContinue).Source
-if (-not $ts) {
-  $p = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
-  if (Test-Path $p) { $ts = $p }
-}
-
-if ($ts) {
-  $eapTunel = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $funnel = & $ts funnel status
-  $ErrorActionPreference = $eapTunel
-
-  $texto = ($funnel | Out-String)
-  if ($LASTEXITCODE -eq 0 -and $texto -match 'https://') {
-    foreach ($l in ($texto -split "`r?`n")) {
-      if ($l -match 'https://\S+') { Registrar 'OK' ("Funnel: " + $Matches[0]) ; break }
-    }
+  $tarefa = Get-ScheduledTask -TaskName 'MonitorDuckDNS' -ErrorAction SilentlyContinue
+  if ($null -eq $tarefa) {
+    Registrar 'AVI' 'tarefa MonitorDuckDNS nao registrada: se o IP mudar, o endereco morre.'
+    Registrar 'AVI' 'Rode:  .\scripts\duckdns.ps1 -Instalar   (elevado)'
   } else {
-    Registrar 'AVI' 'Funnel NAO esta publicando. O endereco publico esta fora.'
-    Registrar 'AVI' 'Rode:  .\scripts\tunel-tailscale.ps1'
+    Registrar 'OK' "tarefa MonitorDuckDNS registrada ($($tarefa.State))."
+  }
+
+  # Container de pe nao prova HTTPS servindo -- mesma licao do PostgREST que
+  # subiu quebrado com o container Up. Mas ATENCAO ao resultado: muitos
+  # roteadores nao devolvem para dentro uma conexao feita ao proprio IP publico
+  # (hairpin). Falhar AQUI, de dentro da rede, nao prova que esta fora do ar --
+  # por isso e AVI e nao ERRO, e por isso o teste que vale e o do celular.
+  $urlPublica = "https://$dominio/functions/v1/ingest/healthz"
+  try {
+    $rp = Invoke-WebRequest -Uri $urlPublica -TimeoutSec 20 -UseBasicParsing
+    Registrar 'OK' ("endereco publico: HTTP {0}" -f [int]$rp.StatusCode)
+  } catch {
+    $cod = 0
+    if ($_.Exception.Response) { $cod = [int]$_.Exception.Response.StatusCode }
+    if ($cod -ge 500) {
+      Registrar 'AVI' "o HTTPS responde mas a stack atras dele falhou (HTTP $cod)."
+    } else {
+      Registrar 'AVI' "sem resposta em $urlPublica -- pode ser hairpin do roteador."
+      Registrar 'AVI' 'Confirme pelo celular, com dados moveis, antes de concluir que esta fora.'
+    }
   }
 }
 
