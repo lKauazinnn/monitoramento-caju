@@ -342,4 +342,45 @@ begin
 end
 $t$;
 
+\echo '== 01.13 O papel authenticated LÊ o que o painel consome =='
+do $t$
+declare
+  v_esperadas text[] := array[
+    'public.brands', 'public.sites', 'public.machine_roles', 'public.machines',
+    'public.metrics', 'public.metrics_disks', 'public.metrics_services',
+    'public.metrics_hourly', 'public.metrics_disks_hourly', 'public.alert_rules',
+    'public.events', 'public.app_settings', 'public.agent_tokens',
+    'public.user_roles', 'public.user_site_access', 'public.machine_volumes',
+    'public.machines_status', 'public.sites_status', 'public.brands_status',
+    'public.agent_tokens_admin', 'public.machine_services_expected',
+    'public.open_alerts'
+  ];
+  v_faltando text;
+begin
+  -- Este bloco nasceu de um defeito real, em 17/09: a 0044 aplicou pela metade
+  -- em produção e o `grant select on machine_volumes` -- última linha do arquivo
+  -- -- ficou de fora. Resultado: login funcionando, token válido, RLS correta, e
+  -- o painel abrindo VAZIO com 403 no console. Custou horas.
+  --
+  -- Os outros blocos deste teste olhavam o lado de negar (anon sem privilégio,
+  -- partições inacessíveis). Faltava o lado de PERMITIR: ninguém conferia se
+  -- quem precisa ler consegue ler. Guarda só de um lado deixa passar a metade
+  -- dos defeitos.
+  --
+  -- has_table_privilege, e não information_schema: o catálogo enxerga o
+  -- privilégio EFETIVO, incluindo o que vem por herança de papel. É o que o
+  -- PostgREST vai enxergar na hora da consulta.
+  select string_agg(o, ', ' order by o) into v_faltando
+  from unnest(v_esperadas) o
+  where to_regclass(o) is not null
+    and not has_table_privilege('authenticated', to_regclass(o), 'select');
+
+  if v_faltando is not null then
+    raise exception 'FALHA: authenticated sem SELECT em: %', v_faltando;
+  end if;
+
+  raise notice 'OK: authenticated lê tudo o que o painel consome';
+end
+$t$;
+
 \echo '== 01 CONCLUÍDO: estrutura conforme =='
