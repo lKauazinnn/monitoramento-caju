@@ -56,6 +56,7 @@
 param(
   [switch] $Instalar,
   [switch] $Conferir,
+  [switch] $Limpar,
   [string] $Raiz
 )
 
@@ -146,6 +147,31 @@ if ([string]::IsNullOrWhiteSpace($token) -and -not $Conferir) {
 # publico desta rede. Assim funciona igual com IP fixo ou dinamico.
 if (-not $Conferir) {
   if ([string]::IsNullOrWhiteSpace($token)) { Registrar 'ERRO' 'sem DUCKDNS_TOKEN.'; exit 1 }
+
+  # -Limpar: apaga os DOIS registros antes de gravar o certo.
+  #
+  # Existe por um caso real: a pagina do DuckDNS preenche a caixa de IPv6 com o
+  # que o NAVEGADOR detecta, e o navegador so enxerga a rede local -- entao um
+  # clique bem-intencionado em "update ipv6" grava um fe80::, que e endereco de
+  # link local e nao existe na internet. O estrago e silencioso: cliente que
+  # prefere IPv6 tenta primeiro esse endereco, espera o timeout e so entao cai
+  # para o IPv4. O sintoma vira "as vezes demora uma eternidade para abrir", que
+  # e dos piores de rastrear.
+  #
+  # clear=true zera A e AAAA. A atualizacao logo abaixo repoe so o A, com o IP
+  # de quem chamou -- e ai o AAAA fica ausente, que e o certo enquanto nao
+  # houver IPv6 de verdade nesta rede.
+  if ($Limpar) {
+    try {
+      $rc = Invoke-RestMethod -Uri "https://www.duckdns.org/update?domains=$sub&token=$token&clear=true" -TimeoutSec 20
+      if ("$rc".Trim() -eq 'OK') { Registrar 'OK' 'registros A e AAAA apagados.' }
+      else { Registrar 'ERRO' "DuckDNS respondeu '$rc' ao limpar."; exit 1 }
+    } catch {
+      Registrar 'ERRO' "falha ao limpar: $($_.Exception.Message)"
+      exit 1
+    }
+  }
+
   try {
     $r = Invoke-RestMethod -Uri "https://www.duckdns.org/update?domains=$sub&token=$token" -TimeoutSec 20
     if ("$r".Trim() -eq 'OK') { Registrar 'OK' 'DuckDNS aceitou a atualizacao.' }
@@ -179,6 +205,27 @@ if ($ipDns) {
   }
 } else {
   Registrar 'ERRO' "o DNS publico ainda nao responde por $dominio."
+}
+
+# O registro AAAA precisa estar AUSENTE enquanto nao houver IPv6 de verdade
+# aqui. Um AAAA errado nao derruba nada de forma visivel -- ele faz o cliente
+# perder alguns segundos antes de tentar o IPv4, e "as vezes esta lento" e o
+# defeito mais caro de diagnosticar que existe.
+$ipv6 = $null
+try {
+  $r6 = Resolve-DnsName -Name $dominio -Type AAAA -Server '1.1.1.1' -ErrorAction Stop
+  $ipv6 = ($r6 | Where-Object { $_.IPv6Address } | Select-Object -First 1).IPv6Address
+} catch { }
+
+if ($ipv6) {
+  if ("$ipv6" -match '^(?i)fe80:') {
+    Registrar 'ERRO' "AAAA aponta para $ipv6, que e endereco de link local: nao existe na internet."
+  } else {
+    Registrar 'AVI' "existe registro AAAA: $ipv6"
+  }
+  Registrar 'AVI' 'Para apagar:  .\scripts\duckdns.ps1 -Limpar'
+} else {
+  Registrar 'OK' 'sem registro AAAA, como esperado.'
 }
 
 # CGNAT: o teste que decide se este caminho existe. Faixa 100.64.0.0/10 e IP
