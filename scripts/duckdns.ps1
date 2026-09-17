@@ -225,26 +225,33 @@ if ($Instalar) {
   Register-ScheduledTask @pTarefa | Out-Null
   Registrar 'OK' 'tarefa MonitorDuckDNS registrada (na partida e a cada 5 min, como SYSTEM).'
 
-  # SO a 443. A 80 saiu do desenho em 17/09: ela ja tem dono nesta maquina, e o
-  # certificado passou a sair pelo desafio TLS-ALPN-01, que acontece dentro da
-  # propria conexao 443. Menos uma porta aberta e menos uma coisa exposta.
-  $nome = 'Monitor publico 443'
+  # A porta que o firewall precisa liberar e a DESTA MAQUINA, nao a publica. O
+  # roteador recebe a 443 de fora e entrega aqui na 2222 -- quem chega no
+  # Windows e a 2222, e era ela que precisava estar liberada. Liberar a 443
+  # daqui nao serviria para nada: ninguem bate nela.
+  $portaTls = LerEnv 'PORTA_TLS'
+  if ([string]::IsNullOrWhiteSpace($portaTls)) { $portaTls = '2222' }
+
+  $nome = "Monitor publico $portaTls"
   $existe = Get-NetFirewallRule -DisplayName $nome -ErrorAction SilentlyContinue
   if ($existe) {
     Registrar 'INF' "regra de firewall '$nome' ja existe."
   } else {
     New-NetFirewallRule -DisplayName $nome -Direction Inbound -Protocol TCP `
-      -LocalPort 443 -Action Allow -Profile Any | Out-Null
-    Registrar 'OK' 'firewall liberado na porta 443.'
+      -LocalPort $portaTls -Action Allow -Profile Any | Out-Null
+    Registrar 'OK' "firewall liberado na porta $portaTls."
   }
 
-  # Limpa a regra da 80 que uma execucao anterior deste script criou. Regra de
-  # firewall aberta para uma porta que ninguem usa e superficie exposta a troco
-  # de nada.
-  $regra80 = Get-NetFirewallRule -DisplayName 'Monitor publico 80' -ErrorAction SilentlyContinue
-  if ($regra80) {
-    Remove-NetFirewallRule -DisplayName 'Monitor publico 80'
-    Registrar 'OK' 'regra da porta 80 removida: nao e mais usada.'
+  # Limpa as regras que versoes anteriores deste script criaram. Porta aberta
+  # para quem nao usa e superficie exposta a troco de nada -- e aqui elas foram
+  # abertas por mim, entao a limpeza tambem e minha.
+  foreach ($velha in @('Monitor publico 80', 'Monitor publico 443')) {
+    if ($velha -eq $nome) { continue }
+    $r = Get-NetFirewallRule -DisplayName $velha -ErrorAction SilentlyContinue
+    if ($r) {
+      Remove-NetFirewallRule -DisplayName $velha
+      Registrar 'OK' "regra '$velha' removida: nao e mais usada."
+    }
   }
 }
 
