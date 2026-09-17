@@ -53,6 +53,7 @@
 param(
   [string] $Endereco,
   [int]    $Anos = 2,
+  [string] $Container = 'monitor-db',
   [string] $Raiz
 )
 
@@ -190,6 +191,66 @@ switch -regex ("$codigo".Trim()) {
   default {
     Write-Host "resposta inesperada: HTTP $codigo" -ForegroundColor Yellow
     exit 1
+  }
+}
+
+# ---------------------------------------------------------------------------
+# 6. A configuracao de ingestao DENTRO do banco
+# ---------------------------------------------------------------------------
+# O .env.producao serve ao comando-para-loja.ps1, que roda no terminal. Mas o
+# PAINEL tem o proprio caminho de cadastro (provisionar_maquina_ui), e ele le o
+# endereco e o segredo de public.ingest_config -- tabela que, na stack
+# self-hosted, ninguem preenchia. O sintoma e uma mensagem que manda rodar
+# script de outro ambiente:
+#
+#   "a ingestao nao esta configurada. Rode scripts\dev-up.ps1 (local) ou
+#    scripts\publicar-supabase.ps1 (producao) antes de cadastrar."
+#
+# Os dois citados existem para os dois ambientes ANTIGOS. Este script e o
+# equivalente para o servidor proprio, e por isso a configuracao entra aqui: e a
+# mesma informacao que ele ja tem em maos.
+#
+# O segredo vai num .sql temporario copiado para dentro do contentor, nunca na
+# linha de comando -- ela fica no historico do PowerShell e na lista de
+# processos. E definir_ingestao aceita psql SEM JWT de proposito
+# (chamador_pode_configurar_ingestao diz isso com todas as letras): e o caminho
+# de deploy.
+if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
+  Write-Host 'docker ausente: a configuracao de ingestao no banco NAO foi gravada.' -ForegroundColor Yellow
+  Write-Host 'Rode este script na maquina servidora para o cadastro pelo painel funcionar.' -ForegroundColor Yellow
+} else {
+  $sqlLocal = Join-Path $env:TEMP ("ingestao-{0}.sql" -f (Get-Date -Format 'yyyyMMddHHmmssfff'))
+  $urlEsc = "$Endereco/functions/v1/ingest".Replace("'", "''")
+  $segEsc = $segredoIngest.Replace("'", "''")
+  Set-Content -Path $sqlLocal -Encoding utf8 -Value "select public.definir_ingestao('$urlEsc', '$segEsc');"
+
+  $antesIng = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    docker cp $sqlLocal "${Container}:/tmp/ingestao.sql" | Out-Null
+    docker exec $Container psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 -f /tmp/ingestao.sql | Out-Null
+    $codIng = $LASTEXITCODE
+    docker exec $Container rm -f /tmp/ingestao.sql | Out-Null
+  } finally {
+    $ErrorActionPreference = $antesIng
+    Remove-Item $sqlLocal -Force -ErrorAction SilentlyContinue
+  }
+
+  if ($codIng -ne 0) { Falhar 'nao consegui gravar a configuracao de ingestao no banco.' }
+
+  # Conferir LENDO de volta, e nao confiando no exit code: ingestao_atual() e a
+  # mesma funcao que o painel chama, entao o que ela responder aqui e o que o
+  # painel vai ver. O segredo nao volta nessa leitura, so o endereco.
+  $antesIng = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $conf = (docker exec $Container psql -U postgres -d postgres -A -t `
+             -c "select (public.ingestao_atual()->>'configurada') || ' ' || coalesce(public.ingestao_atual()->>'ingest_url','');" | Out-String).Trim()
+  $ErrorActionPreference = $antesIng
+
+  if ($conf -like 'true *') {
+    Write-Host "ingestao configurada no banco: $($conf.Substring(5))" -ForegroundColor Green
+  } else {
+    Falhar "a configuracao nao ficou de pe (ingestao_atual respondeu: $conf)"
   }
 }
 
