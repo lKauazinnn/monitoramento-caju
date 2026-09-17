@@ -124,7 +124,7 @@ if ($codigo -ne 0) { Falhar 'falhou ao habilitar o login local.' }
 # ---------------------------------------------------------------------------
 $usuarios = (Invocar {
   docker exec $Container psql -U postgres -d postgres -A -t `
-    -c "select coalesce(string_agg(email || ' (' || coalesce(role,'sem papel') || ')', ', '), 'NENHUM') from public.app_users u left join public.user_roles r on r.user_id = u.user_id;"
+    -c "select coalesce(string_agg(u.email || ' (' || coalesce(r.role, 'sem papel') || ')', ', '), 'NENHUM') from public.app_users u left join public.user_roles r on r.user_id = u.user_id;"
 } | Out-String).Trim()
 
 Write-Host ''
