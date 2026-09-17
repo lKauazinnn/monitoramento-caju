@@ -42,8 +42,22 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     ports:
-      - "80:80"
-      - "443:443"
+      # UMA porta so, e os dois numeros sao diferentes de proposito.
+      #
+      #   2222  e a porta DESTA MAQUINA (ajustavel por PORTA_TLS no ambiente).
+      #    443  e a porta DENTRO do contentor, e ela nao muda.
+      #
+      # O roteador encaminha a 443 de FORA para a 2222 daqui. Isso nao e
+      # preferencia: o Let's Encrypt so valida certificado em porta publica 80
+      # (HTTP-01) ou 443 (TLS-ALPN-01). Publicar o servico numa porta publica
+      # 2222 faria o certificado nunca ser emitido -- e o agente recusa endereco
+      # sem HTTPS. Com o encaminhamento, o endereco publico fica limpo
+      # (https://dominio, sem porta) e a 443 desta maquina fica livre.
+      #
+      # A porta 80 saiu do desenho: ela ja tem dono aqui (o primeiro `up` morreu
+      # com "Bind for 0.0.0.0:80 failed: port is already allocated") e o
+      # TLS-ALPN-01 nao precisa dela.
+      - "${PORTA_TLS:-2222}:443"
 
 volumes:
   caddy-data:

@@ -15,9 +15,12 @@
 
   O QUE ELE EXIGE, E NAO DA PARA CONTORNAR
 
-    1. O roteador precisa encaminhar as portas 80 e 443 para 192.168.14.56.
-       A 443 e o trafego. A 80 e o desafio do Let's Encrypt (HTTP-01): sem ela o
-       certificado nunca e emitido, e o agente recusa endereco sem HTTPS.
+    1. O roteador precisa encaminhar TCP 443 de FORA para 192.168.14.56 na
+       porta 2222. As portas sao diferentes dos dois lados de proposito: a 80 e
+       a 443 desta maquina ja tem dono, e a publica TEM de ser a 443, porque o
+       Let's Encrypt so valida certificado na 80 (HTTP-01) ou na 443
+       (TLS-ALPN-01). Endereco publico numa porta 2222 nunca receberia
+       certificado -- e o agente recusa endereco sem HTTPS.
 
     2. O link precisa ter IP publico de verdade. Se o roteador mostrar WAN na
        faixa 100.64.x.x ate 100.127.x.x, o IP e compartilhado pela operadora
@@ -222,16 +225,26 @@ if ($Instalar) {
   Register-ScheduledTask @pTarefa | Out-Null
   Registrar 'OK' 'tarefa MonitorDuckDNS registrada (na partida e a cada 5 min, como SYSTEM).'
 
-  foreach ($p in @(80, 443)) {
-    $nome = "Monitor publico $p"
-    $existe = Get-NetFirewallRule -DisplayName $nome -ErrorAction SilentlyContinue
-    if ($existe) {
-      Registrar 'INF' "regra de firewall '$nome' ja existe."
-    } else {
-      New-NetFirewallRule -DisplayName $nome -Direction Inbound -Protocol TCP `
-        -LocalPort $p -Action Allow -Profile Any | Out-Null
-      Registrar 'OK' "firewall liberado na porta $p."
-    }
+  # SO a 443. A 80 saiu do desenho em 17/09: ela ja tem dono nesta maquina, e o
+  # certificado passou a sair pelo desafio TLS-ALPN-01, que acontece dentro da
+  # propria conexao 443. Menos uma porta aberta e menos uma coisa exposta.
+  $nome = 'Monitor publico 443'
+  $existe = Get-NetFirewallRule -DisplayName $nome -ErrorAction SilentlyContinue
+  if ($existe) {
+    Registrar 'INF' "regra de firewall '$nome' ja existe."
+  } else {
+    New-NetFirewallRule -DisplayName $nome -Direction Inbound -Protocol TCP `
+      -LocalPort 443 -Action Allow -Profile Any | Out-Null
+    Registrar 'OK' 'firewall liberado na porta 443.'
+  }
+
+  # Limpa a regra da 80 que uma execucao anterior deste script criou. Regra de
+  # firewall aberta para uma porta que ninguem usa e superficie exposta a troco
+  # de nada.
+  $regra80 = Get-NetFirewallRule -DisplayName 'Monitor publico 80' -ErrorAction SilentlyContinue
+  if ($regra80) {
+    Remove-NetFirewallRule -DisplayName 'Monitor publico 80'
+    Registrar 'OK' 'regra da porta 80 removida: nao e mais usada.'
   }
 }
 
@@ -241,7 +254,8 @@ Write-Host " ENDERECO PUBLICO:  https://$dominio" -ForegroundColor Cyan
 Write-Host '============================================================' -ForegroundColor Cyan
 Write-Host ''
 Write-Host ' O DNS ja aponta para ca. Falta o que NAO se resolve por script:' -ForegroundColor Yellow
-Write-Host '   no roteador, encaminhar TCP 80 e TCP 443 para 192.168.14.56'
+Write-Host '   no roteador: TCP 443 de FORA  ->  192.168.14.56 porta 2222'
+Write-Host '   (a porta publica tem de ser 443: e nela que o certificado e validado)'
 Write-Host ''
 Write-Host ' E o teste que vale: abrir https://' -NoNewline; Write-Host $dominio -NoNewline
 Write-Host ' no CELULAR, com dados moveis.'

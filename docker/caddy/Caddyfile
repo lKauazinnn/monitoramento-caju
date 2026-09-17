@@ -1,5 +1,5 @@
 # =============================================================================
-# HTTPS automatico para o endereco publico
+# HTTPS automatico para o endereco publico -- SEM usar a porta 80
 # =============================================================================
 # Esta camada existe por uma exigencia do agente, nao por gosto: ele RECUSA
 # endereco que nao seja HTTPS (AgentConfig.cs valida o esquema antes de mandar
@@ -12,16 +12,37 @@
 # Nao ha tarefa agendada de renovacao para alguem esquecer -- e esquecer
 # renovacao e como se descobre, 90 dias depois e fora do ar, que existia uma.
 #
-# O DESAFIO E HTTP-01, E ISSO TEM CONSEQUENCIA NO ROTEADOR
+# POR QUE A PORTA 80 NAO APARECE AQUI
 #
-# Para emitir o certificado, o Let's Encrypt precisa alcancar a porta 80 DESTA
-# maquina, vindo da internet. Por isso o encaminhamento do roteador tem de ser
-# 80 E 443, nao so a 443. Faltando a 80, o certificado simplesmente nunca sai, e
-# a mensagem de erro nao aponta para o roteador -- fica parecendo problema de
-# configuracao aqui dentro.
+# Medido na maquina servidora em 17/09: a porta 80 JA TEM DONO ali (dois
+# processos escutando), e o primeiro `up` morreu com "Bind for 0.0.0.0:80
+# failed: port is already allocated". Desligar o que ja estava na 80 seria mexer
+# em outro sistema em producao para atender a este -- troca ruim.
 #
-# O dominio vem do ambiente (.env.selfhost), para existir num lugar so.
+# Nao e preciso. O desafio do Let's Encrypt tem duas formas, e a segunda nao
+# encosta na 80:
+#
+#   HTTP-01      valida numa conexao pela porta 80        <- descartado
+#   TLS-ALPN-01  valida DENTRO da propria conexao TLS 443 <- usado aqui
+#
+# Consequencia honesta: quem digitar http://cajupar.duckdns.org (sem o s) nao
+# recebe resposta -- nao ha nada na 80 para redirecionar. O painel e o agente
+# usam https explicitamente, entao isso nao afeta nenhum dos dois.
+#
+# NO ROTEADOR, UMA REGRA SO, e com portas diferentes dos dois lados:
+#
+#   de fora: TCP 443   ->   para dentro: 192.168.14.56 porta 2222
+#
+# A porta publica TEM de ser a 443, porque e nela que o TLS-ALPN-01 acontece. A
+# porta de dentro e escolha livre (2222), e e o que deixa a 443 desta maquina
+# desocupada.
 # =============================================================================
+
+{
+	# Sem isto o Caddy tenta abrir a 80 sozinho, para redirecionar http->https, e
+	# esbarra no mesmo conflito que derrubou a primeira tentativa.
+	auto_https disable_redirects
+}
 
 {$DOMINIO_PUBLICO} {
 	encode gzip
@@ -30,4 +51,14 @@
 	# rede interna do compose. NAO e 127.0.0.1: dentro do contentor, 127.0.0.1
 	# seria o proprio Caddy, e o sintoma seria um 502 sem causa aparente.
 	reverse_proxy web:80
+
+	tls {
+		issuer acme {
+			# Explicito de proposito. Sem isto o Caddy tentaria o HTTP-01
+			# primeiro, falharia (nada dele na 80) e so entao cairia para o
+			# TLS-ALPN-01 -- gastando tentativas fracassadas, que o Let's
+			# Encrypt limita por hora.
+			disable_http_challenge
+		}
+	}
 }
