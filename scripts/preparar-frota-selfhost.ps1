@@ -201,8 +201,12 @@ Write-Host ''
 Write-Host ' Carregue a chave na sessao (sem ecoar na tela):'
 Write-Host '   $env:SUPABASE_SERVICE_ROLE_KEY = ((Get-Content .env.producao | Where-Object { $_ -like ''SUPABASE_SERVICE_ROLE_KEY=*'' }) -split ''='', 2)[1]'
 Write-Host ''
-Write-Host ' Depois, para cada loja:'
-Write-Host '   .\scripts\comando-para-loja.ps1 -Loja BSB-001 -Label PC-CAIXA'
+Write-Host ' Depois, para cada loja -- SEMPRE com -ComTarefa:'
+Write-Host '   .\scripts\comando-para-loja.ps1 -Loja BSB-001 -Rotulo PC-CAIXA -ComTarefa'
+Write-Host ''
+Write-Host ' -ComTarefa nao e opcional na pratica: e ele que instala a tarefa' -ForegroundColor Yellow
+Write-Host ' agendada. Sem ela o agente nao volta depois do desligamento, e foi' -ForegroundColor Yellow
+Write-Host ' exatamente assim que 27 maquinas sumiram sem erro nenhum.' -ForegroundColor Yellow
 Write-Host ''
 Write-Host ' COMECE POR UMA. Instale numa maquina so, confirme que a amostra' -ForegroundColor Yellow
 Write-Host ' chegou, e so entao siga para as outras:' -ForegroundColor Yellow
