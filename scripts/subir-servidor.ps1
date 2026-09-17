@@ -82,6 +82,40 @@ function Registrar {
 }
 
 # ---------------------------------------------------------------------------
+# Medir HTTP sem ser enganado pelo proxy do Windows
+# ---------------------------------------------------------------------------
+# O Invoke-WebRequest do PowerShell 5.1 obedece a configuracao de proxy do
+# usuario. Em maquina de empresa isso e comum -- e o efeito aqui seria cruel: a
+# requisicao para 127.0.0.1 sai para o proxy, o proxy nao conhece esse endereco,
+# e o script conclui "a stack NAO respondeu" com a stack perfeitamente de pe.
+# Alarme falso e pior que alarme nenhum, porque ensina a ignorar alarme.
+#
+# O curl.exe que vem no Windows 10 nao le essa configuracao: ele mede o que
+# esta realmente acontecendo. Devolve 0 quando nao houve resposta nenhuma.
+function MedirHttp([string] $url, [int] $segundos = 8) {
+  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+  if ($curl) {
+    $antes = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $saiu = 1
+    $codigo = '0'
+    try {
+      $codigo = & $curl.Source -s -o NUL -w '%{http_code}' --max-time $segundos $url
+      $saiu = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $antes }
+    if ($saiu -ne 0) { return 0 }
+    return [int]("$codigo".Trim())
+  }
+  try {
+    $r = Invoke-WebRequest -Uri $url -TimeoutSec $segundos -UseBasicParsing
+    return [int]$r.StatusCode
+  } catch {
+    if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }
+    return 0
+  }
+}
+
+# ---------------------------------------------------------------------------
 # -Instalar: registra a tarefa agendada e sai
 # ---------------------------------------------------------------------------
 if ($Instalar) {
@@ -220,10 +254,13 @@ $faltando = @($alvos)
 while ((Get-Date) -lt $prazo -and $faltando.Count -gt 0) {
   $ainda = @()
   foreach ($a in $faltando) {
-    try {
-      $r = Invoke-WebRequest -Uri $a.url -TimeoutSec 8 -UseBasicParsing
-      Registrar 'OK' ("{0}: HTTP {1}" -f $a.nome, $r.StatusCode)
-    } catch {
+    $cod = MedirHttp $a.url 8
+    if ($cod -ge 200 -and $cod -lt 400) {
+      Registrar 'OK' ("{0}: HTTP {1}" -f $a.nome, $cod)
+    } else {
+      # Guarda o ultimo codigo: "HTTP 502" e "sem resposta nenhuma" sao
+      # problemas diferentes, e a mensagem final precisa saber qual foi.
+      $a.ultimo = $cod
       $ainda += $a
     }
   }
@@ -231,7 +268,13 @@ while ((Get-Date) -lt $prazo -and $faltando.Count -gt 0) {
   if ($faltando.Count -gt 0) { Start-Sleep -Seconds 5 }
 }
 
-foreach ($a in $faltando) { Registrar 'ERRO' ("{0} NAO respondeu: {1}" -f $a.nome, $a.url) }
+foreach ($a in $faltando) {
+  if ($a.ultimo -and [int]$a.ultimo -gt 0) {
+    Registrar 'ERRO' ("{0}: HTTP {1} em {2} -- respondeu, porem errado." -f $a.nome, $a.ultimo, $a.url)
+  } else {
+    Registrar 'ERRO' ("{0} NAO respondeu: {1}" -f $a.nome, $a.url)
+  }
+}
 
 # ---------------------------------------------------------------------------
 # 5. O tunel
@@ -265,18 +308,14 @@ if ([string]::IsNullOrWhiteSpace($dominio)) {
   # (hairpin). Falhar AQUI, de dentro da rede, nao prova que esta fora do ar --
   # por isso e AVI e nao ERRO, e por isso o teste que vale e o do celular.
   $urlPublica = "https://$dominio/functions/v1/ingest/healthz"
-  try {
-    $rp = Invoke-WebRequest -Uri $urlPublica -TimeoutSec 20 -UseBasicParsing
-    Registrar 'OK' ("endereco publico: HTTP {0}" -f [int]$rp.StatusCode)
-  } catch {
-    $cod = 0
-    if ($_.Exception.Response) { $cod = [int]$_.Exception.Response.StatusCode }
-    if ($cod -ge 500) {
-      Registrar 'AVI' "o HTTPS responde mas a stack atras dele falhou (HTTP $cod)."
-    } else {
-      Registrar 'AVI' "sem resposta em $urlPublica -- pode ser hairpin do roteador."
-      Registrar 'AVI' 'Confirme pelo celular, com dados moveis, antes de concluir que esta fora.'
-    }
+  $codPub = MedirHttp $urlPublica 20
+  if ($codPub -ge 200 -and $codPub -lt 400) {
+    Registrar 'OK' "endereco publico: HTTP $codPub"
+  } elseif ($codPub -ge 500) {
+    Registrar 'AVI' "o HTTPS responde mas a stack atras dele falhou (HTTP $codPub)."
+  } else {
+    Registrar 'AVI' "sem resposta em $urlPublica -- pode ser hairpin do roteador."
+    Registrar 'AVI' 'Confirme pelo celular, com dados moveis, antes de concluir que esta fora.'
   }
 }
 
