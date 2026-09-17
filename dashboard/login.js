@@ -16,6 +16,18 @@
 var CFG = window.MONITOR_CONFIG || {};
 var CHAVE_TOKEN = 'monitor.token';
 
+// Em 17/09 apareceu um terceiro ambiente: 'selfhost', o servidor proprio num
+// endereco publico. Ele NAO tem Supabase Auth -- quem confere e-mail e senha e a
+// funcao local_sign_in no banco (migration 0014), que checa bcrypt, bloqueia por
+// tentativas repetidas e devolve um JWT com role=authenticated, que e o mesmo
+// que o PostgREST valida.
+//
+// A pergunta que decide a tela nao e mais "e Supabase?", e "da para chegar aqui
+// de fora?". Antes, tudo que nao fosse Supabase era tratado como stack local em
+// 127.0.0.1 e esta pagina se redirecionava sozinha para o dashboard SEM SENHA.
+// Num endereco publico isso seria o painel aberto para quem tivesse o link.
+var EXIGE_LOGIN = CFG.authMode === 'supabase' || CFG.authMode === 'selfhost';
+
 function erro(msg) {
   var e = document.getElementById('erro');
   e.textContent = msg;   // textContent, nunca innerHTML (regra 7)
@@ -69,16 +81,19 @@ document.getElementById('btn-ver-senha').addEventListener('click', function () {
 // sai comando para maquina de loja. Mostrar infraestrutura antes do login e
 // ruido para o operador e cortesia para quem estiver so olhando.
 (function () {
-  if (CFG.authMode !== 'supabase') return;
+  if (!EXIGE_LOGIN) return;
   var el = document.getElementById('lg-ambiente');
-  el.textContent = 'Producao';
+  el.textContent = CFG.authMode === 'selfhost' ? 'Producao (servidor proprio)' : 'Producao';
   el.setAttribute('data-producao', '1');
   el.hidden = false;
 })();
 
 // Na stack local esta pagina nao deveria ser aberta. Em vez de mostrar um
 // formulario que nao serve para nada, manda direto para o dashboard.
-if (CFG.authMode !== 'supabase') {
+//
+// So vale para a stack LOCAL. O servidor proprio ('selfhost') passa pelo
+// formulario como o Supabase: ele atende num endereco publico.
+if (!EXIGE_LOGIN) {
   var aviso = document.getElementById('aviso');
   aviso.textContent = 'Stack local nao usa login. Redirecionando para o dashboard...';
   aviso.hidden = false;
@@ -109,25 +124,54 @@ document.getElementById('form-login').addEventListener('submit', async function 
   }
 
   try {
-    var base = (CFG.authUrl || '').replace(/\/+$/, '');
-    if (!base) throw new Error('authUrl nao configurado em config.js');
+    var ehSelfhost = CFG.authMode === 'selfhost';
+
+    // No servidor proprio quem autentica e o BANCO, pela API REST: nao existe
+    // /auth/v1 ali -- o nginx so expoe /rest/v1 e /functions/v1/ingest.
+    var base = ((ehSelfhost ? CFG.restUrl : CFG.authUrl) || '').replace(/\/+$/, '');
+    if (!base) {
+      throw new Error((ehSelfhost ? 'restUrl' : 'authUrl') + ' nao configurado em config.js');
+    }
 
     // Timeout explicito: sem ele, um endpoint inalcancavel deixa o fetch
     // pendurado e o usuario ve apenas o botao desabilitado, para sempre.
     var ctrl = new AbortController();
     var t = setTimeout(function () { ctrl.abort(); }, 15000);
 
-    var resp = await fetch(base + '/token?grant_type=password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: CFG.anonKey || '' },
-      body: JSON.stringify({ email: email, password: senha }),
-      signal: ctrl.signal,
-    });
+    var resp = await fetch(
+      base + (ehSelfhost ? '/rpc/local_sign_in' : '/token?grant_type=password'),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: CFG.anonKey || '' },
+        body: ehSelfhost
+          ? JSON.stringify({ p_email: email, p_password: senha })
+          : JSON.stringify({ email: email, password: senha }),
+        signal: ctrl.signal,
+      });
     clearTimeout(t);
 
     var dados = await resp.json();
 
-    if (!resp.ok || !dados.access_token) {
+    if (ehSelfhost) {
+      // local_sign_in responde 200 mesmo recusando: o "nao" vem no campo ok,
+      // junto com a mensagem. Checar so o resp.ok deixaria entrar sem token.
+      if (!resp.ok || !dados || dados.ok !== true || !dados.access_token) {
+        throw new Error((dados && dados.message) || 'credenciais invalidas');
+      }
+
+      // As duas respostas viram uma so forma daqui para baixo. O Supabase manda
+      // expires_in (DURACAO em segundos); o local_sign_in manda expires_at
+      // (INSTANTE). Tratar um como o outro produziria uma sessao que expira em
+      // 1970 ou daqui a 57 anos -- os dois quebram, e de formas confusas.
+      var msExpira = Date.parse(dados.expires_at || '');
+      dados.expires_in = isNaN(msExpira)
+        ? 3600
+        : Math.max(60, Math.round((msExpira - Date.now()) / 1000));
+
+      // Nao existe refresh_token aqui, e isso e desenho e nao falta: o token
+      // vale um expediente e o caminho de volta e digitar a senha.
+      dados.refresh_token = null;
+    } else if (!resp.ok || !dados.access_token) {
       throw new Error(dados.error_description || dados.msg || 'credenciais invalidas');
     }
 

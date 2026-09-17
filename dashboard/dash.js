@@ -76,6 +76,23 @@ if (!CFG) {
 console.info(`[monitor] build ${BUILD} | authMode=${CFG.authMode}`);
 
 // -----------------------------------------------------------------------------
+// Quem exige login
+// -----------------------------------------------------------------------------
+// Eram dois mundos: 'supabase' (produção, com login) e qualquer outra coisa
+// (stack local em 127.0.0.1, sem login nenhum). Em 17/09 apareceu o terceiro:
+// 'selfhost' — o servidor próprio, num endereço PÚBLICO.
+//
+// A distinção que importa não é mais "é Supabase?", é "dá para chegar aqui de
+// fora?". Tratar 'selfhost' como stack local abriria o painel inteiro para quem
+// tivesse o link. Por isso esta constante existe e substitui as comparações com
+// 'supabase' nos pontos que decidem EXIGIR CREDENCIAL.
+//
+// O que continua exclusivo do Supabase (realtime pelo websocket, renovação por
+// refresh_token) segue comparando com 'supabase' — porque ali a pergunta é
+// mesmo qual é o provedor, e não se há login.
+const EXIGE_LOGIN = CFG.authMode === 'supabase' || CFG.authMode === 'selfhost';
+
+// -----------------------------------------------------------------------------
 // Estado
 // -----------------------------------------------------------------------------
 const Estado = {
@@ -371,7 +388,7 @@ function tokenRecusado(mensagem) {
     Estado.canalRealtime = null;
   }
 
-  if (CFG.authMode === 'supabase') {
+  if (EXIGE_LOGIN) {
     // O token NAO e descartado aqui, ao contrario da versao anterior: sem o
     // refresh_token guardado nao ha como se recuperar sozinho, e apaga-lo
     // transformava um problema temporario em "precisa de senha".
@@ -385,8 +402,14 @@ function tokenRecusado(mensagem) {
 
     // Sem refresh_token nao ha o que tentar. Ainda assim a faixa fica, e a
     // navegacao passa a ser um CLIQUE de alguem -- nunca automatica.
-    avisarSessao(true, 'Esta sessao e anterior a renovacao automatica. '
-      + 'Entre de novo uma ultima vez.');
+    //
+    // No servidor proprio isso nao e excecao, e o normal: local_sign_in nao
+    // emite refresh_token -- o token vale um expediente (12 h) e o caminho e
+    // entrar de novo. Dizer "sessao anterior a renovacao automatica" ali seria
+    // mentira, e mensagem que mente manda a pessoa procurar defeito onde nao ha.
+    avisarSessao(true, CFG.authMode === 'selfhost'
+      ? 'A sessao expirou. Entre de novo.'
+      : 'Esta sessao e anterior a renovacao automatica. Entre de novo uma ultima vez.');
     return;
   }
 
@@ -5731,8 +5754,8 @@ function ligarEventos() {
   armarPerigo($('btn-remover-demo'), 'Confirmar remoção', removerDemo);
   armarPerigo($('btn-remover-maquina'), 'Confirmar: apagar tudo', removerMaquinaAberta);
 
-  // Sair so existe onde ha de onde sair: no modo Supabase.
-  if (CFG.authMode === 'supabase') {
+  // Sair so existe onde ha de onde sair: onde houve login.
+  if (EXIGE_LOGIN) {
     $('btn-sair').hidden = false;
     $('btn-sair').addEventListener('click', sair);
   }
@@ -5922,9 +5945,11 @@ async function principal() {
   ligarEventos();
 
   // -------------------------------------------------------------------- token
-  if (CFG.authMode === 'supabase') {
-    // Em produção a autenticação é obrigatória. O login vive em login.html, que
-    // guarda o token e volta para cá — o dashboard nunca desenha formulário.
+  if (EXIGE_LOGIN) {
+    // Em produção a autenticação é obrigatória — no Supabase e no servidor
+    // próprio igualmente, porque os dois atendem num endereço público. O login
+    // vive em login.html, que guarda o token e volta para cá — o dashboard
+    // nunca desenha formulário.
     const guardado = lerTokenGuardado();
     if (!guardado) {
       window.location.href = 'login.html';

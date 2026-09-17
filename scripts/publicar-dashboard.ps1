@@ -85,8 +85,15 @@ $conteudoProd = Get-Content $prod -Raw
 # faixa de erro para quem abrir. Pior, o modo local NAO PEDE LOGIN — e um painel
 # sem login na internet, mesmo que sem dado nenhum, e o tipo de coisa que nao
 # pode depender de ninguem lembrar de trocar um arquivo.
-if ($conteudoProd -notmatch "authMode:\s*'supabase'") {
-  Erro 'config.producao.js nao esta em authMode supabase. Nao vou publicar.'
+# A trava aceita DOIS modos desde 17/09, e a lista e branca de proposito: o
+# perigo nunca foi o nome 'supabase', era o modo LOCAL, que nao pede senha. Com
+# o servidor proprio ('selfhost') o painel passou a exigir login de verdade --
+# local_sign_in confere bcrypt no banco e devolve JWT (migration 0014). Trocar
+# esta checagem por "qualquer coisa menos local" seria mais frouxo: um modo novo
+# escrito errado passaria calado. Aqui, modo desconhecido nao publica.
+if ($conteudoProd -notmatch "authMode:\s*'(supabase|selfhost)'") {
+  Erro 'config.producao.js nao esta em authMode supabase nem selfhost. Nao vou publicar.'
+  Aviso 'O modo local NAO pede senha: publicar assim poria o painel aberto na internet.'
   exit 1
 }
 if ($conteudoProd -match '127\.0\.0\.1|localhost') {
@@ -97,7 +104,7 @@ if ($conteudoProd -notmatch "restUrl:\s*'https://") {
   Erro 'config.producao.js sem restUrl em https. Nao vou publicar.'
   exit 1
 }
-Ok 'configuracao de producao: authMode supabase, restUrl em https'
+Ok 'configuracao de producao: authMode com login, restUrl em https'
 
 # A CSP e verificada antes de subir: se ela quebra a pagina, quebra publicada.
 $node = Get-Command node -ErrorAction SilentlyContinue
@@ -143,7 +150,7 @@ foreach ($proibido in @('dev-config.json', 'dev-token.json', 'diagnostico.html')
   if (Test-Path (Join-Path $saida $proibido)) { $vazou += $proibido }
 }
 $cfgCopia = Get-Content (Join-Path $saida 'config.js') -Raw
-if ($cfgCopia -notmatch "authMode:\s*'supabase'") { $vazou += 'config.js NAO e o de producao' }
+if ($cfgCopia -notmatch "authMode:\s*'(supabase|selfhost)'") { $vazou += 'config.js NAO e o de producao' }
 
 if ($vazou.Count -gt 0) {
   Erro ('a copia contem o que nao deveria: ' + ($vazou -join ', '))
