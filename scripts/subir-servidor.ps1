@@ -223,16 +223,54 @@ foreach ($a in $faltando) { Registrar 'ERRO' ("{0} NAO respondeu: {1}" -f $a.nom
 # ---------------------------------------------------------------------------
 # 5. O tunel
 # ---------------------------------------------------------------------------
-$svc = Get-Service -Name 'cloudflared' -ErrorAction SilentlyContinue
+# Em 17/09 o tunel passou a ser o Funnel do Tailscale, e nao mais a Cloudflare.
+# O motivo nao foi preferencia: tunel rapido (trycloudflare) sorteia hostname
+# novo a cada partida, e tunel NOMEADO exige um dominio dentro da conta
+# Cloudflare -- comprar dominio e mexer no DNS do cajupar.com foram os dois
+# recusados. Ver scripts\tunel-tailscale.ps1.
+#
+# A diferenca que importa aqui: o tailscaled e servico de verdade e sobe ANTES
+# do login, entao o ENDERECO volta sozinho depois do reboot. A stack atras dele
+# nao -- o Docker Desktop continua sendo aplicativo de usuario. Enquanto for
+# assim, reboot sem ninguem logar = endereco de pe respondendo 502.
+$svc = Get-Service -Name 'Tailscale' -ErrorAction SilentlyContinue
+if ($null -eq $svc) { $svc = Get-Service -Name 'tailscaled' -ErrorAction SilentlyContinue }
+
 if ($null -eq $svc) {
-  Registrar 'AVI' 'cloudflared NAO esta instalado como servico: o endereco publico NAO volta sozinho.'
-  Registrar 'AVI' 'Tunel rapido (trycloudflare) e temporario por natureza. Para permanente, use tunel nomeado.'
+  Registrar 'AVI' 'Tailscale NAO esta instalado como servico: o endereco publico NAO volta sozinho.'
+  Registrar 'AVI' 'Rode uma vez:  .\scripts\tunel-tailscale.ps1 -Instalar'
 } elseif ($svc.Status -ne 'Running') {
-  Registrar 'AVI' "servico cloudflared existe mas esta $($svc.Status). Tentando iniciar."
-  try { Start-Service cloudflared; Registrar 'OK' 'cloudflared iniciado.' }
-  catch { Registrar 'ERRO' "nao consegui iniciar o cloudflared: $($_.Exception.Message)" }
+  Registrar 'AVI' "servico $($svc.Name) existe mas esta $($svc.Status). Tentando iniciar."
+  try { Start-Service $svc.Name; Registrar 'OK' 'Tailscale iniciado.' }
+  catch { Registrar 'ERRO' "nao consegui iniciar o Tailscale: $($_.Exception.Message)" }
 } else {
-  Registrar 'OK' 'cloudflared rodando como servico.'
+  Registrar 'OK' 'Tailscale rodando como servico.'
+}
+
+# Servico de pe nao quer dizer endereco publicado: o Funnel e configuracao
+# separada, e ja aconteceu neste projeto de "container Up" nao significar
+# "aplicacao servindo". Aqui a conferencia e a mesma ideia.
+$ts = (Get-Command tailscale -ErrorAction SilentlyContinue).Source
+if (-not $ts) {
+  $p = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+  if (Test-Path $p) { $ts = $p }
+}
+
+if ($ts) {
+  $eapTunel = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $funnel = & $ts funnel status
+  $ErrorActionPreference = $eapTunel
+
+  $texto = ($funnel | Out-String)
+  if ($LASTEXITCODE -eq 0 -and $texto -match 'https://') {
+    foreach ($l in ($texto -split "`r?`n")) {
+      if ($l -match 'https://\S+') { Registrar 'OK' ("Funnel: " + $Matches[0]) ; break }
+    }
+  } else {
+    Registrar 'AVI' 'Funnel NAO esta publicando. O endereco publico esta fora.'
+    Registrar 'AVI' 'Rode:  .\scripts\tunel-tailscale.ps1'
+  }
 }
 
 if ($faltando.Count -gt 0) {
