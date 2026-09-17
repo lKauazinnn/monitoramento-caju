@@ -130,9 +130,26 @@ New-Item -ItemType Directory -Force -Path $saida | Out-Null
 
 $naoVao = @('dev-config.json', 'dev-token.json', 'diagnostico.html', 'config.producao.js', '.vercelignore')
 
-Get-ChildItem $dash -Recurse -File | ForEach-Object {
+Get-ChildItem $dash -Recurse -File -Force | ForEach-Object {
   $rel = $_.FullName.Substring($dash.Length + 1)
   if ($naoVao -contains $_.Name) { Info "fora: $rel"; return }
+
+  # QUALQUER caminho com segmento comecando por ponto fica de fora.
+  #
+  # A lista negra por nome protegia so do que alguem lembrou de listar, e em
+  # 17/09 isso quase custou caro: a copia levava dashboard/.env.local -- com um
+  # VERCEL_OIDC_TOKEN dentro -- alem de .gitignore e .vercel/project.json. Iam
+  # para uma URL publica, num site estatico, legiveis por qualquer um. O deploy
+  # so nao aconteceu porque falhou por outro motivo.
+  #
+  # Arquivo que comeca com ponto e, por convencao, configuracao de ferramenta:
+  # nunca e conteudo de pagina. Recusar a categoria inteira vale mais do que
+  # perseguir nomes, porque a proxima ferramenta a criar um arquivo desses nao
+  # vai avisar ninguem.
+  if (($rel -split '[\\/]' | Where-Object { $_.StartsWith('.') })) {
+    Info "fora (oculto): $rel"
+    return
+  }
 
   $destino = Join-Path $saida $rel
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destino) | Out-Null
@@ -148,6 +165,13 @@ Ok 'config.js da copia substituido pelo de producao'
 $vazou = @()
 foreach ($proibido in @('dev-config.json', 'dev-token.json', 'diagnostico.html')) {
   if (Test-Path (Join-Path $saida $proibido)) { $vazou += $proibido }
+}
+
+# -Force porque dotfile no Windows nem sempre tem o atributo "oculto": sem ele o
+# Get-ChildItem passaria direto justamente pelo .env.local que motivou isto.
+$ocultos = Get-ChildItem $saida -Recurse -Force | Where-Object { $_.Name.StartsWith('.') }
+if ($ocultos) {
+  $vazou += ('arquivo de ferramenta: ' + (($ocultos | ForEach-Object { $_.Name }) -join ', '))
 }
 $cfgCopia = Get-Content (Join-Path $saida 'config.js') -Raw
 if ($cfgCopia -notmatch "authMode:\s*'(supabase|selfhost)'") { $vazou += 'config.js NAO e o de producao' }
