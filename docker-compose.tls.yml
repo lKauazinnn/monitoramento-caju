@@ -1,0 +1,64 @@
+# =============================================================================
+# Camada de HTTPS publico -- sobe JUNTO com a producao, nunca sozinha
+# =============================================================================
+# Arquivo separado de proposito, e nao por organizacao: o
+# docker-compose.producao.yml da maquina servidora tem ajustes locais que nunca
+# entraram no git (conferido em 17/09: o hash de la nao bate com o daqui).
+# Editar aquele arquivo daqui e sincronizar apagaria esses ajustes sem ninguem
+# perceber. Sobreposicao resolve sem tocar numa linha dele:
+#
+#   docker compose -f docker-compose.producao.yml -f docker-compose.tls.yml \
+#                  --env-file .env.selfhost up -d
+#
+# O subir-servidor.ps1 ja monta esse comando sozinho quando este arquivo existe.
+#
+# A DIFERENCA DELIBERADA, e ela merece ser lida com atencao: aqui as portas
+# ficam em 0.0.0.0, e nao em 127.0.0.1. A regra do arquivo de producao continua
+# valendo para a stack inteira -- Postgres, PostgREST e ingest seguem SEM porta
+# publicada. Esta camada e a unica coisa alcancavel de fora, e e ela que o
+# roteador encaminha. Toda a superficie exposta cabe neste arquivo.
+# =============================================================================
+
+services:
+  caddy:
+    # Pino no MAIOR e nao no patch, ao contrario das outras imagens da stack: a
+    # maquina servidora baixa esta sozinha no boot, e uma tag de patch que saiu
+    # do registro transformaria a subida num erro de pull -- justamente no
+    # momento em que ninguem esta olhando.
+    image: caddy:2-alpine
+    container_name: monitor-tls
+    restart: unless-stopped
+    depends_on:
+      - web
+    environment:
+      DOMINIO_PUBLICO: ${DOMINIO_PUBLICO:?defina DOMINIO_PUBLICO no .env.selfhost}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Os certificados moram aqui. Volume NOMEADO, e nao pasta do projeto:
+      # recriar o contentor nao pode significar pedir certificado novo. O Let's
+      # Encrypt limita emissoes por semana, e estourar esse limite deixa o
+      # endereco sem HTTPS por DIAS -- com a frota inteira recusando falar,
+      # porque o agente exige https.
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      # UMA porta so, e os dois numeros sao diferentes de proposito.
+      #
+      #   2222  e a porta DESTA MAQUINA (ajustavel por PORTA_TLS no ambiente).
+      #    443  e a porta DENTRO do contentor, e ela nao muda.
+      #
+      # O roteador encaminha a 443 de FORA para a 2222 daqui. Isso nao e
+      # preferencia: o Let's Encrypt so valida certificado em porta publica 80
+      # (HTTP-01) ou 443 (TLS-ALPN-01). Publicar o servico numa porta publica
+      # 2222 faria o certificado nunca ser emitido -- e o agente recusa endereco
+      # sem HTTPS. Com o encaminhamento, o endereco publico fica limpo
+      # (https://dominio, sem porta) e a 443 desta maquina fica livre.
+      #
+      # A porta 80 saiu do desenho: ela ja tem dono aqui (o primeiro `up` morreu
+      # com "Bind for 0.0.0.0:80 failed: port is already allocated") e o
+      # TLS-ALPN-01 nao precisa dela.
+      - "${PORTA_TLS:-2222}:443"
+
+volumes:
+  caddy-data:
+  caddy-config:

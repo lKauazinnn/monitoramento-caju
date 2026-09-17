@@ -99,7 +99,24 @@ begin
     ' [cmd=' || pol.polcmd::text || ']' order by pol.polname
   ) into v_ruins
   from pg_policy pol
+  join pg_class c on c.oid = pol.polrelid
+  join pg_namespace n on n.oid = c.relnamespace
   where pol.polcmd <> 'r'  -- 'r' = SELECT
+    -- SÓ O SCHEMA DA APLICAÇÃO. A regra 3 fala dos NOSSOS dados: anon não pode
+    -- escrever no que é nosso. Varrer o banco inteiro parecia mais rigoroso e
+    -- na prática era mais frouxo, porque produzia ruído que convida a ignorar a
+    -- guarda.
+    --
+    -- Apareceu na primeira instalação self-hosted: o pg_cron cria policies
+    -- próprias em cron.job e cron.job_run_details, com PUBLIC e cmd=*, e elas
+    -- são da extensão -- não dá para removê-las sem quebrar o agendador. No
+    -- Supabase isso nunca surgiu porque lá a extensão já vem instalada e fechada.
+    --
+    -- O risco real daquele schema está coberto em outro lugar, e por privilégio
+    -- em vez de policy: a 0047 revoga USAGE e todos os GRANTs de cron para
+    -- public, anon e authenticated, e falha se sobrar algum. Policy sem
+    -- privilégio não dá acesso a ninguém.
+    and n.nspname = 'public'
     and (
       -- polroles = {0} significa PUBLIC
       0 = any (pol.polroles)
@@ -188,7 +205,16 @@ $t$;
 do $t$
 declare
   v_parent  text;
-  v_esperado integer := public.app_setting_int('partition_months_ahead') + 2; -- -1 .. +N
+  -- Mes corrente + N futuros. NAO conta o mes anterior, e isso mudou na 0046:
+  -- com retencao de 7 dias o corte de drop_old_partitions cai em
+  -- date_trunc('month', now() - 7 dias), ou seja, a partir do dia 8 de cada mes
+  -- ele aponta para o dia 1 do mes CORRENTE e a particao do mes anterior sai na
+  -- faxina seguinte. Exigir "-1" aqui fazia esta guarda acusar falha durante tres
+  -- semanas de cada mes com o sistema perfeitamente saudavel.
+  --
+  -- O que esta guarda continua pegando e o que importa: a folga FUTURA acabando.
+  -- Sem particao futura a ingestao para, e foi por isso que ela nasceu.
+  v_esperado integer := public.app_setting_int('partition_months_ahead') + 1; -- mes atual .. +N
   v_qtd     integer;
   v_mes_atual text;
 begin
@@ -313,6 +339,47 @@ begin
     raise exception 'FALHA (regra 25): metrics.agent_version aceita null';
   end if;
   raise notice 'OK: toda amostra carrega a versão do agente';
+end
+$t$;
+
+\echo '== 01.13 O papel authenticated LÊ o que o painel consome =='
+do $t$
+declare
+  v_esperadas text[] := array[
+    'public.brands', 'public.sites', 'public.machine_roles', 'public.machines',
+    'public.metrics', 'public.metrics_disks', 'public.metrics_services',
+    'public.metrics_hourly', 'public.metrics_disks_hourly', 'public.alert_rules',
+    'public.events', 'public.app_settings', 'public.agent_tokens',
+    'public.user_roles', 'public.user_site_access', 'public.machine_volumes',
+    'public.machines_status', 'public.sites_status', 'public.brands_status',
+    'public.agent_tokens_admin', 'public.machine_services_expected',
+    'public.open_alerts'
+  ];
+  v_faltando text;
+begin
+  -- Este bloco nasceu de um defeito real, em 17/09: a 0044 aplicou pela metade
+  -- em produção e o `grant select on machine_volumes` -- última linha do arquivo
+  -- -- ficou de fora. Resultado: login funcionando, token válido, RLS correta, e
+  -- o painel abrindo VAZIO com 403 no console. Custou horas.
+  --
+  -- Os outros blocos deste teste olhavam o lado de negar (anon sem privilégio,
+  -- partições inacessíveis). Faltava o lado de PERMITIR: ninguém conferia se
+  -- quem precisa ler consegue ler. Guarda só de um lado deixa passar a metade
+  -- dos defeitos.
+  --
+  -- has_table_privilege, e não information_schema: o catálogo enxerga o
+  -- privilégio EFETIVO, incluindo o que vem por herança de papel. É o que o
+  -- PostgREST vai enxergar na hora da consulta.
+  select string_agg(o, ', ' order by o) into v_faltando
+  from unnest(v_esperadas) o
+  where to_regclass(o) is not null
+    and not has_table_privilege('authenticated', to_regclass(o), 'select');
+
+  if v_faltando is not null then
+    raise exception 'FALHA: authenticated sem SELECT em: %', v_faltando;
+  end if;
+
+  raise notice 'OK: authenticated lê tudo o que o painel consome';
 end
 $t$;
 

@@ -15,7 +15,7 @@
 // Marca visível da versão do arquivo. Serve para responder em um segundo a
 // "o navegador está com o código novo?" — que foi exatamente a dúvida que
 // custou mais tempo neste projeto.
-const BUILD = '2026-08-12.60-abas-no-cartao';
+const BUILD = '2026-08-26.67-freio-do-realtime';
 
 // -----------------------------------------------------------------------------
 // Captura global de erro — registrada ANTES de qualquer outra coisa
@@ -76,6 +76,23 @@ if (!CFG) {
 console.info(`[monitor] build ${BUILD} | authMode=${CFG.authMode}`);
 
 // -----------------------------------------------------------------------------
+// Quem exige login
+// -----------------------------------------------------------------------------
+// Eram dois mundos: 'supabase' (produção, com login) e qualquer outra coisa
+// (stack local em 127.0.0.1, sem login nenhum). Em 17/09 apareceu o terceiro:
+// 'selfhost' — o servidor próprio, num endereço PÚBLICO.
+//
+// A distinção que importa não é mais "é Supabase?", é "dá para chegar aqui de
+// fora?". Tratar 'selfhost' como stack local abriria o painel inteiro para quem
+// tivesse o link. Por isso esta constante existe e substitui as comparações com
+// 'supabase' nos pontos que decidem EXIGIR CREDENCIAL.
+//
+// O que continua exclusivo do Supabase (realtime pelo websocket, renovação por
+// refresh_token) segue comparando com 'supabase' — porque ali a pergunta é
+// mesmo qual é o provedor, e não se há login.
+const EXIGE_LOGIN = CFG.authMode === 'supabase' || CFG.authMode === 'selfhost';
+
+// -----------------------------------------------------------------------------
 // Estado
 // -----------------------------------------------------------------------------
 const Estado = {
@@ -93,6 +110,10 @@ const Estado = {
   primeiraCargaIncidentes: true,
   som: false,
   audio: null,
+  alerta: null,
+  timerRepeticao: null,
+  repeticaoMin: 0,
+  regrasDeAlerta: [],
   faviconAtual: null,
   relatorio: null,
   faixa: '24h',        // faixa do painel de detalhe
@@ -310,6 +331,7 @@ function sair() {
   descartarToken();
 
   if (Estado.timerPoll) { clearInterval(Estado.timerPoll); Estado.timerPoll = null; }
+  if (realtimeTimer) { clearTimeout(realtimeTimer); realtimeTimer = null; }
   if (Estado.canalRealtime) {
     try { Estado.canalRealtime.close(); } catch (_) { /* ja fechado */ }
     Estado.canalRealtime = null;
@@ -360,12 +382,13 @@ function insistirNaSessao() {
 
 function tokenRecusado(mensagem) {
   if (Estado.timerPoll) { clearInterval(Estado.timerPoll); Estado.timerPoll = null; }
+  if (realtimeTimer) { clearTimeout(realtimeTimer); realtimeTimer = null; }
   if (Estado.canalRealtime) {
     try { Estado.canalRealtime.close(); } catch (_) { /* ja fechado */ }
     Estado.canalRealtime = null;
   }
 
-  if (CFG.authMode === 'supabase') {
+  if (EXIGE_LOGIN) {
     // O token NAO e descartado aqui, ao contrario da versao anterior: sem o
     // refresh_token guardado nao ha como se recuperar sozinho, e apaga-lo
     // transformava um problema temporario em "precisa de senha".
@@ -379,8 +402,14 @@ function tokenRecusado(mensagem) {
 
     // Sem refresh_token nao ha o que tentar. Ainda assim a faixa fica, e a
     // navegacao passa a ser um CLIQUE de alguem -- nunca automatica.
-    avisarSessao(true, 'Esta sessao e anterior a renovacao automatica. '
-      + 'Entre de novo uma ultima vez.');
+    //
+    // No servidor proprio isso nao e excecao, e o normal: local_sign_in nao
+    // emite refresh_token -- o token vale um expediente (12 h) e o caminho e
+    // entrar de novo. Dizer "sessao anterior a renovacao automatica" ali seria
+    // mentira, e mensagem que mente manda a pessoa procurar defeito onde nao ha.
+    avisarSessao(true, CFG.authMode === 'selfhost'
+      ? 'A sessao expirou. Entre de novo.'
+      : 'Esta sessao e anterior a renovacao automatica. Entre de novo uma ultima vez.');
     return;
   }
 
@@ -400,6 +429,25 @@ function tokenRecusado(mensagem) {
  */
 async function descobrirApiLocal() {
   let d;
+
+  // CONFIG EXPLÍCITA VENCE, e isto não reabre o defeito que o bloco abaixo
+  // corrigiu. O problema de antes era cair num PADRÃO chutado
+  // ('http://127.0.0.1:3000') quando o dev-config.json faltava — e conversar com
+  // o serviço de outro projeto. Uma restUrl escrita à mão no config.js não é
+  // chute: é alguém dizendo onde a API está.
+  //
+  // É o que torna possível a instalação self-hosted. Lá o nginx serve o painel e
+  // faz proxy de /rest/v1 na MESMA origem, então a configuração é o caminho
+  // relativo '/rest/v1' — que funciona em qualquer endereço, do túnel temporário
+  // ao domínio definitivo, sem reeditar arquivo a cada troca.
+  //
+  // E o dev-config.json continua obrigatório no desenvolvimento, porque lá o
+  // config.js deixa restUrl VAZIO de propósito: a porta muda a cada dev-up.
+  if (CFG.restUrl) {
+    CFG.devToken = null;
+    CFG.devUsuario = null;
+    return;
+  }
 
   try {
     const resp = await fetch('dev-config.json', { cache: 'no-store' });
@@ -951,6 +999,53 @@ function abrirMaquinaDoIncidente() {
 }
 
 // -----------------------------------------------------------------------------
+// Gerenciamento de alerta: a configuracao do aviso
+// -----------------------------------------------------------------------------
+// Mora no localStorage, e nao no banco, porque e propriedade do LUGAR de onde se
+// olha: a TV da copa quer som alto e repetido, o laptop numa reuniao quer
+// silencio. As duas telas usam a mesma conta.
+//
+// Os tipos ligados por padrao sao os CRITICOS. Ligar tudo faria o som tocar por
+// CPU alta as tres da tarde, e um som que toca por coisa que nao exige ninguem
+// levantar da cadeira e desligado na primeira semana -- levando embora o aviso
+// de servidor caido junto.
+const CHAVE_ALERTA = 'monitor.alerta';
+
+const ALERTA_PADRAO = {
+  volume: 35,
+  repetirMin: 0,
+  falar: false,
+  tipos: ['offline', 'disk_low', 'service_down', 'smart_failing'],
+};
+
+function lerAlerta() {
+  let cru = null;
+  try { cru = JSON.parse(localStorage.getItem(CHAVE_ALERTA) || 'null'); } catch (_) { /* lixo */ }
+  const c = { ...ALERTA_PADRAO, ...(cru && typeof cru === 'object' ? cru : {}) };
+
+  // Cada campo conferido: este objeto vem do localStorage, que qualquer um pode
+  // editar, e um volume de 900 ou um 'tipos' que nao e lista quebraria o audio
+  // justamente na hora do incidente.
+  c.volume = Number.isFinite(Number(c.volume))
+    ? Math.max(5, Math.min(100, Math.round(Number(c.volume)))) : ALERTA_PADRAO.volume;
+  c.repetirMin = [0, 2, 5, 10, 30].includes(Number(c.repetirMin)) ? Number(c.repetirMin) : 0;
+  c.falar = c.falar === true;
+  c.tipos = Array.isArray(c.tipos) ? c.tipos.filter((t) => typeof t === 'string') : [];
+  return c;
+}
+
+function guardarAlerta(c) {
+  Estado.alerta = c;
+  try { localStorage.setItem(CHAVE_ALERTA, JSON.stringify(c)); } catch (_) { /* privado */ }
+}
+
+/** Este incidente merece som, segundo a configuracao desta tela? */
+function alertaSoa(inc) {
+  const c = Estado.alerta || (Estado.alerta = lerAlerta());
+  return c.tipos.includes(inc.kind);
+}
+
+// -----------------------------------------------------------------------------
 // Aviso sonoro
 // -----------------------------------------------------------------------------
 // Desligado por padrão, e toca UMA vez por incidente novo — nunca em laço.
@@ -961,16 +1056,112 @@ function abrirMaquinaDoIncidente() {
 function tocarSeNovo(criticos) {
   const idsAgora = new Set(criticos.map((a) => a.event_id));
 
-  const novos = [...idsAgora].filter((id) => !Estado.incidentesVistos.has(id));
+  const novos = criticos.filter((a) => !Estado.incidentesVistos.has(a.event_id));
   Estado.incidentesVistos = idsAgora;
 
-  if (novos.length === 0 || !Estado.som) return;
+  // A repetição é reavaliada SEMPRE, mesmo sem novidade e mesmo com o som
+  // desligado: é assim que ela para quando o último incidente é reconhecido ou
+  // se resolve, sem depender de um evento novo para desarmar.
+  ajustarRepeticao(criticos);
+
+  if (!Estado.som) return;
 
   // Primeira carga da página não toca: a tela abrindo com três incidentes
   // antigos não é novidade nenhuma, é o estado do mundo.
   if (Estado.primeiraCargaIncidentes) return;
 
-  apitar();
+  // Só os tipos escolhidos nesta tela. Um incidente de tipo não escolhido ainda
+  // acende a faixa e conta na fila -- ele só não faz barulho.
+  const paraSoar = novos.filter(alertaSoa);
+  if (paraSoar.length === 0) return;
+
+  // Offline tem toque próprio: três tons descendentes, mais graves. Numa sala
+  // onde o painel toca por disco cheio e por servidor caído, quem está de costas
+  // para a tela precisa distinguir os dois SEM olhar.
+  const temQueda = paraSoar.some((a) => a.kind === 'offline');
+  apitar(temQueda ? 'queda' : 'aviso');
+
+  anunciar(paraSoar);
+}
+
+/**
+ * Diz em voz alta qual maquina caiu.
+ *
+ * Desligado por padrao. O som resolve "aconteceu algo"; a voz resolve "onde" --
+ * e sem ela o operador tem de vir ate a tela para descobrir, o que anula o
+ * ganho de avisar de longe.
+ */
+function anunciar(incidentes) {
+  const c = Estado.alerta || (Estado.alerta = lerAlerta());
+  if (!c.falar) return;
+
+  try {
+    const fala = window.speechSynthesis;
+    if (!fala || typeof SpeechSynthesisUtterance !== 'function') return;
+
+    const quais = incidentes.slice(0, 3).map((a) => {
+      // Hifens e pontos viram pausa: "CAJU-ITAIM" lido como escrito sai
+      // "caju hifen itaim" em algumas vozes.
+      const nome = String(a.label || 'máquina').replace(/[-_.]+/g, ' ');
+      return a.kind === 'offline' ? nome + ' sem contato' : nome + ' com problema';
+    });
+
+    const resto = incidentes.length - quais.length;
+    const texto = 'Atenção. ' + quais.join('. ')
+      + (resto > 0 ? '. E mais ' + resto + '.' : '.');
+
+    // Fila limpa antes: dois incidentes em sequência enfileirariam as falas e a
+    // segunda sairia meio minuto depois, quando já não é notícia.
+    fala.cancel();
+
+    const u = new SpeechSynthesisUtterance(texto);
+    u.lang = 'pt-BR';
+    u.rate = 0.95;
+    u.volume = Math.max(0.05, Math.min(1, c.volume / 100));
+    fala.speak(u);
+  } catch (_) {
+    // Navegador sem síntese de voz: o toque já avisou.
+  }
+}
+
+/**
+ * Liga ou desliga a repeticao conforme AINDA houver incidente que soa.
+ *
+ * Idempotente de proposito: e chamada a cada leitura, e nao pode empilhar
+ * timers. Um timer por leitura, com poll de 10 s, seria um alarme por segundo em
+ * poucos minutos.
+ */
+function ajustarRepeticao(criticos) {
+  const c = Estado.alerta || (Estado.alerta = lerAlerta());
+  const pendentes = criticos.filter((a) => !a.reconhecido && alertaSoa(a));
+  const deveRepetir = Estado.som && c.repetirMin > 0 && pendentes.length > 0;
+
+  if (!deveRepetir) {
+    if (Estado.timerRepeticao) {
+      clearInterval(Estado.timerRepeticao);
+      Estado.timerRepeticao = null;
+    }
+    return;
+  }
+
+  if (Estado.timerRepeticao && Estado.repeticaoMin === c.repetirMin) return;
+
+  if (Estado.timerRepeticao) clearInterval(Estado.timerRepeticao);
+  Estado.repeticaoMin = c.repetirMin;
+  Estado.timerRepeticao = setInterval(() => {
+    // Relê a lista do estado atual em vez de fechar sobre a de agora: entre dois
+    // toques o incidente pode ter sido reconhecido, e insistir depois disso é
+    // exatamente o que faz alguém desligar o som para sempre.
+    const abertos = (Estado.incidentes?.lista || [])
+      .filter((a) => a.severity === 'critical' && !a.reconhecido && alertaSoa(a));
+    if (abertos.length === 0 || !Estado.som) {
+      clearInterval(Estado.timerRepeticao);
+      Estado.timerRepeticao = null;
+      return;
+    }
+    apitar(abertos.some((a) => a.kind === 'offline') ? 'queda' : 'aviso');
+    anunciar(abertos);
+  }, c.repetirMin * 60000);
 }
 
 /**
@@ -979,7 +1170,7 @@ function tocarSeNovo(criticos) {
  * Sem arquivo de áudio de propósito: um .mp3 seria mais um recurso para servir,
  * mais uma coisa para faltar, e a CSP teria de liberar media-src.
  */
-function apitar() {
+function apitar(perfil = 'aviso') {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
@@ -987,7 +1178,18 @@ function apitar() {
     const ctx = Estado.audio || (Estado.audio = new Ctx());
     if (ctx.state === 'suspended') ctx.resume();
 
-    for (const [quando, hz] of [[0, 880], [0.18, 660]]) {
+    const c = Estado.alerta || (Estado.alerta = lerAlerta());
+    // 0.30 de teto: acima disso o oscilador satura e o tom vira estalo no
+    // alto-falante de TV. O volume da tela é uma fração DISSO, não do máximo.
+    const pico = Math.max(0.01, Math.min(1, c.volume / 100)) * 0.30;
+
+    // Queda: três tons DESCENDENTES e graves — o desenho de som que se lê como
+    // "algo caiu". Aviso: dois tons agudos, o toque que já existia.
+    const tons = perfil === 'queda'
+      ? [[0, 660], [0.20, 520], [0.40, 392]]
+      : [[0, 880], [0.18, 660]];
+
+    for (const [quando, hz] of tons) {
       const osc = ctx.createOscillator();
       const vol = ctx.createGain();
       osc.type = 'sine';
@@ -996,12 +1198,12 @@ function apitar() {
       // Envelope: um tom que corta seco estala no alto-falante.
       const t = ctx.currentTime + quando;
       vol.gain.setValueAtTime(0, t);
-      vol.gain.linearRampToValueAtTime(0.13, t + 0.02);
-      vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+      vol.gain.linearRampToValueAtTime(pico, t + 0.02);
+      vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.20);
 
       osc.connect(vol).connect(ctx.destination);
       osc.start(t);
-      osc.stop(t + 0.16);
+      osc.stop(t + 0.21);
     }
   } catch (_) {
     // Navegador sem permissão de áudio: a faixa vermelha continua valendo.
@@ -1015,9 +1217,20 @@ function alternarSom() {
   txt($('btn-som-rot'), Estado.som ? 'Som: ligado' : 'Som: desligado');
   $('btn-som').setAttribute('aria-pressed', String(Estado.som));
 
+  // O painel pode estar aberto: a caixa mestre dele é o MESMO estado, e deixar
+  // as duas discordando faria a pessoa desconfiar de qual vale.
+  const caixa = $('al-ligado');
+  if (caixa) caixa.checked = Estado.som;
+
+  // Desligar o som tem de parar a repetição agora, e não na próxima leitura.
+  if (!Estado.som && Estado.timerRepeticao) {
+    clearInterval(Estado.timerRepeticao);
+    Estado.timerRepeticao = null;
+  }
+
   // Toca na hora de ligar: confirma que funciona, e o navegador exige um gesto
   // do usuário para liberar áudio — este clique é esse gesto.
-  if (Estado.som) apitar();
+  if (Estado.som) apitar('queda');
 }
 
 // -----------------------------------------------------------------------------
@@ -1383,8 +1596,11 @@ function desenharMaquinas() {
 
   const lista = filtrar();
 
+  const direitaTopo = $('frota-direita');
+  if (direitaTopo) direitaTopo.hidden = true;
+
   txt($('frota-titulo'),
-    Estado.modo === 'lojas' ? 'Lojas'
+    Estado.modo === 'lojas' ? 'Lojas monitoradas'
       : Estado.modo === 'tabela' ? 'Frota'
       : Estado.modo === 'heatmap' ? 'Parque inteiro' : 'Máquinas');
 
@@ -1411,8 +1627,11 @@ function desenharMaquinas() {
 
   const lojasVisiveis = new Set(lista.map((m) => m.site_code).filter(Boolean));
   const ruins = lista.filter((m) => ['offline', 'degradado'].includes(estadoDe(m))).length;
+  const cadencia = CFG.authMode === 'supabase' && CFG.realtime
+    ? 'leitura ao vivo'
+    : `leitura de ${Number(CFG.pollSeconds) || 20} s`;
   txt($('frota-sub'),
-    `${lojasVisiveis.size} loja(s) · ${lista.length} host(s)`
+    `${lojasVisiveis.size} loja(s) · ${lista.length} host(s) · ${cadencia}`
     + (ruins ? ` · ${ruins} pedindo atenção` : ''));
 
   if (Estado.modo === 'heatmap') {
@@ -1837,6 +2056,14 @@ function desenharCartoesDeLoja(conteudo, lista) {
   for (const l of aplicarOrdem(lojas)) grade.appendChild(cartaoLoja(l));
   ligarArrastarCartoes(grade);
   conteudo.appendChild(grade);
+
+  // Os selos contam TODAS as lojas desenhadas, inclusive as vazias, porque e
+  // isso que esta na tela. Contar a lista filtrada de maquinas daria outro
+  // numero e o cabecalho discordaria da grade.
+  const direita = $('frota-direita');
+  if (direita) direita.hidden = false;
+  desenharSelosDaFrota(lojas);
+  ligarDensidade();
 }
 
 /**
@@ -1886,6 +2113,46 @@ function acessarLoja(loja) {
  * de aparecer vazia ou com zero. Esta e a mesma regra da gaveta: o que nao foi
  * medido nao ocupa espaco afirmando nada.
  */
+/**
+ * A linha de SAUDE do disco, no formato das metricas do handoff.
+ *
+ * Devolve null quando NENHUMA maquina da loja tem vida restante medida. Isso e o
+ * caso normal hoje: a leitura exige agente ps-1.8.0 rodando como SYSTEM, e a
+ * maioria da frota ainda nao roda elevada. Uma linha "SAUDE —" em toda loja seria
+ * ruido constante prometendo um dado que nao existe.
+ */
+function linhaSaudeMetrica(loja) {
+  let pior = null;
+  let alvo = null;
+  for (const m of loja.maquinas) {
+    const w = m.disk_pior_wear_pct;
+    if (w === null || w === undefined) continue;
+    const vida = saudeDoDisco(Number(w));
+    if (pior === null || vida < pior) { pior = vida; alvo = m.label; }
+  }
+  if (pior === null) return null;
+
+  // A barra mostra o DESGASTE, nao a vida: barra cheia = disco no fim, que e a
+  // mesma logica do disco livre (valor = o que sobra, barra = o que foi gasto).
+  // Limiar 50 de desgaste = 50% de vida, o ponto em que a DS manda programar a
+  // troca -- o mesmo numero que ja pinta o texto de vermelho em tomSaude.
+  const desgaste = 100 - pior;
+
+  const linha = linhaMetrica({
+    rotulo: 'saúde',
+    nota: alvo || null,
+    valor: Math.round(pior) + '%',
+    sub: 'vida',
+    pct: desgaste,
+    limiar: 50,
+    corValor: tomSaude(pior),
+  });
+  linha.title = 'PIOR vida restante de disco da loja, em ' + (alvo || '?')
+    + '. É o que o próprio disco informa. Abaixo de 80% entre na fila de compra, '
+    + 'abaixo de 50% programe a troca. A barra mostra o desgaste.';
+  return linha;
+}
+
 function linhaSaudeDaLoja(loja) {
   let piorWear = null;
   let alvoWear = null;
@@ -2153,6 +2420,371 @@ const CHAVE_ABA = 'monitor.abaLojas';
  * Extraida para ca porque as abas e o cartao precisam concordar: se a aba disser
  * "atencao" e o cartao pintar "estavel", a tela se contradiz na cara de quem olha.
  */
+// ---------------------------------------------------------------------------
+// Densidade da grade de lojas (handoff: larguraMinima, default 300, 240..460)
+// ---------------------------------------------------------------------------
+// O operador escolhe entre ver mais lojas de uma vez ou ler numeros maiores. Fica
+// no localStorage do navegador junto com a ordem dos cartoes, porque e preferencia
+// de tela: quem olha numa TV de 55" quer outra densidade de quem olha num laptop,
+// e sao pessoas diferentes na MESMA conta.
+const CHAVE_LARGURA = 'monitor.larguraCartaoLoja';
+const LARGURA_MIN = 240;
+const LARGURA_MAX = 460;
+const LARGURA_PADRAO = 300;
+
+function larguraMinima() {
+  const n = Number(localStorage.getItem(CHAVE_LARGURA));
+  // Number('') e 0 e Number(null) e 0, entao o teste tem que ser a faixa, nao a
+  // existencia da chave. Um valor fora da faixa (mao no localStorage, ou uma
+  // versao futura com outros limites) volta para o padrao em vez de quebrar a
+  // grade com colunas de 0px.
+  if (!Number.isFinite(n) || n < LARGURA_MIN || n > LARGURA_MAX) return LARGURA_PADRAO;
+  return Math.round(n);
+}
+
+/** Aplica a largura na grade que ESTA na tela, sem redesenhar os cartoes. */
+function aplicarLargura(px) {
+  const grade = document.querySelector('.grade-lojas');
+  if (grade) grade.style.gridTemplateColumns = 'repeat(auto-fill, minmax(' + px + 'px, 1fr))';
+  const saida = $('frota-largura-val');
+  if (saida) txt(saida, String(px));
+}
+
+// -----------------------------------------------------------------------------
+// O painel de alertas
+// -----------------------------------------------------------------------------
+// Duas metades com donos diferentes: o SOM e deste navegador, as REGRAS sao do
+// servidor. A tela diz isso em texto, porque a consequencia e assimetrica --
+// mexer no som afeta quem esta olhando, mexer numa regra afeta a equipe inteira.
+async function abrirAlertas() {
+  $('modal-alertas-fundo').hidden = false;
+  $('modal-alertas').hidden = false;
+
+  const c = Estado.alerta || (Estado.alerta = lerAlerta());
+
+  $('al-ligado').checked = Estado.som;
+  $('al-volume').value = String(c.volume);
+  txt($('al-volume-val'), String(c.volume));
+  $('al-repetir').value = String(c.repetirMin);
+  $('al-falar').checked = c.falar;
+
+  // Aviso honesto: sem sintese de voz no navegador, a caixa fica desligada e
+  // dizendo por que. Um controle que nao faz nada e pior que controle nenhum.
+  const temVoz = !!(window.speechSynthesis && typeof SpeechSynthesisUtterance === 'function');
+  $('al-falar').disabled = !temVoz;
+  // textContent direto, e nao txt(): txt('') vira travessao de proposito nas
+  // metricas, e aqui um travessao solto ao lado do botao de teste nao quer dizer
+  // nada. Nota vazia tem de ficar vazia.
+  $('al-aviso-som').textContent = temVoz ? '' : 'Este navegador não fala em voz alta.';
+
+  // As regras vem do servidor ANTES de desenhar os tipos: a lista de tipos que
+  // podem soar e derivada delas, para nao existir na tela um tipo que o servidor
+  // nao avalia -- nem faltar um que ele avalia.
+  let regras = [];
+  try {
+    regras = await rpc('regras_de_alerta');
+  } catch (e) {
+    console.warn('[monitor] regras de alerta indisponíveis:', e.message);
+  }
+  Estado.regrasDeAlerta = Array.isArray(regras) ? regras : [];
+
+  desenharTiposDeAlerta();
+  desenharRegrasDeAlerta();
+}
+
+function fecharAlertas() {
+  $('modal-alertas').hidden = true;
+  $('modal-alertas-fundo').hidden = true;
+}
+
+/** As caixas de "tocar para", uma por tipo que o servidor avalia. */
+function desenharTiposDeAlerta() {
+  const caixa = $('al-tipos-lista');
+  limpar(caixa);
+
+  const c = Estado.alerta;
+  const regras = Estado.regrasDeAlerta;
+
+  if (regras.length === 0) {
+    // Diz o que fazer, e nao so que falhou. Este e o estado exato de um servidor
+    // que ainda nao recebeu a migracao 0043, e sem o nome dela na tela a pessoa
+    // nao tem como ligar uma coisa na outra.
+    caixa.appendChild(el('p', 'al-nota',
+      'O servidor não respondeu regras_de_alerta. O som continua valendo para os '
+      + 'tipos já escolhidos, mas escolher outros exige a migração 0043 aplicada.'));
+    return;
+  }
+
+  // Critico primeiro: e a ordem em que a pessoa quer decidir.
+  const ordenadas = [...regras].sort((a, b) =>
+    (a.severidade === 'critical' ? 0 : 1) - (b.severidade === 'critical' ? 0 : 1)
+    || String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
+
+  for (const r of ordenadas) {
+    const id = 'al-tipo-' + r.kind;
+    const rot = el('label', 'al-tipo' + (r.severidade === 'critical' ? ' al-tipo-crit' : ''));
+    rot.setAttribute('for', id);
+
+    const cx = el('input');
+    cx.type = 'checkbox';
+    cx.id = id;
+    cx.checked = c.tipos.includes(r.kind);
+    // Regra desativada no servidor nunca vai gerar alerta: a caixa fica
+    // desligada e o texto explica, em vez de prometer um som que nao vem.
+    cx.disabled = !r.ativa;
+    cx.addEventListener('change', () => {
+      const atual = new Set(Estado.alerta.tipos);
+      if (cx.checked) atual.add(r.kind); else atual.delete(r.kind);
+      guardarAlerta({ ...Estado.alerta, tipos: [...atual] });
+    });
+
+    rot.appendChild(cx);
+    const texto = el('span', 'al-tipo-txt');
+    texto.appendChild(el('span', 'al-tipo-nome', r.nome));
+    texto.appendChild(el('span', 'al-tipo-sub',
+      r.ativa ? (r.severidade === 'critical' ? 'crítico' : 'aviso') : 'regra desativada'));
+    rot.appendChild(texto);
+    rot.title = r.explicacao || r.nome;
+
+    caixa.appendChild(rot);
+  }
+}
+
+/** A tabela de regras do servidor. Somente admin pode salvar. */
+function desenharRegrasDeAlerta() {
+  const caixa = $('al-regras');
+  limpar(caixa);
+
+  // `Estado.ehAdmin`, e não um `Estado.papel` que eu supus existir: é o campo que
+  // o resto do painel usa (o botão de Usuários e a zona de perigo). Inventar um
+  // segundo nome deixaria o editor de regras cinza para o próprio admin.
+  const admin = Estado.ehAdmin === true;
+  const regras = Estado.regrasDeAlerta;
+
+  if (regras.length === 0) {
+    caixa.appendChild(el('p', 'al-nota',
+      'O servidor não respondeu regras_de_alerta. Falta aplicar a migração 0043 '
+      + '— e é ela que também agenda a avaliação dos alertas.'));
+    return;
+  }
+
+  if (!admin) {
+    caixa.appendChild(el('p', 'al-nota',
+      'Somente administradores alteram as regras. Abaixo, como elas estão hoje.'));
+  }
+
+  for (const r of regras) {
+    const linha = el('div', 'al-regra' + (r.ativa ? '' : ' al-regra-off'));
+
+    const topo = el('div', 'al-regra-topo');
+    const nome = el('div', 'al-regra-nome');
+    nome.appendChild(el('strong', null, r.nome));
+    nome.appendChild(el('span', 'al-regra-sev al-regra-sev-' + r.severidade,
+      r.severidade === 'critical' ? 'crítico' : r.severidade === 'warning' ? 'aviso' : 'info'));
+    topo.appendChild(nome);
+
+    const chave = el('label', 'al-chave');
+    chave.setAttribute('for', 'al-ativa-' + r.kind);
+    const cxA = el('input');
+    cxA.type = 'checkbox';
+    cxA.id = 'al-ativa-' + r.kind;
+    cxA.checked = !!r.ativa;
+    cxA.disabled = !admin;
+    chave.appendChild(cxA);
+    chave.appendChild(el('span', null, 'ativa'));
+    topo.appendChild(chave);
+    linha.appendChild(topo);
+
+    linha.appendChild(el('p', 'al-regra-exp', r.explicacao || ''));
+
+    const campos = el('div', 'al-campos');
+
+    // Limiar: ausente de propósito quando a regra não tem um. Um campo vazio e
+    // editável ali sugeriria que o tempo de offline se ajusta aqui, e ele vem de
+    // app_settings.offline_timeout_seconds.
+    let cLimiar = null;
+    if (!r.sem_limiar) {
+      cLimiar = campoDeRegra('limiar', r.limiar, r.unidade || '', admin);
+      campos.appendChild(cLimiar.caixa);
+    }
+
+    const cCiclos = campoDeRegra('amostras seguidas', r.ciclos, '', admin);
+    campos.appendChild(cCiclos.caixa);
+
+    const cCool = campoDeRegra('silêncio', r.cooldown_min, 'min', admin);
+    campos.appendChild(cCool.caixa);
+
+    linha.appendChild(campos);
+
+    if (admin) {
+      const acoes = el('div', 'al-regra-acoes');
+      const salvar = el('button', 'btn-secundario', 'Salvar');
+      salvar.type = 'button';
+      const nota = el('span', 'al-nota');
+
+      salvar.addEventListener('click', async () => {
+        salvar.disabled = true;
+        txt(nota, 'salvando…');
+        try {
+          const r2 = await rpc('editar_regra_de_alerta', {
+            p_rule_id: r.rule_id,
+            // null significa "não mexi": mandar o valor atual seria igual, mas
+            // um campo em branco viraria 0 e apagaria a configuração.
+            p_limiar: cLimiar ? numeroOuNulo(cLimiar.entrada.value) : null,
+            p_ciclos: numeroOuNulo(cCiclos.entrada.value),
+            p_cooldown_min: numeroOuNulo(cCool.entrada.value),
+            p_ativa: cxA.checked,
+          });
+          const mudou = Object.keys(r2?.mudou || {}).length;
+          txt(nota, mudou ? 'salvo' : 'nada mudou');
+          brinde(mudou ? 'Regra "' + r.nome + '" salva.' : 'Nada a mudar em "' + r.nome + '".');
+          // Relê do servidor: o que vale é o que ele gravou, não o que eu digitei.
+          Estado.regrasDeAlerta = await rpc('regras_de_alerta');
+          desenharTiposDeAlerta();
+          desenharRegrasDeAlerta();
+        } catch (e) {
+          nota.textContent = '';
+          brinde(e.message || 'não consegui salvar a regra', true);
+          salvar.disabled = false;
+        }
+      });
+
+      acoes.appendChild(salvar);
+      acoes.appendChild(nota);
+      linha.appendChild(acoes);
+    }
+
+    caixa.appendChild(linha);
+  }
+}
+
+/** Um campo numérico com rótulo e unidade. */
+function campoDeRegra(rotulo, valor, unidade, editavel) {
+  const caixa = el('label', 'al-campo');
+  caixa.appendChild(el('span', 'al-campo-rot', rotulo));
+
+  const linha = el('span', 'al-campo-linha');
+  const entrada = el('input');
+  entrada.type = 'number';
+  entrada.className = 'mono';
+  entrada.value = valor === null || valor === undefined ? '' : String(valor);
+  entrada.disabled = !editavel;
+  linha.appendChild(entrada);
+  if (unidade) linha.appendChild(el('span', 'al-campo-un', unidade));
+
+  caixa.appendChild(linha);
+  return { caixa, entrada };
+}
+
+/** '' vira null, e não 0 — a diferença entre "não mexi" e "zero". */
+function numeroOuNulo(v) {
+  const t = String(v).trim();
+  if (t === '') return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function ligarPainelDeAlertas() {
+  $('btn-alertas').addEventListener('click', abrirAlertas);
+  $('btn-fechar-alertas').addEventListener('click', fecharAlertas);
+  $('modal-alertas-fundo').addEventListener('click', fecharAlertas);
+
+  // A caixa mestre e o botão da lateral são o MESMO estado. Chamar alternarSom
+  // em vez de escrever Estado.som aqui garante que o rótulo do botão, o
+  // aria-pressed, o localStorage e a parada da repetição aconteçam nos dois
+  // caminhos — foi por caminhos duplicados assim que a ordem dos cartões e o
+  // filtro de loja já divergiram antes.
+  $('al-ligado').addEventListener('change', () => {
+    if ($('al-ligado').checked !== Estado.som) alternarSom();
+  });
+
+  $('al-volume').addEventListener('input', () => {
+    const v = Math.max(5, Math.min(100, Number($('al-volume').value) || 35));
+    txt($('al-volume-val'), String(v));
+    guardarAlerta({ ...Estado.alerta, volume: v });
+  });
+
+  // Toca ao SOLTAR o controle, não a cada pixel: seguir o arraste com um bipe
+  // por evento seria uma metralhadora.
+  $('al-volume').addEventListener('change', () => { if (Estado.som) apitar('aviso'); });
+
+  $('al-repetir').addEventListener('change', () => {
+    guardarAlerta({ ...Estado.alerta, repetirMin: Number($('al-repetir').value) || 0 });
+    // Aplica agora, sem esperar a próxima leitura.
+    ajustarRepeticao((Estado.incidentes?.lista || [])
+      .filter((a) => a.severity === 'critical' && !a.reconhecido));
+  });
+
+  $('al-falar').addEventListener('change', () => {
+    guardarAlerta({ ...Estado.alerta, falar: $('al-falar').checked });
+  });
+
+  // O teste usa o toque de QUEDA e um nome de exemplo: é o aviso que importa
+  // acertar, e é ele que a pessoa precisa reconhecer de longe.
+  $('btn-testar-som').addEventListener('click', () => {
+    if (!Estado.som) alternarSom();
+    else {
+      apitar('queda');
+      anunciar([{ kind: 'offline', label: 'Servidor de teste' }]);
+    }
+  });
+}
+
+function ligarDensidade() {
+  const faixa = $('frota-largura');
+  if (!faixa) return;
+  faixa.value = String(larguraMinima());
+  // 'input' e nao 'change': o cartao acompanha o arraste do controle, que e como
+  // se escolhe densidade -- olhando o resultado, nao adivinhando o numero.
+  faixa.addEventListener('input', () => {
+    const px = Math.max(LARGURA_MIN, Math.min(LARGURA_MAX, Number(faixa.value) || LARGURA_PADRAO));
+    localStorage.setItem(CHAVE_LARGURA, String(px));
+    aplicarLargura(px);
+  });
+  aplicarLargura(larguraMinima());
+}
+
+/**
+ * Os tres contadores do cabecalho: estaveis, em atencao, incidentes.
+ *
+ * Usa situacaoDaLoja, a MESMA funcao que pinta a faixa lateral do cartao. Se eu
+ * contasse aqui por conta propria, o cabecalho poderia dizer "2 incidentes" com
+ * tres faixas vermelhas na tela -- o tipo de divergencia que faz o operador
+ * parar de acreditar no painel inteiro.
+ */
+function desenharSelosDaFrota(lojas) {
+  const caixa = $('frota-selos');
+  if (!caixa) return;
+  limpar(caixa);
+
+  const conta = { estavel: 0, atencao: 0, incidente: 0, parada: 0 };
+  for (const l of lojas) conta[situacaoDaLoja(l)] = (conta[situacaoDaLoja(l)] || 0) + 1;
+
+  const selos = [
+    ['ok', conta.estavel, 'estáveis', 'Lojas com todas as máquinas reportando e sem alerta.'],
+    ['alerta', conta.atencao, 'em atenção', 'Lojas com máquina online mas com algo errado.'],
+    ['ruim', conta.incidente, 'incidente', 'Lojas com pelo menos uma máquina sem contato.'],
+  ];
+
+  for (const [tom, n, rot, dica] of selos) {
+    // 'zero' apaga o selo quando o valor e 0: "0 incidente" em vermelho aceso
+    // grita um problema que nao existe.
+    const s = el('span', 'sf-selo sf-selo-' + tom + (n === 0 ? ' sf-selo-zero' : ''));
+    s.appendChild(el('strong', 'mono', String(n)));
+    s.appendChild(el('span', null, rot));
+    s.title = dica;
+    caixa.appendChild(s);
+  }
+
+  if (conta.parada > 0) {
+    const s = el('span', 'sf-selo sf-selo-parada');
+    s.appendChild(el('strong', 'mono', String(conta.parada)));
+    s.appendChild(el('span', null, conta.parada === 1 ? 'sem dados' : 'sem dados'));
+    s.title = 'Lojas sem máquina cadastrada, ou cujas máquinas nunca reportaram.';
+    caixa.appendChild(s);
+  }
+}
+
 function situacaoDaLoja(loja) {
   let online = 0; let offline = 0; let degradado = 0;
   for (const m of loja.maquinas) {
@@ -2294,6 +2926,157 @@ function ligarAbasDoCartao(c, loja, painelEstado, painelSaude) {
   mostrar(ativa);
 }
 
+// ---------------------------------------------------------------------------
+// Linha de metrica com barra no fundo (handoff: grade de lojas v3)
+// ---------------------------------------------------------------------------
+// A barra vive ATRAS do texto, nao abaixo dele. Isso e o que devolve espaco: o
+// mesmo pixel carrega o numero e a proporcao, em vez de empilhar dois elementos.
+//
+// A REGRA DE COR E OBRIGATORIA e vem da DS: vermelho so para offline e limiar
+// estourado. Loja saudavel nunca tem barra vermelha -- se tivesse, o vermelho
+// pararia de significar "olhe aqui".
+//
+// 'limiar' 101 = sem limiar efetivo. E o caso do ONLINE: 100% e a situacao boa e
+// tem que ficar neutra, entao nenhuma porcentagem alcanca o limiar.
+function linhaMetrica({ rotulo, nota, valor, sub, pct, limiar = 101, corValor = null }) {
+  const linha = el('div', 'cl-met');
+
+  const temBarra = pct !== null && pct !== undefined;
+  const estourou = temBarra && Number(pct) >= limiar;
+
+  if (temBarra) {
+    const p = Math.max(0, Math.min(100, Number(pct)));
+
+    const fundo = el('div', 'cl-met-fundo' + (estourou ? ' cl-met-fundo-ruim' : ''));
+    fundo.style.width = p + '%';
+    linha.appendChild(fundo);
+
+    // Marcador de ponta: 1px onde a barra termina. Sem ele, barras de 8% e 12%
+    // sao indistinguiveis num cartao de 300px.
+    const ponta = el('div', 'cl-met-ponta' + (estourou ? ' cl-met-ponta-ruim' : ''));
+    ponta.style.left = p + '%';
+    linha.appendChild(ponta);
+  }
+
+  const dentro = el('div', 'cl-met-dentro');
+
+  const esq = el('div', 'cl-met-esq');
+  esq.appendChild(el('span', 'cl-met-rot', rotulo));
+  if (nota) esq.appendChild(el('span', 'cl-met-nota mono', nota));
+  dentro.appendChild(esq);
+
+  const dir = el('div', 'cl-met-dir');
+  if (sub) dir.appendChild(el('span', 'cl-met-sub mono', sub));
+  const v = el('span', 'cl-met-val mono', valor);
+  if (corValor) v.style.color = corValor;
+  dir.appendChild(v);
+  dentro.appendChild(dir);
+
+  linha.appendChild(dentro);
+  return linha;
+}
+
+/** Quantos volumes desta loja estao fora do acompanhamento, e quais. */
+function volumesForaDaLoja(loja) {
+  let quantos = 0;
+  const quais = [];
+  for (const m of loja.maquinas) {
+    const n = Number(m.disk_volumes_fora || 0);
+    if (!n) continue;
+    quantos += n;
+    // O nome da maquina junto: numa loja com quatro PCs, "D:" sozinho nao diz
+    // onde procurar.
+    if (m.disk_drives_fora) quais.push(m.label + ' ' + m.disk_drives_fora);
+  }
+  return { quantos, quais };
+}
+
+// Teto de linhas de disco por cartao.
+//
+// Uma loja com quatro maquinas de dois volumes daria oito linhas, e o cartao
+// deixaria de caber na grade -- o proposito da grade e achar a loja com problema
+// de relance, nao ler um inventario. Seis cobre o caso real desta frota (servidor
+// com C: e D:, mais os PDVs) e as sobras aparecem contadas, nunca escondidas em
+// silencio.
+const TETO_LINHAS_DISCO = 6;
+
+/**
+ * Todos os volumes acompanhados da loja, achatados e do pior para o melhor.
+ *
+ * A coluna disk_volumes chega da view por maquina; aqui as maquinas viram uma
+ * lista so, porque o cartao e da LOJA. O rotulo da maquina viaja junto para a
+ * linha poder dizer de quem e o disco quando a loja tem mais de uma.
+ */
+function volumesDaLoja(loja) {
+  const todos = [];
+  for (const m of loja.maquinas) {
+    const vs = Array.isArray(m.disk_volumes) ? m.disk_volumes : null;
+    if (!vs) continue;
+    for (const v of vs) todos.push({ ...v, maquina: m.label, machine_id: m.machine_id });
+  }
+  // Reordena a lista JUNTA: cada maquina ja vem ordenada de dentro do banco, mas
+  // duas maquinas concatenadas nao ficam ordenadas entre si.
+  todos.sort((a, b) => (a.free_pct ?? 100) - (b.free_pct ?? 100)
+    || String(a.maquina).localeCompare(String(b.maquina), 'pt-BR')
+    || String(a.drive).localeCompare(String(b.drive), 'pt-BR'));
+  return todos;
+}
+
+/**
+ * Uma linha de metrica por volume.
+ *
+ * Mesmas regras da linha agregada que ela substitui: o VALOR mostra o livre, a
+ * BARRA mostra o uso, e as duas viram vermelhas no MESMO ponto.
+ */
+function linhasDeDisco(loja, volumes, discoVelho) {
+  // O nome da maquina so entra quando a loja tem disco de mais de uma: numa loja
+  // de um servidor so, repetir o nome em cada linha e ruido.
+  const varias = new Set(volumes.map((v) => v.machine_id)).size > 1;
+
+  const linhas = [];
+  for (const v of volumes.slice(0, TETO_LINHAS_DISCO)) {
+    const livre = v.free_pct === null || v.free_pct === undefined ? null : Number(v.free_pct);
+    const uso = livre === null ? null : 100 - livre;
+
+    const l = linhaMetrica({
+      rotulo: 'disco ' + (v.drive || '?'),
+      nota: [
+        uso === null ? null : 'uso ' + Math.round(uso) + '%',
+        varias ? v.maquina : null,
+      ].filter(Boolean).join(' · ') || null,
+      valor: livre === null ? '—' : (gb(v.free_gb) ?? Math.round(livre) + '%'),
+      sub: gbNu(v.total_gb) ? 'de ' + gbNu(v.total_gb) : null,
+      pct: uso,
+      limiar: 100 - PISO_DISCO_ATENCAO,
+      corValor: livre === null ? null : tomDisco(livre),
+    });
+
+    l.title = 'Espaço LIVRE em ' + (v.drive || 'volume') + ' de ' + v.maquina
+      + (v.etiqueta ? ' (' + v.etiqueta + ')' : '')
+      + '. A barra mostra o USO. Vermelho abaixo de ' + PISO_DISCO_ATENCAO + '% livre.'
+      + (discoVelho ? ' Esta máquina parou de reportar: leitura antiga.' : '');
+    linhas.push(l);
+  }
+
+  // O que nao caber e CONTADO. Cortar em silencio faria o cartao parecer completo
+  // quando nao esta -- e um volume cheio poderia estar justamente na sobra.
+  const resto = volumes.length - linhas.length;
+  if (resto > 0) {
+    const mais = el('div', 'cl-mais',
+      '+' + resto + (resto === 1 ? ' outro volume' : ' outros volumes'));
+    mais.title = 'Não couberam no cartão: '
+      + volumes.slice(TETO_LINHAS_DISCO)
+          .map((v) => v.maquina + ' ' + v.drive
+            + (v.free_pct === null || v.free_pct === undefined
+                ? '' : ' (' + Math.round(Number(v.free_pct)) + '% livre)'))
+          .join('; ')
+      + '. Abra a máquina para ver todos.';
+    linhas.push(mais);
+  }
+
+  return linhas;
+}
+
 function cartaoLoja(loja) {
   const estados = loja.maquinas.map(estadoDe);
   const offline = estados.filter((e) => e === 'offline').length;
@@ -2365,7 +3148,6 @@ function cartaoLoja(loja) {
   acoes.appendChild(lixeira);
 
   cab.appendChild(acoes);
-  c.appendChild(cab);
 
   // ------------------------------------------------------------- heatmap
   const mapa = el('div', 'mapa-hosts');
@@ -2411,7 +3193,7 @@ function cartaoLoja(loja) {
     q.addEventListener('click', () => abrirPainel(m));
     mapa.appendChild(q);
   }
-  c.appendChild(mapa);
+
 
   // -------------------------------------------------------------- números
   const medias = (campo) => {
@@ -2447,73 +3229,140 @@ function cartaoLoja(loja) {
   const discoVelho = pior !== null
     && !['online', 'degradado'].includes(estadoDe(pior));
 
-  const cels = el('div', 'cl-celulas');
+  const cels = el('div', 'cl-metricas');
 
-  cels.appendChild(celula(
-    'online', `${online + degradado}/${loja.maquinas.length}`,
-    offline > 0 ? 'ruim' : null,
-    `${online + degradado} de ${loja.maquinas.length} maquina(s) reportando. `
-    + 'Conta as degradadas, que respondem mas tem algo errado.'));
+  const total = loja.maquinas.length;
+  const noAr = online + degradado;
 
-  cels.appendChild(celula(
-    'cpu', cpu === null ? '—' : `${Math.round(cpu)}%`,
-    cpu !== null && cpu >= TETO_CPU ? 'alerta' : null,
-    cpu === null
-      ? 'Nenhuma maquina online agora, entao nao ha uso de CPU para medir.'
-      : `Media de uso de CPU das maquinas online. Fica ambar a partir de ${TETO_CPU}%.`));
+  // ONLINE: barra = fracao no ar, SEM limiar efetivo (101). 100% e o caso bom e
+  // tem que ficar neutro -- barra cheia vermelha em loja saudavel seria absurdo.
+  const lOnline = linhaMetrica({
+    rotulo: 'online',
+    valor: `${noAr}/${total}`,
+    sub: total === 1 ? '1 máquina' : `${total} máquinas`,
+    pct: total > 0 ? (noAr / total) * 100 : null,
+    limiar: 101,
+    corValor: situacao === 'incidente' ? 'var(--crit)' : null,
+  });
+  lOnline.title = `${noAr} de ${total} máquina(s) reportando. `
+    + 'Conta as degradadas, que respondem mas têm algo errado.';
+  cels.appendChild(lOnline);
 
-  cels.appendChild(celula(
-    'disco livre',
-    // GB primeiro, porcentagem no title. "24 GB de 238" nao precisa de conta;
-    // "10%" precisa saber o tamanho do disco para significar alguma coisa.
-    discoMin === null ? '—' : (gb(pior.disk_worst_free_gb) ?? `${Math.round(discoMin)}%`),
-    discoMin === null ? null : discoMin <= PISO_DISCO ? 'ruim' : discoMin <= PISO_DISCO_ATENCAO ? 'alerta' : null,
-    discoMin === null
-      ? 'Nenhuma maquina desta loja reportou disco ainda.'
-      : `Espaco LIVRE no volume mais apertado da loja: ${pior.disk_worst_drive || 'volume'} `
-        + `de ${pior.label}, com ${gb(pior.disk_worst_free_gb) ?? '?'} livres `
-        + `de ${gbNu(pior.disk_worst_total_gb) ?? '?'} (${Math.round(discoMin)}%). `
-        + `Quanto MENOR, pior: ambar abaixo de ${PISO_DISCO_ATENCAO}%, vermelho abaixo de ${PISO_DISCO}%.`
-        // Um numero que muda sem explicacao e pior que um numero errado: se o
-        // servidor descartou um volume, a tela diz isso em vez de simplesmente
-        // mostrar outro numero do que mostrava ontem.
-        + (pior.disk_volumes_ignorados > 0
-            ? ` ${pior.disk_volumes_ignorados} volume(s) pequeno(s) fora da conta `
-              + '(recuperacao, EFI, reservada do sistema): vivem cheios por natureza.'
-            : '')
-        // `desdeQuando` ja devolve "ha 4h": juntar "de ... atras" em volta
-        // produzia "leitura de ha 4h atras".
-        + (discoVelho
-            ? ` Esta maquina parou de reportar: ultima leitura ${desdeQuando(pior.seconds_since_seen, estadoDe(pior))}, nao de agora.`
-            : ''),
-    discoVelho,
-    discoMin === null ? null : `de ${gbNu(pior.disk_worst_total_gb) ?? '?'}`));
+  // CPU: limiar 90 na barra; o VALOR fica ambar a partir de 80. Sao dois avisos
+  // diferentes de proposito -- o texto avisa antes da barra ficar vermelha.
+  const lCpu = linhaMetrica({
+    rotulo: 'cpu',
+    valor: cpu === null ? '—' : `${Math.round(cpu)}%`,
+    pct: cpu === null ? null : cpu,
+    limiar: 90,
+    corValor: cpu !== null && cpu >= TETO_CPU ? 'var(--warn)' : null,
+  });
+  lCpu.title = cpu === null
+    ? 'Nenhuma máquina online agora, então não há uso de CPU para medir.'
+    : `Média de uso de CPU das máquinas online. Âmbar a partir de ${TETO_CPU}%.`;
+  cels.appendChild(lCpu);
 
-  cels.appendChild(celula(
-    'rtt', rtt === null ? '—' : `${Math.round(rtt)}ms`, null,
-    rtt === null
-      ? 'Nenhuma maquina online agora, entao nao ha latencia para medir.'
-      : 'Tempo de ida e volta ate o roteador da loja, medido pelas maquinas online. '
-        + 'Mede a rede DE DENTRO da loja, nao a internet.'));
+  // DISCO LIVRE: valor = livre, barra = USO. Ver o comentario acima.
+  const usoDisco = discoMin === null ? null : 100 - discoMin;
+  const discoBaixo = discoMin !== null && discoMin < PISO_DISCO_ATENCAO;
 
-  // ESTADO fica no primeiro painel; SAUDE no segundo. Ver ligarAbasDoCartao.
-  const painelEstado = el('div', 'ca-painel');
-  painelEstado.appendChild(cels);
+  // Volumes que alguem tirou da conta. Entra na nota da linha, junto do uso: e o
+  // lugar onde a pessoa esta olhando quando le o numero do disco.
+  const fora = volumesForaDaLoja(loja);
 
-  const painelSaude = el('div', 'ca-painel');
-  const saude = linhaSaudeDaLoja(loja);
-  if (saude) {
-    painelSaude.appendChild(saude);
+  const lDisco = linhaMetrica({
+    rotulo: 'disco livre',
+    // Montada por partes e unida no fim, e NÃO concatenada com `+`: em
+    // JavaScript `null + ''` é a string "null", e a primeira versão disto
+    // escreveu "DISCO LIVRE null" em todo cartão sem leitura de disco. Com
+    // partes, nota vazia continua null e a linha não mostra nota nenhuma.
+    //
+    // Sem leitura de disco E com volume fora, sobra só "1 fora" — que é o caso de
+    // quem desmarcou todos os volumes, e é justamente quando a explicação importa.
+    nota: [
+      usoDisco === null ? null : 'uso ' + Math.round(usoDisco) + '%',
+      fora.quantos > 0 ? fora.quantos + ' fora' : null,
+    ].filter(Boolean).join(' · ') || null,
+    valor: discoMin === null ? '—'
+      : (gb(pior.disk_worst_free_gb) ?? Math.round(discoMin) + '%'),
+    sub: discoMin === null ? null : (gbNu(pior.disk_worst_total_gb) ? 'de ' + gbNu(pior.disk_worst_total_gb) : null),
+    pct: usoDisco,
+    // Limiar em USO equivalente a 20% de livre: barra e texto viram vermelhos
+    // no MESMO ponto, como o handoff exige.
+    limiar: 100 - PISO_DISCO_ATENCAO,
+    corValor: discoMin === null ? null : tomDisco(discoMin),
+  });
+
+  const avisoFora = fora.quantos === 0 ? ''
+    : ' ' + fora.quantos + ' volume(s) FORA do acompanhamento, e portanto fora deste '
+      + 'número e dos alertas: ' + fora.quais.join('; ')
+      + '. Abra a máquina para rever.';
+
+  // UMA LINHA POR VOLUME quando a view mandou os volumes; a linha agregada abaixo
+  // continua existindo como reserva, para o servidor que ainda nao tem a 0045 --
+  // publicar o painel antes da migracao nao pode apagar o disco da tela.
+  const volumes = volumesDaLoja(loja);
+
+  if (discoMin !== null) {
+    lDisco.title = 'Espaço LIVRE no volume mais apertado da loja: '
+      + (pior.disk_worst_drive || 'volume') + ' de ' + pior.label
+      + '. A barra mostra o USO. Vermelho abaixo de ' + PISO_DISCO_ATENCAO + '% livre.'
+      + (discoVelho ? ' Esta máquina parou de reportar: leitura antiga.' : '')
+      + avisoFora;
+  } else if (fora.quantos > 0) {
+    // O caso que me faria desconfiar da tela: nenhum número de disco E volumes
+    // desmarcados. Sem esta dica, o travessão pareceria falta de leitura do
+    // agente, e alguém iria caçar um problema que não existe.
+    lDisco.title = 'Sem número de disco porque TODOS os volumes acompanhados foram '
+      + 'desmarcados.' + avisoFora;
+  }
+  if (volumes.length > 0) {
+    for (const l of linhasDeDisco(loja, volumes, discoVelho)) cels.appendChild(l);
   } else {
-    // Sem medida, a aba DIZ isso. Painel vazio faria a pessoa clicar de novo
-    // achando que nao carregou.
-    painelSaude.appendChild(el('p', 'ca-sem',
-      'Sem leitura de saude ainda. Exige agente ps-1.8.0 e privilegio de sistema.'));
+    cels.appendChild(lDisco);
   }
 
-  c.appendChild(painelEstado);
-  c.appendChild(painelSaude);
-  ligarAbasDoCartao(c, loja, painelEstado, painelSaude);
+  // RTT sem barra: latencia nao tem escala de 0 a 100. 1ms e 40ms sao ambos
+  // normais dependendo da loja, e barra sem escala honesta e decoracao.
+  const lRtt = linhaMetrica({
+    rotulo: 'rtt',
+    valor: rtt === null ? '—' : Math.round(rtt) + 'ms',
+    pct: null,
+  });
+  lRtt.title = rtt === null
+    ? 'Nenhuma máquina online agora, então não há latência para medir.'
+    : 'Ida e volta até o roteador da loja. Mede a rede DE DENTRO, não a internet.';
+  cels.appendChild(lRtt);
+
+  // SAUDE entra DEPOIS das quatro do handoff e so quando ha medida. Ver o
+  // comentario em linhaSaudeMetrica.
+  const lSaude = linhaSaudeMetrica(loja);
+  if (lSaude) cels.appendChild(lSaude);
+
+  // ------------------------------------------------ as duas colunas do cartao
+  // Handoff v3: 96px de estado a esquerda, dados a direita. As abas que eu tinha
+  // feito saem: elas davam espaco ESCONDENDO metade dos dados, e o layout de duas
+  // colunas da o mesmo espaco mostrando tudo.
+  const colEsq = el('div', 'cl-col-estado');
+  colEsq.appendChild(el('i', `cl-faixa cl-faixa-${situacao}`));
+  colEsq.appendChild(mapa);
+
+  const rodape = el('div', 'cl-fracao');
+  const fr = el('div', 'cl-fracao-n mono',
+    `${online + degradado}/${loja.maquinas.length}`);
+  // Vermelho no numero SO em incidente. Loja com 4/4 nao pode ter numero
+  // vermelho, senao o olho para de confiar na cor.
+  if (situacao === 'incidente') fr.style.color = 'var(--crit)';
+  rodape.appendChild(fr);
+  rodape.appendChild(el('div', 'cl-fracao-rot', 'ONLINE'));
+  colEsq.appendChild(rodape);
+
+  const colDir = el('div', 'cl-col-dados');
+  colDir.appendChild(cab);
+  colDir.appendChild(cels);
+
+  c.appendChild(colEsq);
+  c.appendChild(colDir);
 
   // Clique em qualquer lugar do cartao entra na loja.
   //
@@ -3514,6 +4363,59 @@ function celulaDisco(rotulo, valor, cor) {
   return d;
 }
 
+/**
+ * O interruptor de "acompanhar este volume".
+ *
+ * Fica na linha do disco, e nao num painel separado de configuracao: a decisao
+ * depende de olhar o numero do volume ("este D: vive em 4% porque e backup"), e
+ * uma tela de configuracao longe do numero obrigaria a pessoa a decidir de
+ * memoria.
+ *
+ * So aparece para admin. Para os outros, o estado ainda e visivel (a linha entra
+ * apagada, com a marca "fora do acompanhamento"), porque quem olha precisa saber
+ * que o cartao esta ignorando um volume mesmo sem poder mudar isso.
+ */
+function interruptorDoVolume(machineId, k, aoMudar) {
+  const cx = el('input');
+  cx.type = 'checkbox';
+  cx.checked = k.acompanhando !== false;
+  cx.id = 'vol-' + machineId + '-' + String(k.drive || '').replace(/[^A-Za-z0-9]/g, '');
+
+  const rot = el('label', 'disco-acomp');
+  rot.setAttribute('for', cx.id);
+  rot.appendChild(cx);
+  rot.appendChild(el('span', null, 'acompanhar'));
+  rot.title = 'Desmarcado, este volume sai do número do cartão E dos alertas de '
+    + 'disco. Serve para um volume que vive cheio de propósito, como um D: de '
+    + 'backup, que senão mantém a loja em atenção para sempre.';
+
+  cx.addEventListener('change', async () => {
+    cx.disabled = true;
+    const queria = cx.checked;
+    try {
+      const r = await rpc('definir_volume_acompanhado', {
+        p_machine_id: machineId,
+        p_drive: k.drive,
+        p_acompanhar: queria,
+      });
+      // O aviso do servidor vai para a tela como ele veio. É o caso de desmarcar
+      // o último volume: a máquina deixa de ter alerta de disco, e quem fez isso
+      // precisa saber -- o servidor não recusa, então a tela não pode calar.
+      if (r?.aviso) brinde(r.aviso, true);
+      else brinde((queria ? 'Acompanhando ' : 'Fora do acompanhamento: ') + (r?.drive || k.drive));
+      if (typeof aoMudar === 'function') await aoMudar();
+    } catch (e) {
+      // Volta a caixa ao que o servidor tem, e não ao que a pessoa clicou: sem
+      // isto a tela mostraria uma escolha que não foi gravada.
+      cx.checked = !queria;
+      cx.disabled = false;
+      brinde(e.message || 'não consegui mudar o acompanhamento', true);
+    }
+  });
+
+  return rot;
+}
+
 async function desenharDiscos(machineId) {
   const secao = $('secao-discos');
   const caixa = $('painel-discos');
@@ -3546,6 +4448,10 @@ async function desenharDiscos(machineId) {
     // Particao de servico entra apagada: ela nao decide nada, mas esconde-la
     // faria a soma dos discos nao fechar com o que o Windows mostra.
     if (k.pequeno) linha.classList.add('disco-pequeno');
+    // Volume DESMARCADO tambem entra apagado, mas por outro motivo e com outra
+    // marca: "pequeno" e heuristica do sistema, "fora" e escolha de alguem. A
+    // tela distingue os dois porque a acao para consertar cada um e diferente.
+    if (k.acompanhando === false) linha.classList.add('disco-fora');
 
     const ident = el('div', 'disco-id');
     ident.appendChild(el('div', 'disco-letra', k.drive || '?'));
@@ -3618,6 +4524,38 @@ async function desenharDiscos(machineId) {
         + 'quem avisa antes e o desgaste.';
     }
     linha.appendChild(selo);
+
+    // O rodapé da linha: por que este volume está fora, e o interruptor.
+    const pe = el('div', 'disco-pe');
+    if (k.acompanhando === false) {
+      pe.appendChild(el('span', 'disco-marca-fora', 'fora do acompanhamento'));
+      if (k.nota) pe.appendChild(el('span', 'disco-nota', k.nota));
+    } else if (k.pequeno) {
+      // Dito na tela: a pessoa que vê este volume apagado precisa saber que não
+      // foi alguém que o desmarcou, e que marcar/desmarcar não vai mudar nada.
+      pe.appendChild(el('span', 'disco-marca-peq',
+        'pequeno demais para contar (abaixo do piso do sistema)'));
+    }
+    // `acompanhando` AUSENTE (undefined) é diferente de false: quer dizer que o
+    // servidor ainda não tem a 0044, e portanto não tem
+    // definir_volume_acompanhado. Mostrar o interruptor nesse caso seria oferecer
+    // um botão que só sabe dar erro — o painel pode ser publicado antes da
+    // migração, e essa ordem não pode virar um clique quebrado.
+    const temEscolha = k.acompanhando === true || k.acompanhando === false;
+
+    if (Estado.ehAdmin === true && !temEscolha) {
+      pe.appendChild(el('span', 'disco-marca-peq',
+        'escolha de volumes indisponível: falta a migração 0044 no servidor'));
+    }
+
+    if (Estado.ehAdmin === true && temEscolha) {
+      pe.appendChild(interruptorDoVolume(machineId, k,
+        // Redesenha a gaveta E a frota: o número do cartão muda na hora, senão a
+        // pessoa desmarca um volume e a tela atrás continua com o número antigo
+        // até a próxima leitura.
+        async () => { await desenharDiscos(machineId); await carregar(); }));
+    }
+    if (pe.childNodes.length > 0) linha.appendChild(pe);
 
     caixa.appendChild(linha);
   }
@@ -4360,7 +5298,22 @@ function iniciarAtualizacao() {
   // O polling é o caminho garantido. Realtime, quando funciona, só antecipa.
   // Sem esse fallback, um WebSocket bloqueado pelo firewall da loja congelaria o
   // dashboard sem nenhum sinal visível.
-  const ms = Math.max(5, Number(CFG.pollSeconds) || 20) * 1000;
+  // COM REALTIME, A VARREDURA E REDE DE SEGURANCA -- e rede de seguranca nao
+  // precisa de 10 segundos.
+  //
+  // Com realtime ligado o servidor EMPURRA a mudanca; a varredura existe para o
+  // caso de o WebSocket morrer no firewall da loja. A cada 10 s ela custava 6
+  // varreduras completas por minuto (machines_status inteiro, resumo e lojas) --
+  // 24 requisicoes por minuto de uma TV que fica aberta o dia todo. A cada 60 s
+  // sao 4, e a tela nao fica mais velha do que isso nem no pior caso.
+  //
+  // Isto nao atrasa a DETECCAO de nada: quem decide offline e o banco, pelo
+  // relogio do servidor, e quem abre alerta e o cron de um minuto. O que muda e
+  // so quando a tela desenha, se o realtime tiver falhado.
+  const seg = Math.max(5, Number(CFG.pollSeconds) || 20);
+  const ms = (CFG.authMode === 'supabase' && CFG.realtime
+    ? Math.max(seg, 60)
+    : seg) * 1000;
   if (Estado.timerPoll) clearInterval(Estado.timerPoll);
   Estado.timerPoll = setInterval(() => {
     // A RENOVACAO ACONTECE MESMO COM A ABA ESCONDIDA. Carregar dado numa aba que
@@ -4378,6 +5331,48 @@ function iniciarAtualizacao() {
   if (CFG.authMode === 'supabase' && CFG.realtime) conectarRealtime();
 }
 
+// -----------------------------------------------------------------------------
+// O freio do realtime
+// -----------------------------------------------------------------------------
+// SEM ISTO A COTA DO SUPABASE MORRE, e foi o que aconteceu.
+//
+// O realtime assina UPDATE de `machines`, e `register_metrics` atualiza `machines`
+// em TODA ingestao. Com 45 maquinas -- e o pulso do agente mandando ate 4 vezes
+// por minuto cada -- sao ~180 UPDATEs por minuto. A versao anterior chamava
+// carregar() em cada mensagem, e carregar() faz TRES requisicoes com a frota
+// inteira: ~540 requisicoes por minuto, por aba aberta. Numa TV ligada o dia todo,
+// isso e a cota do plano gratuito inteira em poucos dias.
+//
+// O freio junta as mensagens: no maximo uma recarga a cada 10 s. A primeira sai
+// NA HORA (borda de subida), entao uma mudanca de verdade continua parecendo
+// instantanea -- o que se perde e a repeticao, nao a reacao.
+//
+// 180 mensagens/min viram no maximo 6 recargas/min: 30 vezes menos.
+const REALTIME_FREIO_MS = 10000;
+let realtimeUltimaCarga = 0;
+let realtimeTimer = null;
+
+function recarregarPeloRealtime() {
+  // Aba escondida nao recarrega, igual ao polling: TV com a aba em segundo plano
+  // gastava cota para desenhar o que ninguem ve. Ao voltar, o polling cobre.
+  if (document.hidden) return;
+
+  // Ja ha recarga agendada: esta mensagem entra nela em vez de criar outra.
+  if (realtimeTimer) return;
+
+  const desde = Date.now() - realtimeUltimaCarga;
+  if (desde >= REALTIME_FREIO_MS) {
+    realtimeUltimaCarga = Date.now();
+    carregar();
+    return;
+  }
+
+  realtimeTimer = setTimeout(() => {
+    realtimeTimer = null;
+    realtimeUltimaCarga = Date.now();
+    carregar();
+  }, REALTIME_FREIO_MS - desde);
+}
 function conectarRealtime() {
   try {
     const url = CFG.restUrl.replace(/\/rest\/v1\/?$/, '').replace(/^http/, 'ws');
@@ -4398,7 +5393,8 @@ function conectarRealtime() {
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.event === 'postgres_changes') carregar();
+        // Pelo FREIO, nunca direto em carregar(). Ver recarregarPeloRealtime.
+        if (msg.event === 'postgres_changes') recarregarPeloRealtime();
       } catch (_) { /* keepalive */ }
     };
 
@@ -4743,6 +5739,7 @@ function ligarEventos() {
 
   $('btn-tema').addEventListener('click', () => trocarTema());
   $('btn-som').addEventListener('click', alternarSom);
+  ligarPainelDeAlertas();
 
   $('btn-relatorio').addEventListener('click', abrirRelatorio);
   $('btn-fechar-rel').addEventListener('click', fecharRelatorio);
@@ -4757,8 +5754,8 @@ function ligarEventos() {
   armarPerigo($('btn-remover-demo'), 'Confirmar remoção', removerDemo);
   armarPerigo($('btn-remover-maquina'), 'Confirmar: apagar tudo', removerMaquinaAberta);
 
-  // Sair so existe onde ha de onde sair: no modo Supabase.
-  if (CFG.authMode === 'supabase') {
+  // Sair so existe onde ha de onde sair: onde houve login.
+  if (EXIGE_LOGIN) {
     $('btn-sair').hidden = false;
     $('btn-sair').addEventListener('click', sair);
   }
@@ -4898,6 +5895,7 @@ function restaurarPreferencias() {
     tema = localStorage.getItem('monitor.tema') || 'dark';
     modo = localStorage.getItem('monitor.modo') || 'lojas';
     Estado.som = localStorage.getItem('monitor.som') === '1';
+    Estado.alerta = lerAlerta();
   } catch (_) { /* modo privado bloqueia storage */ }
 
   txt($('btn-som-rot'), Estado.som ? 'Som: ligado' : 'Som: desligado');
@@ -4947,9 +5945,11 @@ async function principal() {
   ligarEventos();
 
   // -------------------------------------------------------------------- token
-  if (CFG.authMode === 'supabase') {
-    // Em produção a autenticação é obrigatória. O login vive em login.html, que
-    // guarda o token e volta para cá — o dashboard nunca desenha formulário.
+  if (EXIGE_LOGIN) {
+    // Em produção a autenticação é obrigatória — no Supabase e no servidor
+    // próprio igualmente, porque os dois atendem num endereço público. O login
+    // vive em login.html, que guarda o token e volta para cá — o dashboard
+    // nunca desenha formulário.
     const guardado = lerTokenGuardado();
     if (!guardado) {
       window.location.href = 'login.html';

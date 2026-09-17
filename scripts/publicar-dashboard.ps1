@@ -85,8 +85,15 @@ $conteudoProd = Get-Content $prod -Raw
 # faixa de erro para quem abrir. Pior, o modo local NAO PEDE LOGIN — e um painel
 # sem login na internet, mesmo que sem dado nenhum, e o tipo de coisa que nao
 # pode depender de ninguem lembrar de trocar um arquivo.
-if ($conteudoProd -notmatch "authMode:\s*'supabase'") {
-  Erro 'config.producao.js nao esta em authMode supabase. Nao vou publicar.'
+# A trava aceita DOIS modos desde 17/09, e a lista e branca de proposito: o
+# perigo nunca foi o nome 'supabase', era o modo LOCAL, que nao pede senha. Com
+# o servidor proprio ('selfhost') o painel passou a exigir login de verdade --
+# local_sign_in confere bcrypt no banco e devolve JWT (migration 0014). Trocar
+# esta checagem por "qualquer coisa menos local" seria mais frouxo: um modo novo
+# escrito errado passaria calado. Aqui, modo desconhecido nao publica.
+if ($conteudoProd -notmatch "authMode:\s*'(supabase|selfhost)'") {
+  Erro 'config.producao.js nao esta em authMode supabase nem selfhost. Nao vou publicar.'
+  Aviso 'O modo local NAO pede senha: publicar assim poria o painel aberto na internet.'
   exit 1
 }
 if ($conteudoProd -match '127\.0\.0\.1|localhost') {
@@ -97,7 +104,7 @@ if ($conteudoProd -notmatch "restUrl:\s*'https://") {
   Erro 'config.producao.js sem restUrl em https. Nao vou publicar.'
   exit 1
 }
-Ok 'configuracao de producao: authMode supabase, restUrl em https'
+Ok 'configuracao de producao: authMode com login, restUrl em https'
 
 # A CSP e verificada antes de subir: se ela quebra a pagina, quebra publicada.
 $node = Get-Command node -ErrorAction SilentlyContinue
@@ -123,9 +130,26 @@ New-Item -ItemType Directory -Force -Path $saida | Out-Null
 
 $naoVao = @('dev-config.json', 'dev-token.json', 'diagnostico.html', 'config.producao.js', '.vercelignore')
 
-Get-ChildItem $dash -Recurse -File | ForEach-Object {
+Get-ChildItem $dash -Recurse -File -Force | ForEach-Object {
   $rel = $_.FullName.Substring($dash.Length + 1)
   if ($naoVao -contains $_.Name) { Info "fora: $rel"; return }
+
+  # QUALQUER caminho com segmento comecando por ponto fica de fora.
+  #
+  # A lista negra por nome protegia so do que alguem lembrou de listar, e em
+  # 17/09 isso quase custou caro: a copia levava dashboard/.env.local -- com um
+  # VERCEL_OIDC_TOKEN dentro -- alem de .gitignore e .vercel/project.json. Iam
+  # para uma URL publica, num site estatico, legiveis por qualquer um. O deploy
+  # so nao aconteceu porque falhou por outro motivo.
+  #
+  # Arquivo que comeca com ponto e, por convencao, configuracao de ferramenta:
+  # nunca e conteudo de pagina. Recusar a categoria inteira vale mais do que
+  # perseguir nomes, porque a proxima ferramenta a criar um arquivo desses nao
+  # vai avisar ninguem.
+  if (($rel -split '[\\/]' | Where-Object { $_.StartsWith('.') })) {
+    Info "fora (oculto): $rel"
+    return
+  }
 
   $destino = Join-Path $saida $rel
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destino) | Out-Null
@@ -142,8 +166,15 @@ $vazou = @()
 foreach ($proibido in @('dev-config.json', 'dev-token.json', 'diagnostico.html')) {
   if (Test-Path (Join-Path $saida $proibido)) { $vazou += $proibido }
 }
+
+# -Force porque dotfile no Windows nem sempre tem o atributo "oculto": sem ele o
+# Get-ChildItem passaria direto justamente pelo .env.local que motivou isto.
+$ocultos = Get-ChildItem $saida -Recurse -Force | Where-Object { $_.Name.StartsWith('.') }
+if ($ocultos) {
+  $vazou += ('arquivo de ferramenta: ' + (($ocultos | ForEach-Object { $_.Name }) -join ', '))
+}
 $cfgCopia = Get-Content (Join-Path $saida 'config.js') -Raw
-if ($cfgCopia -notmatch "authMode:\s*'supabase'") { $vazou += 'config.js NAO e o de producao' }
+if ($cfgCopia -notmatch "authMode:\s*'(supabase|selfhost)'") { $vazou += 'config.js NAO e o de producao' }
 
 if ($vazou.Count -gt 0) {
   Erro ('a copia contem o que nao deveria: ' + ($vazou -join ', '))

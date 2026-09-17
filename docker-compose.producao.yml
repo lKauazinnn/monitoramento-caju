@@ -1,0 +1,116 @@
+# =============================================================================
+# Stack de PRODUCAO self-hosted — atras do Cloudflare Tunnel
+# =============================================================================
+# Sobe com:
+#   docker compose -f docker-compose.producao.yml --env-file .env.selfhost up -d
+#
+# DIFERENCAS PARA O docker-compose.yml (que e o de desenvolvimento):
+#
+#   1. O banco e uma imagem PROPRIA, com pg_cron. A oficial nao traz, e sem ela
+#      a criacao de particao futura para -- e quando as futuras acabam, a
+#      ingestao PARA. E a falha mais silenciosa possivel: tudo funciona por
+#      meses e entao nada mais entra.
+#
+#   2. Uma porta so, em 127.0.0.1. O nginx fica na frente e reproduz os
+#      caminhos do Supabase (/functions/v1/ingest e /rest/v1), entao trocar de
+#      provedor e trocar o HOST -- nada mais. Nem PostgREST nem ingestao ficam
+#      expostos direto.
+#
+#   3. Quem faz HTTPS e o Cloudflare Tunnel, na borda. Por isso aqui e :80 em
+#      loopback: so o cloudflared, rodando na propria maquina, alcanca.
+#
+# O QUE ISTO NAO RESOLVE, e precisa ser resolvido fora:
+#
+#   O servidor passa a ser esta maquina. Se ela desligar, os 45 agentes guardam
+#   no spool e reenviam depois -- mas o spool e de 72 h e o servidor recusa
+#   amostra com mais de 48 h. Ou seja: uma queda de fim de semana ja perde
+#   dado. Nobreak, inicio automatico do Docker e backup para FORA desta maquina
+#   nao sao opcionais aqui; no Supabase eles vinham de graca.
+# =============================================================================
+
+services:
+  db:
+    build:
+      context: ./docker/postgres-pgcron
+    image: monitor-postgres-cron:16
+    # pull_policy: build e OBRIGATORIO aqui. Sem ele o Compose ve um nome de
+    # imagem que nao existe localmente e tenta BAIXAR de um registro publico --
+    # e falha com "pull access denied for monitor-postgres-cron", que parece
+    # problema de login mas e o contrario: a imagem nao vem de lugar nenhum, ela
+    # e construida da pasta ao lado. As outras tres (postgrest, node, nginx) sao
+    # publicas e por isso baixam sem reclamar.
+    pull_policy: build
+    container_name: monitor-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no arquivo de ambiente}
+      POSTGRES_DB: postgres
+      # UTC no servidor, igual ao Supabase: e o que faz o timestamp do agente
+      # ser interpretado do mesmo jeito nos dois ambientes. Ja custou caro uma
+      # vez (0032), nao mexa.
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    container_name: monitor-rest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://postgres:${POSTGRES_PASSWORD:?}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET (32+ caracteres)}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_SERVER_PORT: 3000
+      PGRST_OPENAPI_MODE: disabled
+      PGRST_DB_MAX_ROWS: 10000
+    # Sem ports: quem alcanca e o nginx, pela rede interna.
+
+  ingest:
+    image: node:24-alpine
+    container_name: monitor-ingest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3001
+      POSTGREST_URL: http://rest:3000
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+      INGEST_SHARED_SECRET: ${INGEST_SHARED_SECRET:?defina INGEST_SHARED_SECRET}
+    volumes:
+      - ./docker/ingest-local/server.mjs:/app/server.mjs:ro
+      - ./supabase/functions/ingest/lib.ts:/app/lib.ts:ro
+      - ./agent/agente-powershell.ps1:/app/agente.ps1:ro
+      - ./docker/ingest-local/instalar.ps1:/app/instalar.ps1:ro
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "server.mjs"]
+    # Sem ports: idem. A unica porta da stack e a do nginx.
+
+  web:
+    image: nginx:1.27-alpine
+    container_name: monitor-web
+    restart: unless-stopped
+    depends_on:
+      - rest
+      - ingest
+    volumes:
+      - ./dashboard:/usr/share/nginx/html:ro
+      - ./docker/nginx-producao.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # A UNICA porta publicada, e so em loopback: o cloudflared roda nesta
+      # maquina e conecta aqui. Nada fica exposto na rede local nem no roteador.
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
+
+volumes:
+  db-data:

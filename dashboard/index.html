@@ -124,9 +124,17 @@
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg>
         <span id="btn-atualizar-rot">Atualizar agentes</span>
       </button>
+      <!-- Dois botões, de propósito. O de cima é um clique só, e é também o
+           gesto que o navegador exige para liberar áudio; o de baixo abre o
+           ajuste. Se houvesse só o painel, ligar o som passaria a custar três
+           cliques na hora em que se quer ligar rápido. -->
       <button id="btn-som" class="btn-lateral" type="button" aria-pressed="false">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>
         <span id="btn-som-rot">Som: desligado</span>
+      </button>
+      <button id="btn-alertas" class="btn-lateral" type="button">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10.3 20a2 2 0 0 0 3.4 0"/></svg>
+        <span>Alertas</span>
       </button>
       <div class="usuario-chip">
         <span id="usuario-iniciais" class="avatar mono" aria-hidden="true">··</span>
@@ -333,7 +341,19 @@
     <section class="secao-frota">
       <header class="sf-topo">
         <h2 id="frota-titulo">Lojas</h2>
-        <span id="frota-sub" class="pc-sub">—</span>
+        <span id="frota-sub" class="pc-sub mono">—</span>
+        <!-- Densidade e selos ficam a direita e SO aparecem na vista de lojas:
+             contar estaveis nao faz sentido na tabela densa, que ja mostra o
+             estado de cada maquina numa coluna. -->
+        <div id="frota-direita" class="sf-direita" hidden>
+          <label class="sf-densidade" for="frota-largura">
+            <span class="sf-dens-rot">largura</span>
+            <input id="frota-largura" type="range" min="240" max="460" step="20"
+                   value="300" aria-label="Largura mínima do cartão de loja">
+            <output id="frota-largura-val" class="mono">300</output>
+          </label>
+          <div id="frota-selos" class="sf-selos"></div>
+        </div>
       </header>
       <div id="conteudo" aria-live="polite">
         <p class="vazio">Carregando&hellip;</p>
@@ -415,6 +435,89 @@
     <span id="fs-sub"></span>
   </div>
   <button id="btn-fs-entrar" class="btn-secundario" type="button">Entrar de novo</button>
+</div>
+
+<!-- =========================================================================
+     Alertas: o aviso e as regras
+
+     Duas metades com donos diferentes, e a tela diz qual e qual. O SOM e deste
+     navegador -- quem olha numa TV da copa quer som, quem olha no laptop numa
+     reuniao nao. As REGRAS sao do servidor e valem para todo mundo, entao mudar
+     uma ali muda o alerta da equipe inteira.
+     ========================================================================= -->
+<div id="modal-alertas-fundo" class="cortina" hidden></div>
+
+<div id="modal-alertas" class="modal modal-largo" hidden role="dialog" aria-modal="true"
+     aria-labelledby="alertas-titulo">
+  <header class="modal-topo">
+    <h2 id="alertas-titulo">Alertas</h2>
+    <button id="btn-fechar-alertas" class="btn-fechar" type="button" aria-label="Fechar">&times;</button>
+  </header>
+
+  <div class="modal-corpo">
+    <section class="al-bloco">
+      <div class="al-cabeca">
+        <h3>Aviso sonoro neste navegador</h3>
+        <p class="al-cabeca-sub">
+          Fica guardado nesta tela, não na sua conta: cada lugar de onde se olha o
+          painel tem o seu ajuste.
+        </p>
+      </div>
+
+      <label class="al-linha al-mestre" for="al-ligado">
+        <input id="al-ligado" type="checkbox">
+        <span class="al-rot">Tocar quando abrir um incidente novo</span>
+      </label>
+
+      <label class="al-linha" for="al-volume">
+        <span class="al-rot">Volume</span>
+        <input id="al-volume" type="range" min="5" max="100" step="5" value="35">
+        <output id="al-volume-val" class="mono">35</output>
+      </label>
+
+      <!-- Repetir resolve o problema real de uma tela de parede: o toque de uma
+           vez acontece quando ninguem esta na sala. Mas repetir sem fim e o que
+           faz o operador desligar o som no primeiro dia, e ai o recurso morre
+           inteiro -- por isso e opcional, para e reconhecendo, e o padrao e
+           "nao repetir". -->
+      <label class="al-linha" for="al-repetir">
+        <span class="al-rot">Repetir enquanto ninguém reconhecer</span>
+        <select id="al-repetir">
+          <option value="0">não repetir</option>
+          <option value="2">a cada 2 min</option>
+          <option value="5">a cada 5 min</option>
+          <option value="10">a cada 10 min</option>
+          <option value="30">a cada 30 min</option>
+        </select>
+      </label>
+
+      <label class="al-linha" for="al-falar">
+        <input id="al-falar" type="checkbox">
+        <span class="al-rot">Falar em voz alta qual máquina caiu</span>
+      </label>
+
+      <div class="al-tipos">
+        <span class="al-rot">Tocar para</span>
+        <div id="al-tipos-lista" class="al-tipos-caixa"></div>
+      </div>
+
+      <div class="al-acoes">
+        <button id="btn-testar-som" class="btn-secundario" type="button">Testar o aviso</button>
+        <span id="al-aviso-som" class="al-nota"></span>
+      </div>
+    </section>
+
+    <section class="al-bloco">
+      <div class="al-cabeca">
+        <h3>Regras do servidor</h3>
+        <p class="al-cabeca-sub">
+          Valem para toda a equipe. Mudar aqui muda quando o alerta abre para
+          todo mundo.
+        </p>
+      </div>
+      <div id="al-regras" class="al-regras"></div>
+    </section>
+  </div>
 </div>
 
 <div id="modal-usuarios-fundo" class="cortina" hidden></div>
@@ -644,22 +747,29 @@
   <div id="add-passo2" class="modal-corpo" hidden>
     <p class="ok-msg" id="add-resumo"></p>
 
-    <h3>No outro PC, abra o PowerShell e cole isto:</h3>
+    <h3>No outro PC, abra o PowerShell <strong>como Administrador</strong> e cole isto:</h3>
     <div class="comando-caixa">
-      <pre id="add-comando"></pre>
-      <button id="btn-copiar-cmd" class="btn-primario" type="button">Copiar comando</button>
+      <pre id="add-comando-tarefa"></pre>
+      <button id="btn-copiar-tarefa" class="btn-primario" type="button">Copiar comando</button>
     </div>
+    <p class="dica">
+      O <code>-ComTarefa</code> no fim é o que faz o agente <strong>voltar sozinho
+      depois que o Windows reinicia</strong>. Rodando como SYSTEM, temperatura e
+      SMART também passam a ser coletados.
+    </p>
 
     <details class="detalhes">
-      <summary>Para o agente voltar sozinho depois de reiniciar o Windows</summary>
+      <summary>Não consigo abrir como administrador agora</summary>
       <p class="dica">
-        Rode o mesmo comando com <code>-ComTarefa</code> no fim, num PowerShell
-        <strong>como administrador</strong>. Ele cria uma tarefa agendada que roda
-        como SYSTEM &mdash; e aí temperatura e SMART também passam a ser coletados.
+        Este instala igual, mas <strong>sem tarefa agendada</strong>: o agente roda
+        até a máquina desligar, e não volta. No painel isso não parece defeito
+        &mdash; parece máquina offline, sem nenhum erro registrado, e só se
+        descobre quando alguém vai procurar. Use para um teste rápido e volte
+        depois com o comando de cima, elevado.
       </p>
       <div class="comando-caixa">
-        <pre id="add-comando-tarefa"></pre>
-        <button id="btn-copiar-tarefa" class="btn-secundario" type="button">Copiar</button>
+        <pre id="add-comando"></pre>
+        <button id="btn-copiar-cmd" class="btn-secundario" type="button">Copiar assim mesmo</button>
       </div>
     </details>
 

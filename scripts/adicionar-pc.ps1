@@ -346,17 +346,30 @@ Servicos : $($listaServicos -join ', ')
 COMO INSTALAR
 ---------------------------------------------------------------------
 1. Copie ESTA PASTA INTEIRA para o PC de destino.
-2. Abra o PowerShell nessa pasta.
+2. Abra o PowerShell nessa pasta COMO ADMINISTRADOR.
 3. Rode:
 
-     powershell -ExecutionPolicy Bypass -File .\instalar.ps1
+     powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComTarefa
 
-   Ele testa a conexao, faz uma coleta e sobe o agente em segundo plano.
+   Ele testa a conexao, faz uma coleta, sobe o agente e cria a tarefa
+   agendada.
 
-PARA VOLTAR SOZINHO APOS REINICIAR O WINDOWS
+O -ComTarefa NAO E OPCIONAL NA PRATICA
 ---------------------------------------------------------------------
-O agente nao e servico do Windows. Crie uma tarefa agendada
-(terminal ELEVADO no PC de destino):
+Sem ele o agente roda ate a maquina desligar, e nao volta. E a falha mais
+cara que este projeto ja teve justamente por nao parecer falha: no painel a
+maquina fica offline, o servidor nao registra erro nenhum (nada falhou --
+so ninguem subiu o agente de novo), e ninguem liga o sumico ao desligamento.
+Vinte e sete maquinas sumiram assim no mesmo minuto, num fim de expediente,
+e ficaram duas semanas fora sem ninguem entender por que.
+
+Se voce nao puder elevar agora, rode sem o -ComTarefa e VOLTE depois. Uma
+maquina sem tarefa agendada e um ponto cego com aparencia de maquina
+monitorada.
+
+SE PRECISAR CRIAR A TAREFA A MAO
+---------------------------------------------------------------------
+O agente nao e servico do Windows. Num terminal ELEVADO no PC de destino:
 
   \$a = New-ScheduledTaskAction -Execute 'powershell.exe' ``
         -Argument '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\ProgramData\MonitorAgent\agente-powershell.ps1"'
